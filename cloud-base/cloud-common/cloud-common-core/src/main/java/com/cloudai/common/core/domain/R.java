@@ -26,7 +26,7 @@ public class R<T> implements Serializable {
     }
 
     public static <T> R<T> fail(String msg) {
-        return build(ErrorCode.SYSTEM_ERROR.getCode(), msg, null);
+        return build(ErrorCode.BUSINESS_ERROR.getCode(), msg, null);
     }
 
     public static <T> R<T> fail(int code, String msg) {

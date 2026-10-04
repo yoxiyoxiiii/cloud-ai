@@ -30,6 +30,13 @@ class RTest {
     }
 
     @Test
+    void fail_withOnlyMsg_defaultsToBusinessError() {
+        R<Void> r = R.fail("用户名或密码错误");
+        assertThat(r.getCode()).isEqualTo(1002);
+        assertThat(r.getMsg()).isEqualTo("用户名或密码错误");
+    }
+
+    @Test
     void fail_withErrorCodeEnum() {
         R<Void> r = R.fail(ErrorCode.PARAM_ERROR);
         assertThat(r.getCode()).isEqualTo(1001);
