@@ -148,6 +148,7 @@ logs/
     <properties>
         <java.version>17</java.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <spring-boot.version>3.3.4</spring-boot.version>
         <spring-cloud.version>2023.0.3</spring-cloud.version>
         <spring-cloud-alibaba.version>2023.0.3.3</spring-cloud-alibaba.version>
@@ -261,10 +262,15 @@ logs/
                 </plugin>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
                     <version>3.13.0</version>
                     <configuration>
-                        <release>17</release>
+                        <release>${java.version}</release>
                     </configuration>
                 </plugin>
             </plugins>
@@ -477,6 +483,10 @@ logs/
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
@@ -529,6 +539,10 @@ logs/
         <dependency>
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
     </dependencies>
 
@@ -583,6 +597,10 @@ logs/
             <groupId>org.springdoc</groupId>
             <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
     </dependencies>
 
     <build>
@@ -625,8 +643,16 @@ logs/
             <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
     </dependencies>
 
@@ -1771,6 +1797,24 @@ management:
         include: health,info
 ```
 
+- [ ] **Step 3b: 为 spring-boot-maven-plugin 增加 repackage 绑定**
+
+修改 `cloud-base/cloud-sso/pom.xml` 的 build 段（main class 已存在，绑定后可打出可执行 jar）：
+
+```xml
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+```
+
 - [ ] **Step 4: 构建**
 
 Run: `mvn -f cloud-base/pom.xml clean install -pl cloud-sso -am`
@@ -1875,6 +1919,24 @@ management:
         include: health,info
 ```
 
+- [ ] **Step 3b: 为 spring-boot-maven-plugin 增加 repackage 绑定**
+
+修改 `cloud-base/cloud-system/pom.xml` 的 build 段（main class 已存在，绑定后可打出可执行 jar）：
+
+```xml
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+```
+
 - [ ] **Step 4: 构建**
 
 Run: `mvn -f cloud-base/pom.xml clean install -pl cloud-system -am`
@@ -1974,6 +2036,24 @@ management:
     web:
       exposure:
         include: health,info
+```
+
+- [ ] **Step 3b: 为 spring-boot-maven-plugin 增加 repackage 绑定**
+
+修改 `cloud-base/cloud-bpmn/pom.xml` 的 build 段（main class 已存在，绑定后可打出可执行 jar）：
+
+```xml
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
 ```
 
 - [ ] **Step 4: 构建**
@@ -2077,6 +2157,24 @@ management:
 ```
 
 说明：`StripPrefix=1` 使 `/sso/demo/ping` → `cloud-sso` 服务的 `/demo/ping`；`/inner/**` 屏蔽与 JWT 过滤器在阶段 3 加入。
+
+- [ ] **Step 2b: 为 spring-boot-maven-plugin 增加 repackage 绑定**
+
+修改 `cloud-base/cloud-gateway/pom.xml` 的 build 段（main class 已存在，绑定后可打出可执行 jar）：
+
+```xml
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+```
 
 - [ ] **Step 3: 构建**
 
