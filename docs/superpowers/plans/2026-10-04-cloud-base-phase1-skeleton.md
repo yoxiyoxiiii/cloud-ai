@@ -17,7 +17,7 @@
 1. **JDK 17**：`java -version` 输出 17.x。
 2. **Maven 3.8+**：`mvn -v` 正常。
 3. **Nacos 已运行**（用户已有环境）：默认客户端端口 `8848`。执行前**询问用户实际 Nacos 地址**；若非本机默认，启动服务时设置环境变量 `NACOS_ADDR=<实际地址>`。
-4. **端口占用检查**：本工程占用 8080（gateway）、9201（sso）、9202（system）、9203（bpmn）。**注意：Nacos 3.x 控制台默认端口也是 8080**——若冲突，请用户调整 Nacos 控制台端口（如 8081），本工程端口不变。
+4. **端口占用检查**：本工程占用 18080（gateway）、9201（sso）、9202（system）、9203（bpmn）。（2026-10-05 执行时实测：本机 8080 已被 RocketMQ Dashboard 容器占用，网关端口由 8080 调整为 18080。）
 5. 工作目录：仓库根 `D:/source/cloud-ai`（Git Bash 路径 `/d/source/cloud-ai`）。所有 Maven 命令统一用 `-f cloud-base/pom.xml`。
 6. 提交信息末尾附 `Co-Authored-By: Claude Code <noreply@anthropic.com>`（计划中的提交命令已含）。
 
@@ -2029,7 +2029,7 @@ public class GatewayApplication {
 
 ```yaml
 server:
-  port: 8080
+  port: 18080
 
 spring:
   application:
@@ -2097,9 +2097,9 @@ Expected: 四个进程全部 Started 且无异常。
 - [ ] **Step 5: 经网关全链路验证（阶段 1 验收标准）**
 
 ```bash
-curl http://localhost:8080/sso/demo/ping
-curl http://localhost:8080/system/demo/ping
-curl http://localhost:8080/bpmn/demo/ping
+curl http://localhost:18080/sso/demo/ping
+curl http://localhost:18080/system/demo/ping
+curl http://localhost:18080/bpmn/demo/ping
 ```
 
 Expected 依次为：
@@ -2148,7 +2148,7 @@ MyBatis-Plus 3.5.7 / MySQL 8 / Redis / Flowable 7.2.0（阶段4引入）
 
 | 模块 | 端口 | 说明 |
 |---|---|---|
-| cloud-gateway | 8080 | API 网关：路由转发（lb://）、跨域 |
+| cloud-gateway | 18080 | API 网关：路由转发（lb://）、跨域 |
 | cloud-sso | 9201 | 认证中心（阶段3实现） |
 | cloud-system | 9202 | 系统管理 RBAC（阶段2实现） |
 | cloud-bpmn | 9203 | 工作流 Flowable（阶段4实现） |
@@ -2164,7 +2164,7 @@ MyBatis-Plus 3.5.7 / MySQL 8 / Redis / Flowable 7.2.0（阶段4引入）
     mvn spring-boot:run -pl cloud-bpmn
     mvn spring-boot:run -pl cloud-gateway   # 网关最后启动
 
-验证：curl http://localhost:8080/system/demo/ping
+验证：curl http://localhost:18080/system/demo/ping
 
 ## 阶段状态
 

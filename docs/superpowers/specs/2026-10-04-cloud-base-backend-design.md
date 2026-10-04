@@ -40,7 +40,7 @@ cloud-base/
 │   ├── cloud-common-security    # JWT工具 + 资源端Spring Security自动配置
 │   ├── cloud-common-mybatis     # MyBatis-Plus配置/分页/审计填充/逻辑删除
 │   └── cloud-common-redis       # Redis配置/RedisUtil
-├── cloud-gateway/           # 网关 :8080
+├── cloud-gateway/           # 网关 :18080
 ├── cloud-sso/               # 认证中心 :9201
 ├── cloud-system/            # 系统管理 :9202
 └── cloud-bpmn/              # 工作流 :9203
@@ -55,7 +55,7 @@ cloud-base/
 浏览器/前端
     │
     ▼
-cloud-gateway (8080) ──白名单放行──► cloud-sso (9201) 登录/注销/验证码
+cloud-gateway (18080) ──白名单放行──► cloud-sso (9201) 登录/注销/验证码
     │  JWT校验 + 用户信息透传           │ Feign(内部接口)
     ├───────────────► cloud-system (9202)  用户/权限数据 ──┐
     └───────────────► cloud-bpmn  (9203)  审批人解析 ──────┤ Feign 调 system
