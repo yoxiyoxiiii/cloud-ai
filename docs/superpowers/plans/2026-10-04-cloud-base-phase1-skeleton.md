@@ -730,6 +730,13 @@ class RTest {
         assertThat(r.getCode()).isEqualTo(1001);
         assertThat(r.getMsg()).isEqualTo("参数校验失败");
     }
+
+    @Test
+    void fail_withOnlyMsg_defaultsToBusinessError() {
+        R<Void> r = R.fail("用户名或密码错误");
+        assertThat(r.getCode()).isEqualTo(1002);
+        assertThat(r.getMsg()).isEqualTo("用户名或密码错误");
+    }
 }
 ```
 
@@ -799,7 +806,7 @@ public class R<T> implements Serializable {
     }
 
     public static <T> R<T> fail(String msg) {
-        return build(ErrorCode.SYSTEM_ERROR.getCode(), msg, null);
+        return build(ErrorCode.BUSINESS_ERROR.getCode(), msg, null);
     }
 
     public static <T> R<T> fail(int code, String msg) {
@@ -808,6 +815,10 @@ public class R<T> implements Serializable {
 
     public static <T> R<T> fail(ErrorCode errorCode) {
         return build(errorCode.getCode(), errorCode.getMsg(), null);
+    }
+
+    public static <T> R<T> fail(ErrorCode errorCode, String msg) {
+        return build(errorCode.getCode(), msg, null);
     }
 
     private static <T> R<T> build(int code, String msg, T data) {
@@ -823,7 +834,7 @@ public class R<T> implements Serializable {
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core`
-Expected: `Tests run: 4, Failures: 0, Errors: 0`，BUILD SUCCESS。
+Expected: `Tests run: 5, Failures: 0, Errors: 0`，BUILD SUCCESS。
 
 - [ ] **Step 6: Commit**
 
@@ -977,7 +988,7 @@ public class PageResult<T> implements Serializable {
 - [ ] **Step 6: 运行测试确认通过**
 
 Run: `mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core`
-Expected: `Tests run: 4`（含 Task 2 的 4 个），全部 PASS，BUILD SUCCESS。
+Expected: `Tests run: 9`（含 Task 2 的 5 个 + 本任务 4 个），全部 PASS，BUILD SUCCESS。
 
 - [ ] **Step 7: Commit**
 
@@ -1104,7 +1115,7 @@ public class GlobalExceptionHandler {
         StringBuilder msg = new StringBuilder();
         e.getBindingResult().getFieldErrors()
                 .forEach(fe -> msg.append(fe.getField()).append(" ").append(fe.getDefaultMessage()).append("; "));
-        return R.fail(ErrorCode.PARAM_ERROR.getCode(), msg.toString());
+        return R.fail(ErrorCode.PARAM_ERROR, msg.toString());
     }
 
     /** 兜底：未知异常统一 500，不向外暴露堆栈细节 */
@@ -1128,7 +1139,7 @@ com.cloudai.common.core.exception.GlobalExceptionHandler
 - [ ] **Step 6: 运行测试确认通过**
 
 Run: `mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core`
-Expected: `Tests run: 7`，全部 PASS，BUILD SUCCESS。
+Expected: `Tests run: 12`（含此前 9 个 + 本任务 3 个），全部 PASS，BUILD SUCCESS。
 
 - [ ] **Step 7: Commit**
 
@@ -1250,7 +1261,7 @@ com.cloudai.common.core.config.CommonJacksonAutoConfiguration
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core`
-Expected: `Tests run: 9`，全部 PASS，BUILD SUCCESS。
+Expected: `Tests run: 14`（含此前 12 个 + 本任务 2 个），全部 PASS，BUILD SUCCESS。
 
 - [ ] **Step 6: Commit**
 
