@@ -80,6 +80,7 @@ cloud-base/
 - **公共模块自动装配**：业务服务引依赖即生效；用户自定义同名 bean 会覆盖（@ConditionalOnMissingBean）。网关是 WebFlux——**不得引入 spring-boot-starter-web**；GlobalExceptionHandler 的 advice 只覆盖 WebMVC controller（网关鉴权拒绝由 AuthGlobalFilter 直接写 R JSON，见"认证链路"）。
 - **DDL**（阶段2起）：逻辑删除列必须 `deleted TINYINT NOT NULL DEFAULT 0`（NULL 行会被 @TableLogic 过滤隐身）。
 - **跨域只在网关做**（下游配 CORS 会产生双 ACAO 头）。
+- **Controller 返回两行式**：service 调用结果先落局部变量再 `return R.ok(x)`，禁止内联 `return R.ok(service.xxx(...))`（可读性/断点友好）。
 - 包名 `com.cloudai.<service>`，groupId `com.cloudai`。
 
 ### 分阶段路线（当前：阶段 1 已合并 main；阶段 2+3 已完成，待合并）

@@ -29,19 +29,22 @@ public class SysRoleController {
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('system:role:list')")
     public R<PageResult<SysRole>> page(PageQuery query) {
-        return R.ok(manageService.page(query));
+        PageResult<SysRole> page = manageService.page(query);
+        return R.ok(page);
     }
 
     @GetMapping("/list")
     @PreAuthorize("hasAuthority('system:role:list')")
     public R<List<SysRole>> list() {
-        return R.ok(manageService.listAll());
+        List<SysRole> roles = manageService.listAll();
+        return R.ok(roles);
     }
 
     @PostMapping
     @PreAuthorize("hasAuthority('system:role:add')")
     public R<Long> add(@RequestBody SysRole role) {
-        return R.ok(manageService.add(role));
+        Long roleId = manageService.add(role);
+        return R.ok(roleId);
     }
 
     @PutMapping
@@ -68,6 +71,7 @@ public class SysRoleController {
     @GetMapping("/{id}/menus")
     @PreAuthorize("hasAuthority('system:role:list')")
     public R<List<Long>> menuIds(@PathVariable("id") Long id) {
-        return R.ok(manageService.menuIdsOf(id));
+        List<Long> menuIds = manageService.menuIdsOf(id);
+        return R.ok(menuIds);
     }
 }

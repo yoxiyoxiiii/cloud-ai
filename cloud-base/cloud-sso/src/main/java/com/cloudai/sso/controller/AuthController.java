@@ -31,12 +31,14 @@ public class AuthController {
 
     @PostMapping("/login")
     public R<LoginResult> login(@RequestBody LoginRequest req, HttpServletRequest http) {
-        return R.ok(tokenService.login(req.getAccount(), req.getPassword(), http.getRemoteAddr()));
+        LoginResult result = tokenService.login(req.getAccount(), req.getPassword(), http.getRemoteAddr());
+        return R.ok(result);
     }
 
     @PostMapping("/refresh")
     public R<LoginResult> refresh(@RequestBody RefreshRequest req) {
-        return R.ok(tokenService.refresh(req.getRefreshToken()));
+        LoginResult result = tokenService.refresh(req.getRefreshToken());
+        return R.ok(result);
     }
 
     @PostMapping("/logout")
@@ -48,7 +50,8 @@ public class AuthController {
     @GetMapping("/online")
     @PreAuthorize("hasAuthority('sso:online:list')")
     public R<List<OnlineSession>> online() {
-        return R.ok(tokenService.onlineList());
+        List<OnlineSession> sessions = tokenService.onlineList();
+        return R.ok(sessions);
     }
 
     @DeleteMapping("/online/{tokenId}")

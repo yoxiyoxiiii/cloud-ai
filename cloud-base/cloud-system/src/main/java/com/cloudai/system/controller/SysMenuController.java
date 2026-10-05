@@ -28,13 +28,16 @@ public class SysMenuController {
     @GetMapping("/tree")
     @PreAuthorize("hasAuthority('system:menu:list')")
     public R<List<MenuTreeNode>> tree() {
-        return R.ok(MenuTreeBuilder.build(manageService.listAll()));
+        List<SysMenu> menus = manageService.listAll();
+        List<MenuTreeNode> tree = MenuTreeBuilder.build(menus);
+        return R.ok(tree);
     }
 
     @PostMapping
     @PreAuthorize("hasAuthority('system:menu:add')")
     public R<Long> add(@RequestBody SysMenu menu) {
-        return R.ok(manageService.add(menu));
+        Long menuId = manageService.add(menu);
+        return R.ok(menuId);
     }
 
     @PutMapping

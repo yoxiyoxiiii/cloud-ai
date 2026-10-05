@@ -31,19 +31,22 @@ public class SysUserController {
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('system:user:list')")
     public R<PageResult<SysUser>> page(PageQuery query) {
-        return R.ok(manageService.page(query));
+        PageResult<SysUser> page = manageService.page(query);
+        return R.ok(page);
     }
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('system:user:list')")
     public R<SysUser> detail(@PathVariable("id") Long id) {
-        return R.ok(manageService.detail(id));
+        SysUser user = manageService.detail(id);
+        return R.ok(user);
     }
 
     @PostMapping
     @PreAuthorize("hasAuthority('system:user:add')")
     public R<Long> add(@RequestBody UserSaveRequest req) {
-        return R.ok(manageService.add(req));
+        Long userId = manageService.add(req);
+        return R.ok(userId);
     }
 
     @PutMapping
@@ -77,6 +80,7 @@ public class SysUserController {
     @GetMapping("/{id}/roles")
     @PreAuthorize("hasAuthority('system:user:list')")
     public R<List<Long>> roleIds(@PathVariable("id") Long id) {
-        return R.ok(manageService.roleIdsOf(id));
+        List<Long> roleIds = manageService.roleIdsOf(id);
+        return R.ok(roleIds);
     }
 }
