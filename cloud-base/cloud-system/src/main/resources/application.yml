@@ -4,6 +4,11 @@ server:
 spring:
   application:
     name: cloud-system
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/cloud_system?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: ""
+    driver-class-name: com.mysql.cj.jdbc.Driver
   config:
     import: optional:nacos:${spring.application.name}.yaml
   cloud:
