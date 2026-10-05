@@ -3198,6 +3198,8 @@ Expected: create_by='admin'、create_time 非空（网关透传→HeaderAuthFilt
 
 **扩展清单（终审补充 2026-10-05）**：网关白名单 startsWith 无路径边界（新增 /system/demo-data 类前缀接口会意外免 token——改精确匹配或加 / 边界）；角色/菜单 add/edit 以实体作 @RequestBody（entity-as-DTO 可注入 id/deleted——换正式 Request DTO 时收敛）；TokenService.logout 仅 catch JwtException（空 Bearer 直连 sso 时 IAE 500，与网关侧不对称——补 | IllegalArgumentException）；JwtUtil javadoc 补"空串/非法输入抛 IllegalArgumentException"；网关 globalcors allowCredentials+通配 origin 上生产前收紧（阶段 1 遗留）。
 
+**扩展清单（XML SQL 重构 2026-10-05 补记）**：cloud-system SQL 已全量手写（mapper XML）——**新增表/列必须遵守手写约定**：主表查询显式 `deleted = 0`、删除 `UPDATE SET deleted=1` 带 update 审计两值、INSERT/UPDATE 显式审计字段（SecurityUtils.currentAccount()）；resultType 依赖驼峰映射（application.yml 已显式声明）；SQL 与 DDL 列 drift 无编译期校验（有 MapperXmlBindingTest 封解析/绑定面，语义 drift 靠 e2e）；AuditMetaObjectHandler/@TableLogic 对手写 SQL 不生效（javadoc 已注明适用范围，留待第二个 DB 服务出现时定去留）。
+
 - [ ] **Step 4: 全量构建 + 提交**
 
 ```bash
