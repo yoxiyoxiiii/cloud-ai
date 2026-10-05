@@ -57,4 +57,28 @@ class AuditMetaObjectHandlerTest {
         MetaObject metaObject = SystemMetaObject.forObject(entity);
         assertThatCode(() -> handler.updateFill(metaObject)).doesNotThrowAnyException();
     }
+
+    @Test
+    void insertFill_fillsOperatorFromSecurityContext() {
+        var loginUser = new com.cloudai.common.security.domain.LoginUser();
+        loginUser.setAccount("admin");
+        var auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                loginUser, null, java.util.List.of());
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);
+        try {
+            OrderEntity entity = new OrderEntity();
+            handler.insertFill(SystemMetaObject.forObject(entity));
+            assertThat(entity.getCreateBy()).isEqualTo("admin");
+            assertThat(entity.getUpdateBy()).isEqualTo("admin");
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
+    @Test
+    void insertFill_noContextLeavesOperatorNull() {
+        OrderEntity entity = new OrderEntity();
+        handler.insertFill(SystemMetaObject.forObject(entity));
+        assertThat(entity.getCreateBy()).isNull();
+    }
 }

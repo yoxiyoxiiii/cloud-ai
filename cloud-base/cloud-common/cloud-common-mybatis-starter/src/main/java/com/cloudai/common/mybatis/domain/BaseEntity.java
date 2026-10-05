@@ -27,6 +27,14 @@ public abstract class BaseEntity implements Serializable {
     @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
 
+    /** 创建人（插入填充，来自登录上下文） */
+    @TableField(fill = FieldFill.INSERT)
+    private String createBy;
+
+    /** 更新人（插入和更新都填充，来自登录上下文） */
+    @TableField(fill = FieldFill.INSERT_UPDATE)
+    private String updateBy;
+
     /** 逻辑删除：0 未删除 1 已删除 */
     @TableLogic
     private Integer deleted;
