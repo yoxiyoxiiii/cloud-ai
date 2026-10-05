@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 MVN=D:/software/apache-maven-3.8.4/bin/mvn
 
-# 全量构建 + 全部测试（29 个单测）
+# 全量构建 + 全部测试（60 个单测）
 $MVN -f cloud-base/pom.xml clean install
 
 # 单模块测试
@@ -38,8 +38,9 @@ curl http://localhost:18080/system/demo/ping
 - **停服**：Git Bash 的 `$!` 是 MSYS 包装进程 PID，不是真实 java PID。用 `netstat -ano | grep LISTENING | grep :<port>` 找 PID 再 `taskkill //F //PID <pid>`。
 - **Nacos 注册 IP**：多网卡机器上 Nacos 客户端可能注册到虚拟网卡 IP（本机是 192.168.152.1），本机可达不影响；若网关 503，用环境级配置 `spring.cloud.inetutils.preferred-networks` 修（不进仓库）。
 - **端口**：网关 18080（8080 被本机 RocketMQ Dashboard 容器占用，勿改回）；9201-9203 为服务端口。
-- **Nacos** 已在 127.0.0.1:8848 运行（Docker）；Redis 6379（Docker）；MySQL 127.0.0.1:3306 为**原生服务**（root/空密码，实测 5.7.24，无 mysql 客户端——用 jshell + mysql-connector-j 执行 SQL）。
+- **Nacos** 已在 127.0.0.1:8848 运行（Docker）；Redis 6379（Docker）；MySQL 127.0.0.1:3306 为**原生服务**（root/空密码，实测 5.7.24，无 mysql 客户端——查库用 java 单文件源码 + mysql-connector-j，jshell 后台运行会挂起，见末条）。
 - 控制台中文乱码（GBK）不影响判断；Maven 输出 javac 报错为乱码时看行号即可。
+- **Git Bash curl 发中文 JSON 是 GBK**：会 500（Invalid UTF-8）——中文入参用 ASCII 或转码；jshell 后台查库会挂起，用 java 单文件源码 + mysql-connector-j。
 
 ## Architecture
 
@@ -55,12 +56,14 @@ cloud-base/
 │   ├── cloud-common-core-starter      # R<T> 统一返回、ErrorCode（1xxx通用/2xxx认证/3xxx system/4xxx bpmn）、
 │   │                              #   BusinessException + GlobalExceptionHandler（@RestControllerAdvice）、
 │   │                              #   Jackson 统一格式（GMT+8、yyyy-MM-dd HH:mm:ss、Long→String 防前端精度丢失）
-│   ├── cloud-common-security-starter # JwtUtil（HS512 静态工具，密钥由调用方传入；阶段3包装为配置 bean）
+│   ├── cloud-common-security-starter # JwtUtil（HS512 静态工具，密钥由调用方传入）
+│   │                              #   （资源端 header 认证自动配置，仅 servlet；网关 WebFlux 自带 GatewaySecurityConfig permitAll）
 │   ├── cloud-common-mybatis-starter  # BaseEntity（审计填充+@TableLogic）、分页插件（maxLimit 200）
 │   └── cloud-common-redis-starter    # RedisTemplate（String key + JSON value，@AutoConfigureBefore Boot 的 RedisAutoConfiguration）
 ├── cloud-gateway/  :18080         # WebFlux。lb:// 路由 + StripPrefix=1（/sso/x → sso 服务 /x）+ globalcors + maxAge
-├── cloud-sso/      :9201          # 认证中心（阶段3实现 JWT 双 token + Redis 在线状态）
-├── cloud-system/   :9202          # RBAC 系统管理（阶段2实现，含 /inner/** 内部接口）
+├── cloud-sso/      :9201          # 认证中心（JWT 双 token + Redis 在线状态；Feign→system /inner 取用户；
+│                                 #   在线会话纯 JSON 存 Redis sso:online:{jti}，refresh 值含 tokenId 绑定）
+├── cloud-system/   :9202          # RBAC 系统管理（用户/角色/菜单权限，含 /inner/** 内部接口）
 └── cloud-bpmn/     :9203          # Flowable 工作流（阶段4实现）
 ```
 
@@ -70,17 +73,20 @@ cloud-base/
 
 - **API 返回**：所有接口返回 `R<T>`，错误码在 body（HTTP 状态恒 200），前端按 `code` 分流；`R.fail(String)` 默认 1002 业务错误（与 BusinessException 语义对齐）。
 - **请求路径**：外部一律走网关 `/sso|system|bpmn/**`，StripPrefix 后到服务；`/inner/**` 是服务间 Feign 专用，网关屏蔽（**首个 /inner 端点必须与网关屏蔽规则同任务落地**）。
+- **认证链路**：网关验签 JWT（HTTP 401 真实状态码 + R JSON body）→ 查 Redis 在线 → 剥离伪造 X-User-* 注入真实值透传；服务层 @PreAuthorize 拒绝为 HTTP 200 + body code 403。
+- **Redis 会话契约**：sso:online:{jti} = OnlineSession 纯 JSON（无 @class，网关以 OnlineSessionView 投影解析）；sso:refresh:{userId} = {"tokenId","token"} 纯 JSON（多会话精确失效）。
+- **鉴权数据流**：权限标识 sys_menu.perms → 登录时快照进 OnlineSession → 网关透传 X-User-Perms → HeaderAuthFilter 构建 authorities → @PreAuthorize。权限变更需重新登录或 refresh 生效；删除/停用不自动踢会话（手动 sso:online:kick）。
 - **Nacos 配置**：各服务 `spring.config.import: optional:nacos:${spring.application.name}.yaml`，共享配置 `cloud-common-{profile}.yaml`；JWT 密钥、Redis 连接等放 Nacos 不进仓库。
-- **公共模块自动装配**：业务服务引依赖即生效；用户自定义同名 bean 会覆盖（@ConditionalOnMissingBean）。网关是 WebFlux——**不得引入 spring-boot-starter-web**；GlobalExceptionHandler 的 advice 只覆盖 WebMVC controller，网关错误 JSON 走 ErrorWebExceptionHandler（阶段3）。
+- **公共模块自动装配**：业务服务引依赖即生效；用户自定义同名 bean 会覆盖（@ConditionalOnMissingBean）。网关是 WebFlux——**不得引入 spring-boot-starter-web**；GlobalExceptionHandler 的 advice 只覆盖 WebMVC controller（网关鉴权拒绝由 AuthGlobalFilter 直接写 R JSON，见"认证链路"）。
 - **DDL**（阶段2起）：逻辑删除列必须 `deleted TINYINT NOT NULL DEFAULT 0`（NULL 行会被 @TableLogic 过滤隐身）。
 - **跨域只在网关做**（下游配 CORS 会产生双 ACAO 头）。
 - 包名 `com.cloudai.<service>`，groupId `com.cloudai`。
 
-### 分阶段路线（当前：阶段 1 已合并 main）
+### 分阶段路线（当前：阶段 1 已合并 main；阶段 2+3 已完成，待合并）
 
 1. ✅ 工程骨架（4 common + 4 服务 + 网关路由全链路）
-2. ⬜ cloud-system RBAC（建表 SQL、CRUD、/inner 接口）
-3. ⬜ 认证链路（sso 登录/JWT、网关全局过滤器验签+透传 X-User-*、ErrorWebExceptionHandler、/inner 屏蔽、CORS 收紧）
+2. ✅ cloud-system RBAC（建表 SQL、用户/角色/菜单 CRUD 与角色分配、/inner 接口）
+3. ✅ 认证链路（sso 登录/双 token/在线强退、网关验签+透传 X-User-*、/inner 屏蔽 403、注销/强退立即失效）
 4. ⬜ cloud-bpmn Flowable 7.2（用 `flowable-spring-boot-starter-process`，勿用全量 starter）
 
-**每个阶段开工前**：读 `docs/superpowers/plans/2026-10-04-cloud-base-phase1-skeleton.md` 末尾的"移交后续阶段的备忘"（DDL 陷阱、Redis 序列化契约、JwtUtil 配置 bean 化、网关加固硬条目、Flowable 数据源等），并按 superpowers 流程先写 spec/plan 再动代码。
+**每个阶段开工前**：读上一阶段计划末尾的移交/取舍记录——`docs/superpowers/plans/2026-10-04-cloud-base-phase1-skeleton.md`（DDL 陷阱、Redis 序列化契约、网关加固、Flowable 数据源等）与 `docs/superpowers/plans/2026-10-05-cloud-base-phase23-rbac-login.md`（refresh 键模型、权限快照失效、Bean Validation 等已知取舍），并按 superpowers 流程先写 spec/plan 再动代码。
