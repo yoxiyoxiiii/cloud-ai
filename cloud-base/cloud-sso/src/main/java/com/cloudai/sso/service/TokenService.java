@@ -85,7 +85,6 @@ public class TokenService {
         dto.setPermissions(session.getPermissions());
         dto.setStatus(0);
         LoginResult result = issueTokens(dto, session.getIp());
-        redisUtil.delete(REFRESH_KEY_PREFIX + userId);
         return result;
     }
 

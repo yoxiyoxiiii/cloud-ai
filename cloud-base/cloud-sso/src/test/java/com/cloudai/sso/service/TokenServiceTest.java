@@ -101,6 +101,29 @@ class TokenServiceTest {
     }
 
     @Test
+    void refresh_replacesTokensWithoutDeletingNewRefreshKey() throws Exception {
+        injectSecret();
+        when(redisUtil.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
+        when(redisUtil.get("sso:refresh:1")).thenReturn("rt-old");
+        OnlineSession session = new OnlineSession();
+        session.setTokenId("jti-old");
+        session.setUserId(1L);
+        session.setAccount("admin");
+        session.setPermissions(List.of("p1"));
+        session.setLoginTime(1L);
+        session.setIp("127.0.0.1");
+        when(redisUtil.keys("sso:online:*")).thenReturn(Set.of("sso:online:jti-old"));
+        when(redisUtil.get("sso:online:jti-old")).thenReturn(session);
+
+        LoginResult result = tokenService.refresh("rt-old");
+
+        assertThat(result.getRefreshToken()).isNotBlank();
+        assertThat(result.getAccessToken()).isNotBlank();
+        verify(redisUtil).delete("sso:online:jti-old");
+        verify(redisUtil, org.mockito.Mockito.never()).delete("sso:refresh:1");
+    }
+
+    @Test
     void logout_removesOnlineAndRefresh() throws Exception {
         injectSecret();
         String token = com.cloudai.common.security.util.JwtUtil.createToken(TEST_SECRET, 1L, "admin", "jti-1", 7200);
