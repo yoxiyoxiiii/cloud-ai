@@ -1,0 +1,44 @@
+server:
+  port: 18080
+
+spring:
+  application:
+    name: cloud-gateway
+  config:
+    import: optional:nacos:${spring.application.name}.yaml
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+    gateway:
+      routes:
+        - id: cloud-sso
+          uri: lb://cloud-sso
+          predicates:
+            - Path=/sso/**
+          filters:
+            - StripPrefix=1
+        - id: cloud-system
+          uri: lb://cloud-system
+          predicates:
+            - Path=/system/**
+          filters:
+            - StripPrefix=1
+        - id: cloud-bpmn
+          uri: lb://cloud-bpmn
+          predicates:
+            - Path=/bpmn/**
+          filters:
+            - StripPrefix=1
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowedOriginPatterns: "*"
+            allowedMethods: "*"
+            allowedHeaders: "*"
+            allowCredentials: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
