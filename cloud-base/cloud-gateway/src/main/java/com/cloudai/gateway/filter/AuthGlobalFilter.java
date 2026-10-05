@@ -38,16 +38,16 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    /** 前缀白名单：登录/刷新、demo、inner（SetStatus 403 屏蔽路由对匿名一致生效）、文档、监控 */
+    /** 前缀白名单：登录/刷新、demo、inner 屏蔽（SetStatus 路由接管）、网关自身监控 */
     private static final List<String> WHITELIST = List.of(
             "/sso/auth/login", "/sso/auth/refresh",
             "/sso/demo", "/system/demo", "/bpmn/demo",
             "/sso/inner", "/system/inner", "/bpmn/inner",
-            "/actuator", "/v3/api-docs", "/swagger-ui", "/webjars", "/doc");
+            "/actuator");
 
     private final StringRedisTemplate stringRedisTemplate;
 
-    /** 忽略未知字段（Redis 值带 @class 类型头指向 sso 的 OnlineSession，网关类路径无此类） */
+    /** 忽略未知字段（会话 JSON 含网关不需的字段；值格式见 SecurityConstants.ONLINE_KEY_PREFIX 契约） */
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
@@ -69,7 +69,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         Claims claims;
         try {
             claims = JwtUtil.parseToken(secret, authorization.substring(BEARER_PREFIX.length()));
-        } catch (JwtException e) {
+        } catch (JwtException | IllegalArgumentException e) {
+            // IllegalArgumentException：jjwt 对空串等非法输入抛出（非 JwtException 子类）
             return unauthorized(exchange);
         }
         // 读在线会话原始 JSON（StringRedisTemplate 规避 @class 反序列化；null=注销/强退/过期 → 401）
@@ -87,7 +88,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             // 会话值损坏按无权限处理（下游 @PreAuthorize 会拒绝）
         }
         ServerWebExchange authed = withUserHeaders(safeExchange,
-                claims.getSubject(), claims.get("account", String.class), String.join(",", perms));
+                claims.getSubject(), claims.get("account", String.class), String.join(SecurityConstants.PERMS_SEPARATOR, perms));
         return chain.filter(authed);
     }
 

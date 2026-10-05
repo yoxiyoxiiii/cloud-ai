@@ -11,7 +11,10 @@ public final class SecurityConstants {
     public static final String HEADER_USER_PERMS = "X-User-Perms";
     public static final String PERMS_SEPARATOR = ",";
 
-    /** Redis 在线会话键前缀，jti 为 JWT 的 jti 声明 */
+    /**
+     * Redis 在线会话键前缀，jti 为 JWT 的 jti 声明。
+     * 值 = OnlineSession 的纯 JSON 字符串（无 @class 类型头），网关以 OnlineSessionView 投影解析 permissions。
+     */
     public static final String ONLINE_KEY_PREFIX = "sso:online:";
 
     private SecurityConstants() {

@@ -39,8 +39,7 @@
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-common-security-starter</artifactId>
         </dependency>
-        <!-- 直接依赖 data-redis（不用 redis-starter）：网关用 StringRedisTemplate 读原始 JSON，
-             规避 @class 类型头跨服务反序列化 -->
+        <!-- 直接依赖 data-redis（不用 redis-starter）：网关用 StringRedisTemplate 读纯 JSON 会话（值格式契约见 SecurityConstants） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
