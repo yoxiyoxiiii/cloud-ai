@@ -1308,7 +1308,7 @@ com.cloudai.common.core.config.CommonJacksonAutoConfiguration
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core`
-Expected: `Tests run: 14`（含此前 12 个 + 本任务 2 个），全部 PASS，BUILD SUCCESS。
+Expected: `Tests run: 15`（含此前 13 个 + 本任务 2 个），全部 PASS，BUILD SUCCESS。
 
 - [ ] **Step 6: Commit**
 
