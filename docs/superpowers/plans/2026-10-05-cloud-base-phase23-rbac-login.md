@@ -2145,7 +2145,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Modify: `cloud-base/cloud-common/cloud-common-redis-starter/src/main/java/com/cloudai/common/redis/util/RedisUtil.java`（+keys 方法）
 - Test: `cloud-base/cloud-common/cloud-common-redis-starter/src/test/java/com/cloudai/common/redis/util/RedisUtilKeysTest.java`（连本机真实 Redis 的集成单测）
 - Modify: `cloud-base/cloud-sso/pom.xml` `application.yml` `SsoApplication.java`
-- Create: sso 下 `client/SystemUserClient.java` `client/SystemUserClientFallback.java` `dto/LoginUserDTO.java` `dto/LoginRequest.java` `dto/RefreshRequest.java` `dto/LoginResult.java` `domain/OnlineSession.java` `service/TokenService.java` `controller/AuthController.java`
+- Create: sso 下 `client/SystemUserClient.java` `client/SystemUserClientFallback.java` `dto/LoginUserDTO.java` `dto/LoginRequest.java` `dto/RefreshRequest.java` `dto/LoginResult.java` `domain/OnlineSession.java` `domain/RefreshTokenValue.java`（tokenId+token——refresh 值绑定会话，多会话精确失效） `service/TokenService.java` `controller/AuthController.java`
 - Test: `service/TokenServiceTest.java`
 
 - [ ] **Step 1: RedisUtil 加 keys 方法（含集成测试）**
@@ -2595,29 +2595,32 @@ public class TokenService {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw new BusinessException(2004, "refreshToken 不能为空");
         }
-        Long userId = null;
-        String stored = null;
-        for (String key : stringRedisTemplate.keys(REFRESH_KEY_PREFIX + "*")) {
-            String value = stringRedisTemplate.opsForValue().get(key);
-            if (refreshToken.equals(value)) {
-                userId = Long.valueOf(key.substring(REFRESH_KEY_PREFIX.length()));
-                stored = value;
+        java.util.Set<String> keys = stringRedisTemplate.keys(REFRESH_KEY_PREFIX + "*");
+        if (keys == null) {
+            throw new BusinessException(2005, "refreshToken 无效或已过期");
+        }
+        RefreshTokenValue matched = null;
+        for (String key : keys) {
+            RefreshTokenValue value = parseRefreshValue(stringRedisTemplate.opsForValue().get(key));
+            if (value != null && refreshToken.equals(value.getToken())) {
+                matched = value;
                 break;
             }
         }
-        if (userId == null || stored == null) {
+        if (matched == null) {
             throw new BusinessException(2005, "refreshToken 无效或已过期");
         }
-        // 通过在线会话取回用户信息重新签发（权限以登录时快照为准）
-        OnlineSession session = findOnlineSessionByUserId(userId);
-        if (session == null) {
+        // 读旧会话（保留 ip）；缺失即失效——精确删除绑定会话（多会话下不误杀其他端）
+        OnlineSession old = parseSession(stringRedisTemplate.opsForValue()
+                .get(SecurityConstants.ONLINE_KEY_PREFIX + matched.getTokenId()));
+        if (old == null) {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }
-        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + session.getTokenId());
+        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + matched.getTokenId());
         // 回查 system：校验账号未停用并取最新权限快照（防停用/降权用户经 refresh 保活旧权限）
         LoginUserDTO latest;
         try {
-            R<LoginUserDTO> resp = userClient.getUserByAccount(session.getAccount());
+            R<LoginUserDTO> resp = userClient.getUserByAccount(old.getAccount());
             latest = resp == null ? null : resp.getData();
         } catch (FeignException e) {
             throw new BusinessException(2002, "用户服务不可用，请稍后重试");
@@ -2626,7 +2629,7 @@ public class TokenService {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }
         // issueTokens 以新值覆盖 sso:refresh:{userId}，此处不得再 delete（曾致新 refreshToken 落地即死）
-        return issueTokens(latest, session.getIp());
+        return issueTokens(latest, old.getIp());
     }
 
     public void logout(String accessToken) {
@@ -2681,8 +2684,14 @@ public class TokenService {
         }
         stringRedisTemplate.opsForValue().set(SecurityConstants.ONLINE_KEY_PREFIX + tokenId,
                 sessionJson, accessTtlSeconds, TimeUnit.SECONDS);
+        String refreshJson;
+        try {
+            refreshJson = JSON.writeValueAsString(new RefreshTokenValue(tokenId, refreshToken));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("refreshToken 序列化失败", e);
+        }
         stringRedisTemplate.opsForValue().set(REFRESH_KEY_PREFIX + dto.getUserId(),
-                refreshToken, refreshTtlSeconds, TimeUnit.SECONDS);
+                refreshJson, refreshTtlSeconds, TimeUnit.SECONDS);
 
         LoginResult result = new LoginResult();
         result.setAccessToken(accessToken);
@@ -2691,18 +2700,26 @@ public class TokenService {
         return result;
     }
 
-    private OnlineSession findOnlineSessionByUserId(Long userId) {
-        Set<String> keys = stringRedisTemplate.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
-        if (keys == null) {
+    private RefreshTokenValue parseRefreshValue(String json) {
+        if (json == null) {
             return null;
         }
-        for (String key : keys) {
-            OnlineSession session = stringRedisTemplate.opsForValue().get(key);
-            if (session != null && userId.equals(session.getUserId())) {
-                return session;
-            }
+        try {
+            return JSON.readValue(json, RefreshTokenValue.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return null; // 旧格式/损坏值一律视为不匹配
         }
-        return null;
+    }
+
+    private OnlineSession parseSession(String json) {
+        if (json == null) {
+            return null;
+        }
+        try {
+            return JSON.readValue(json, OnlineSession.class);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return null;
+        }
     }
 }
 ```
@@ -3200,7 +3217,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 ## 已知取舍与阶段后续（Task 9 质量审查记档）
 
-- **refresh 键模型**：当前 `sso:refresh:{userId}` 单值 + KEYS 扫描——未认证的 /auth/refresh 可放大 Redis CPU；多端登录时单活跃 refreshToken（后登录覆盖前者）且 refresh 取"第一个" online session 行为不确定。阶段 3 优化：refresh 以 token 自身为键存 `sso:refresh-token:{token}` → {userId, jti}，单次 GET 定位，消除 KEYS。
+- **refresh 键模型**：`sso:refresh:{userId}` 单值（JSON 含 tokenId 绑定，多会话精确失效——Task 12 验收修复）；仍用 KEYS 扫描定位（未认证的 /auth/refresh 可放大 Redis CPU）。阶段 3 优化：refresh 以 token 自身为键存 `sso:refresh-token:{token}` → {userId, jti}，单次 GET 定位，消除 KEYS。多端登录仍单活跃 refreshToken（后登录覆盖前者，首端 refresh 得 2005）——与 accessToken 多会话并存模型不一致，产品语义确认后统一。
 - **登录无锁定/限速/验证码**：内网部署可接受；上公网前必须补（配合上面的 refresh 未认证面）。
 - **refresh 滑动窗口**：每次刷新重置 7d，无绝对上限——MVP 接受。
 - **Feign fallback 前置条件**：`spring.cloud.openfeign.circuitbreaker.enabled=true` + circuitbreaker 依赖才生效；未启用时 TokenService 显式 catch FeignException 兜底 2002。
