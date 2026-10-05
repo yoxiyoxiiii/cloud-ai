@@ -1,9 +1,9 @@
 ---
-name: cloud-system-crud
-description: 在 cloud-system（或新 DB 服务）新增实体/管理端点/CRUD 五件套时使用——建表、实体、Mapper 接口、mapper XML、Service、Controller 模板与规范检查清单。凡涉及"新增表/新增接口/新增 CRUD/新增 /inner 端点"均应触发本技能。
+name: backend-crud
+description: 在任意后端服务（cloud-system/cloud-bpmn/新增 DB 服务）新增实体/管理端点/CRUD 五件套时使用——建表、实体、Mapper 接口、mapper XML、Service、Controller 模板与规范检查清单。凡涉及"新增表/新增接口/新增 CRUD/新增 /inner 端点"均应触发本技能。
 ---
 
-# cloud-system CRUD 五件套模板
+# 后端 CRUD 五件套模板（适用于所有 DB 服务）
 
 按此技能创建的代码自动满足 CLAUDE.md"编码规范"与 ArchitectureGuardTest。以新增实体 `XxxYyy`（表 `xxx_yyy`）为例，逐层给出模板。
 
@@ -25,12 +25,12 @@ CREATE TABLE xxx_yyy (
 
 要点：审计四列 + `deleted TINYINT NOT NULL DEFAULT 0`；唯一键 `uk_xxx`；纯关系表（无业务生命周期的关联）**不要** deleted/审计列。
 
-权限种子（管理端点需要）追加到 sys_menu INSERT（ perms 形如 `system:xxx:list/add/edit/remove`）+ `INSERT INTO sys_role_menu ... SELECT 1, id FROM sys_menu` 增量。
+权限种子（管理端点需要）：权限体系集中在 cloud-system 的 sys_menu——追加 INSERT（perms 形如 `<svc>:xxx:list/add/edit/remove`，`<svc>` 为本服务短名如 system/bpmn）+ `INSERT INTO sys_role_menu ... SELECT 1, id FROM sys_menu` 增量。
 
 ## 步骤 1：实体（entity/XxxYyy.java）
 
 ```java
-package com.cloudai.system.entity;
+package com.cloudai.<service>.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
@@ -61,11 +61,11 @@ public class XxxYyy extends BaseEntity {
 ## 步骤 2：Mapper 接口（mapper/XxxYyyMapper.java）
 
 ```java
-package com.cloudai.system.mapper;
+package com.cloudai.<service>.mapper;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.cloudai.system.entity.XxxYyy;
+import com.cloudai.<service>.entity.XxxYyy;
 import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 
@@ -100,19 +100,19 @@ public interface XxxYyyMapper {
 ```xml
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.cloudai.system.mapper.XxxYyyMapper">
+<mapper namespace="com.cloudai.<service>.mapper.XxxYyyMapper">
 
     <sql id="allColumns">
         id, name, status, create_by, create_time, update_by, update_time, deleted
     </sql>
 
-    <select id="selectXxxById" resultType="com.cloudai.system.entity.XxxYyy">
+    <select id="selectXxxById" resultType="com.cloudai.<service>.entity.XxxYyy">
         SELECT <include refid="allColumns"/> FROM xxx_yyy
         WHERE id = #{id} AND deleted = 0
     </select>
 
     <!-- 分页：不写 LIMIT，PaginationInnerInterceptor 接管（maxLimit 200） -->
-    <select id="selectXxxPage" resultType="com.cloudai.system.entity.XxxYyy">
+    <select id="selectXxxPage" resultType="com.cloudai.<service>.entity.XxxYyy">
         SELECT <include refid="allColumns"/> FROM xxx_yyy
         WHERE deleted = 0
         ORDER BY id DESC
@@ -156,7 +156,7 @@ public interface XxxYyyMapper {
 ## 步骤 4：Service（service/XxxYyyManageService.java）
 
 ```java
-package com.cloudai.system.service;
+package com.cloudai.<service>.service;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -164,8 +164,8 @@ import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
-import com.cloudai.system.entity.XxxYyy;
-import com.cloudai.system.mapper.XxxYyyMapper;
+import com.cloudai.<service>.entity.XxxYyy;
+import com.cloudai.<service>.mapper.XxxYyyMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -176,7 +176,7 @@ import java.time.LocalDateTime;
 @RequiredArgsConstructor
 public class XxxYyyManageService {
 
-    /** 接续 3001-3007 之后分配 */
+    /** 错误码按服务分段接续分配：1xxx 通用 / 2xxx 认证 / 3xxx system（现用至 3007）/ 4xxx bpmn */
     private static final int ERR_XXX_NOT_FOUND = 3008;
     private static final int ERR_XXX_DUP = 3009;
 
@@ -256,13 +256,13 @@ public class XxxYyyManageService {
 ## 步骤 5：Controller（controller/XxxYyyController.java）
 
 ```java
-package com.cloudai.system.controller;
+package com.cloudai.<service>.controller;
 
 import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;
-import com.cloudai.system.entity.XxxYyy;
-import com.cloudai.system.service.XxxYyyManageService;
+import com.cloudai.<service>.entity.XxxYyy;
+import com.cloudai.<service>.service.XxxYyyManageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -282,35 +282,35 @@ public class XxxYyyController {
     private final XxxYyyManageService manageService;
 
     @GetMapping("/page")
-    @PreAuthorize("hasAuthority('system:xxx:list')")
+    @PreAuthorize("hasAuthority('<svc>:xxx:list')")
     public R<PageResult<XxxYyy>> page(PageQuery query) {
         PageResult<XxxYyy> page = manageService.page(query);
         return R.ok(page);
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAuthority('system:xxx:list')")
+    @PreAuthorize("hasAuthority('<svc>:xxx:list')")
     public R<XxxYyy> detail(@PathVariable("id") Long id) {
         XxxYyy xxx = manageService.detail(id);
         return R.ok(xxx);
     }
 
     @PostMapping
-    @PreAuthorize("hasAuthority('system:xxx:add')")
+    @PreAuthorize("hasAuthority('<svc>:xxx:add')")
     public R<Long> add(@RequestBody XxxYyy xxx) {
         Long id = manageService.add(xxx);
         return R.ok(id);
     }
 
     @PutMapping
-    @PreAuthorize("hasAuthority('system:xxx:edit')")
+    @PreAuthorize("hasAuthority('<svc>:xxx:edit')")
     public R<Void> edit(@RequestBody XxxYyy xxx) {
         manageService.edit(xxx);
         return R.ok();
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAuthority('system:xxx:remove')")
+    @PreAuthorize("hasAuthority('<svc>:xxx:remove')")
     public R<Void> remove(@PathVariable("id") Long id) {
         manageService.remove(id);
         return R.ok();
@@ -326,7 +326,7 @@ public class XxxYyyController {
 - [ ] INSERT 显式审计四值 / UPDATE 两值（Service 构造）？
 - [ ] 全部 `#{}`，无 `${}`？分页无 LIMIT？
 - [ ] Controller 两行式 + `@PathVariable("id")` 显式 + 每个管理端点有 @PreAuthorize？
-- [ ] 权限标识已入 sys_menu 种子并映射 admin 角色？
-- [ ] 唯一键查重 + DuplicateKey 兜底？错误码接续分段？
-- [ ] `mvn -f cloud-base/pom.xml clean install` 全绿（含 ArchitectureGuardTest 与 MapperXmlBindingTest）？
+- [ ] 权限标识已入 sys_menu 种子（cloud-system 库）并映射 admin 角色？
+- [ ] 唯一键查重 + DuplicateKey 兜底？错误码按本服务分段接续分配？
+- [ ] `mvn -f cloud-base/pom.xml clean install -pl cloud-<service> -am` 全绿？本服务若有 ArchitectureGuardTest/MapperXmlBindingTest 一并通过（cloud-system 已有，新 DB 服务建议复制这两个守护测试）？
 - [ ] 起服务 curl 新端点（带 admin X-User-* header 直连）验证 + DB 抽查审计字段？

@@ -82,7 +82,7 @@ cloud-base/
 - **跨域只在网关做**（下游配 CORS 会产生双 ACAO 头）。
 - 包名 `com.cloudai.<service>`，groupId `com.cloudai`。
 
-### 编码规范（自 cloud-system 沉淀；三层保障 = 本节 + `/cloud-system-crud` 技能 + ArchitectureGuardTest）
+### 编码规范（自 cloud-system 沉淀、适用全部后端服务；三层保障 = 本节 + `/backend-crud` 技能 + ArchitectureGuardTest）
 
 **分层依赖**：Controller → Service → Mapper（XML）。Controller 禁止 import mapper；Feign 内部接口放 `controller/feign/` 子包。
 
@@ -110,7 +110,7 @@ cloud-base/
 
 **DTO/实体**：密码类敏感字段 `@ToString.Exclude` + `@JsonProperty(WRITE_ONLY)`；关联表实体不继承 BaseEntity（纯关系，无逻辑删除列）
 
-**新增 CRUD 端点**：使用 `/cloud-system-crud` 技能（五件套模板 + 检查清单）；机械规则由 `cloud-system` 的 `ArchitectureGuardTest` 强制（内联 R.ok/隐式 @PathVariable/Wrapper/BaseMapper/controller 依赖 mapper/XML `${}` 等，写错构建即红）。
+**新增 CRUD 端点**：使用 `/backend-crud` 技能（五件套模板 + 检查清单，适用于所有后端服务）；机械规则由 `cloud-system` 的 `ArchitectureGuardTest` 强制（内联 R.ok/隐式 @PathVariable/Wrapper/BaseMapper/controller 依赖 mapper/XML `${}` 等，写错构建即红）。
 
 ### 分阶段路线（当前：阶段 1 已合并 main；阶段 2+3 已完成，待合并）
 
