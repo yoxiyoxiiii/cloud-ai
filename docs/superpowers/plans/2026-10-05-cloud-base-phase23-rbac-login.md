@@ -295,6 +295,18 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-security</artifactId>
         </dependency>
+        <!-- spring-security-web 的 servlet-api 是 provided 不传递，过滤器主代码需要它 -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- 装配测试脚手架 @EnableWebMvc 需要 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+            <scope>test</scope>
+        </dependency>
 ```
 
 （父 pom dependencyManagement 需先加内部模块 `cloud-common-core-starter` 条目——Task 1 阶段已存在；无需版本号。）
@@ -367,7 +379,7 @@ class HeaderAuthFilterTest {
         assertThat(user.getUserId()).isEqualTo(1L);
         assertThat(user.getAccount()).isEqualTo("admin");
         assertThat(user.getPermissions()).containsExactly("system:user:list", "system:user:add");
-        assertThat(auth.getAuthorities())
+        assertThat(new java.util.ArrayList<org.springframework.security.core.GrantedAuthority>(auth.getAuthorities()))
                 .contains(new SimpleGrantedAuthority("system:user:list"), new SimpleGrantedAuthority("system:user:add"));
     }
 
