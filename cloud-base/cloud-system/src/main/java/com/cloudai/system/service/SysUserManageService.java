@@ -97,7 +97,7 @@ public class SysUserManageService {
         requireUser(userId);
         userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, userId));
         if (roleIds != null) {
-            roleIds.forEach(roleId -> {
+            roleIds.stream().distinct().forEach(roleId -> {
                 SysUserRole ur = new SysUserRole();
                 ur.setUserId(userId);
                 ur.setRoleId(roleId);
