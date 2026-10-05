@@ -60,9 +60,15 @@
     <update id="updateUser">
         UPDATE sys_user
         <set>
-            <if test="nickname != null">nickname = #{nickname},</if>
-            <if test="status != null">status = #{status},</if>
-            <if test="updateBy != null">update_by = #{updateBy},</if>
+            <if test="nickname != null">
+                nickname = #{nickname},
+            </if>
+            <if test="status != null">
+                status = #{status},
+            </if>
+            <if test="updateBy != null">
+                update_by = #{updateBy},
+            </if>
             update_time = #{updateTime},
         </set>
         WHERE id = #{id} AND deleted = 0
