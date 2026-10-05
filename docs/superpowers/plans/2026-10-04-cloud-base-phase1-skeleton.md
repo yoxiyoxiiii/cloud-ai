@@ -2291,6 +2291,7 @@ spring:
             allowedMethods: "*"
             allowedHeaders: "*"
             allowCredentials: true
+            maxAge: 3600
 
 management:
   endpoints:
@@ -2456,7 +2457,8 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 - **阶段 2**：真实端点上线时补 `HttpMessageNotReadableException`（脏 JSON → 1001/400）等框架协议异常 handler；明确"HTTP 状态恒 200、错误看 body.code"是否有意并写进文档（否则监控按 HTTP status 统计会失真）。**建表 DDL：`deleted TINYINT NOT NULL DEFAULT 0`**——@TableLogic 逻辑删除下，NULL 行会被 MP 的 `deleted = 0` 过滤条件隐身且 removeById 匹配不到；后续若加乐观锁/防全表攻击等 InnerInterceptor，保持 PaginationInnerInterceptor 在拦截器链最后。cloud-system 引入 common-mybatis/redis 后需在 Application 类加 `@MapperScan("com.cloudai.system.mapper")`（common-mybatis 未内置扫描，漏掉会报 Invalid bound statement）；数据源配置放 Nacos `cloud-system.yaml` 还是本地 yml 需在阶段 2 计划时定夺。
 - **阶段 4（cloud-bpmn）**：Flowable 用 `flowable-spring-boot-starter-process`（勿用全量 starter，白拉 CMMN/DMN/App 引擎）；starter 传递带入 spring-boot-starter-jdbc——**数据源配置必须与 Flowable 依赖同任务落地**，否则 Hikari 启动即失败；Flowable 与 MP 共用 cloud_bpmn 库；`@MapperScan("com.cloudai.bpmn.mapper")`；`flowable.database-schema-update` 默认 true 自动建 ACT_* 表（生产环境收敛策略阶段 4 定）；数据源放 Nacos cloud-bpmn.yaml 还是本地 yml 阶段 4 定。
-- **阶段 3**：网关统一 401/403/503 JSON 走 `ErrorWebExceptionHandler`（WebFlux），不是 GlobalExceptionHandler advice；网关引入 common-core 前先确认 WebFlux 异常类型（WebExchangeBindException 与 MethodArgumentNotValidException 继承链不相交）。JwtUtil 应包装为配置 bean：启动时校验密钥长度（>=64 字节）fail-fast 并持有 Nacos 属性；若升级 RS256，先约定"字符串编码密钥材料（PEM）"——sso 持私钥、网关持公钥时同一参数语义不同。createBy/updateBy 审计填充：扩展 AuditMetaObjectHandler（或子类替换），不要并行注册第二个 MetaObjectHandler bean——@ConditionalOnMissingBean 会让时间填充被静默禁用。
+- **阶段 3（网关加固硬条目）**：CORS `allowCredentials:true` + `allowedOriginPatterns:"*"` 语义等于任意站可发带凭据请求——阶段 3 必须决策是否真需要 credentials（纯 header token 大概率不需要，置 false 整体消解）并按环境收紧 origin（走 Nacos）；**跨阶段不变式：首个 /inner 端点落地必须与网关 /inner 屏蔽规则同一任务**（否则阶段 2 的 /system/inner/** 在阶段 3 前对外可达，网关屏蔽只是边界防御，生产还需网络隔离兜底）；补 gateway httpclient connect-timeout/response-timeout（reactor-netty 默认无响应超时）；路由定义最终归属（本地 yml vs Nacos dataId）需明确避免两处漂移；"跨域只在网关做"写进服务开发约定（下游加 CORS 会双 ACAO 头）。
+- **阶段 3（其他）**：网关统一 401/403/503 JSON 走 `ErrorWebExceptionHandler`（WebFlux），不是 GlobalExceptionHandler advice；网关引入 common-core 前先确认 WebFlux 异常类型（WebExchangeBindException 与 MethodArgumentNotValidException 继承链不相交）。JwtUtil 应包装为配置 bean：启动时校验密钥长度（>=64 字节）fail-fast 并持有 Nacos 属性；若升级 RS256，先约定"字符串编码密钥材料（PEM）"——sso 持私钥、网关持公钥时同一参数语义不同。createBy/updateBy 审计填充：扩展 AuditMetaObjectHandler（或子类替换），不要并行注册第二个 MetaObjectHandler bean——@ConditionalOnMissingBean 会让时间填充被静默禁用。
 
 ### 阶段 3 Redis 序列化备忘（来自 Task 8 质量审查，均有实证）
 
