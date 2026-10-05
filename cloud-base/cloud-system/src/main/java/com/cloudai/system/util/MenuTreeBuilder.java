@@ -26,7 +26,6 @@ public final class MenuTreeBuilder {
         menus.stream().map(SysMenu::getParentId).distinct()
                 .filter(pid -> pid != 0 && menus.stream().noneMatch(m -> m.getId().equals(pid)))
                 .forEach(pid -> roots.addAll(byParent.getOrDefault(pid, List.of())));
-        roots.addAll(byParent.getOrDefault(null, List.of()));
         sortNodes(roots);
         byParent.values().forEach(MenuTreeBuilder::sortNodes);
         roots.forEach(root -> fillChildren(root, byParent));

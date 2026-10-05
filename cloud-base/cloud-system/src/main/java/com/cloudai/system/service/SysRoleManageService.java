@@ -38,14 +38,8 @@ public class SysRoleManageService {
     }
 
     public Long add(SysRole role) {
-        if (role.getRoleKey() == null || role.getRoleKey().isBlank()) {
-            throw new BusinessException("角色标识不能为空");
-        }
-        Long exists = roleMapper.selectCount(new LambdaQueryWrapper<SysRole>()
-                .eq(SysRole::getRoleKey, role.getRoleKey()));
-        if (exists > 0) {
-            throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
-        }
+        assertRoleKeyValid(role.getRoleKey());
+        assertRoleKeyFree(role.getRoleKey(), null);
         try {
             roleMapper.insert(role);
         } catch (org.springframework.dao.DuplicateKeyException e) {
@@ -56,7 +50,31 @@ public class SysRoleManageService {
 
     public void edit(SysRole role) {
         requireRole(role.getId());
-        roleMapper.updateById(role);
+        if (role.getRoleKey() != null) {
+            assertRoleKeyValid(role.getRoleKey());
+            assertRoleKeyFree(role.getRoleKey(), role.getId());
+        }
+        try {
+            roleMapper.updateById(role);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
+        }
+    }
+
+    private void assertRoleKeyValid(String roleKey) {
+        if (roleKey == null || roleKey.isBlank()) {
+            throw new BusinessException("角色标识不能为空");
+        }
+    }
+
+    /** 预检（编辑时排除自身）；逻辑删除墓碑仍占 uk_role_key，并发/墓碑场景由 DuplicateKey 兜底 */
+    private void assertRoleKeyFree(String roleKey, Long excludeId) {
+        Long count = roleMapper.selectCount(new LambdaQueryWrapper<SysRole>()
+                .eq(SysRole::getRoleKey, roleKey)
+                .ne(excludeId != null, SysRole::getId, excludeId));
+        if (count > 0) {
+            throw new BusinessException(3003, "角色标识已存在: " + roleKey);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
