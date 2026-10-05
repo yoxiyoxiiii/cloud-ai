@@ -1398,6 +1398,27 @@ class JwtUtilTest {
         assertThatThrownBy(() -> JwtUtil.parseToken(SECRET, tampered))
                 .isInstanceOf(JwtException.class);
     }
+
+    @Test
+    void createToken_nullUserIdThrows() {
+        assertThatThrownBy(() -> JwtUtil.createToken(SECRET, null, "admin", "token-uuid-5", 7200))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("userId");
+    }
+
+    @Test
+    void createToken_shortSecretThrows() {
+        assertThatThrownBy(() -> JwtUtil.createToken("short-secret", 1L, "admin", "token-uuid-6", 7200))
+                .isInstanceOf(io.jsonwebtoken.security.WeakKeyException.class);
+    }
+
+    @Test
+    void createToken_expEqualsIatPlusTtl() {
+        long ttl = 7200;
+        String token = JwtUtil.createToken(SECRET, 1L, "admin", "token-uuid-7", ttl);
+        Claims claims = JwtUtil.parseToken(SECRET, token);
+        assertThat(claims.getExpiration().getTime() - claims.getIssuedAt().getTime()).isEqualTo(ttl * 1000);
+    }
 }
 ```
 
@@ -1419,6 +1440,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Date;
+import java.util.Objects;
 
 /**
  * JWT 工具（HS512）。密钥由调用方传入（来自 Nacos 配置），便于阶段 3 升级 RS256 时只改本类。
@@ -1435,9 +1457,10 @@ public final class JwtUtil {
      * @param userId     用户 ID（写入 subject）
      * @param account    账号（写入 account claim）
      * @param tokenId    会话唯一标识（写入 jti，用于 Redis 在线状态）
-     * @param ttlSeconds 有效期（秒）
+     * @param ttlSeconds 有效期（秒），非正值将签发立即过期的令牌
      */
     public static String createToken(String secret, Long userId, String account, String tokenId, long ttlSeconds) {
+        Objects.requireNonNull(userId, "userId");
         SecretKey key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         Instant now = Instant.now();
         return Jwts.builder()
@@ -1451,7 +1474,7 @@ public final class JwtUtil {
     }
 
     /**
-     * 解析并验签。签名不对/过期/篡改分别抛 SignatureException / ExpiredJwtException / JwtException。
+     * 解析并验签。失败统一抛 JwtException 子类；过期为 ExpiredJwtException，密钥不符为 SignatureException。
      */
     public static Claims parseToken(String secret, String token) {
         SecretKey key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
@@ -1467,7 +1490,7 @@ public final class JwtUtil {
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-security`
-Expected: `Tests run: 4, Failures: 0, Errors: 0`，BUILD SUCCESS。
+Expected: `Tests run: 7, Failures: 0, Errors: 0`，BUILD SUCCESS。
 
 - [ ] **Step 5: Commit**
 
@@ -2387,6 +2410,6 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ### 移交后续阶段的备忘（来自阶段 1 质量审查）
 
 - **阶段 2**：真实端点上线时补 `HttpMessageNotReadableException`（脏 JSON → 1001/400）等框架协议异常 handler；明确"HTTP 状态恒 200、错误看 body.code"是否有意并写进文档（否则监控按 HTTP status 统计会失真）。
-- **阶段 3**：网关统一 401/403/503 JSON 走 `ErrorWebExceptionHandler`（WebFlux），不是 GlobalExceptionHandler advice；网关引入 common-core 前先确认 WebFlux 异常类型（WebExchangeBindException 与 MethodArgumentNotValidException 继承链不相交）。
+- **阶段 3**：网关统一 401/403/503 JSON 走 `ErrorWebExceptionHandler`（WebFlux），不是 GlobalExceptionHandler advice；网关引入 common-core 前先确认 WebFlux 异常类型（WebExchangeBindException 与 MethodArgumentNotValidException 继承链不相交）。JwtUtil 应包装为配置 bean：启动时校验密钥长度（>=64 字节）fail-fast 并持有 Nacos 属性；若升级 RS256，先约定"字符串编码密钥材料（PEM）"——sso 持私钥、网关持公钥时同一参数语义不同。
 - **计划自检补充维度**：涉及 WebFlux 的断言需核对 WebFlux 实际异常类型。
 
