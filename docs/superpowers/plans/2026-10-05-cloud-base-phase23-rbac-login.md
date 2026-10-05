@@ -46,7 +46,8 @@ cloud-base/
 │   │   ├── mapper/（5 个 BaseMapper 接口）                             # T5
 │   │   ├── dto/LoginUserDTO.java                                       # T5
 │   │   ├── service/（SysUserService/SysRoleService/SysMenuService）    # T5/T7/T8
-│   │   ├── controller/（InnerUserController/SysUserController/SysRoleController/SysMenuController） # T6/T7/T8
+│   │   ├── controller/（SysUserController/SysRoleController/SysMenuController） # T7/T8
+│   │   │   └── feign/InnerUserController.java  # T6（服务间 Feign 接口独立存放）
 │   │   └── util/MenuTreeBuilder.java                                   # T8（纯函数 TDD）
 ├── cloud-sso/
 │   ├── pom.xml（+security/redis starter、openfeign、loadbalancer）
@@ -1250,7 +1251,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ## Task 6: /inner 内部用户接口
 
 **Files:**
-- Create: `cloud-base/cloud-system/src/main/java/com/cloudai/system/controller/InnerUserController.java`
+- Create: `cloud-base/cloud-system/src/main/java/com/cloudai/system/controller/feign/InnerUserController.java`（feign 子包单独存放服务间接口；package 为 com.cloudai.system.controller.feign）
 
 - [ ] **Step 1: 实现**
 

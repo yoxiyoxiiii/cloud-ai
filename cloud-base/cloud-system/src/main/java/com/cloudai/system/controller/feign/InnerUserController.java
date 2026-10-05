@@ -1,4 +1,4 @@
-package com.cloudai.system.controller;
+package com.cloudai.system.controller.feign;
 
 import com.cloudai.common.core.domain.R;
 import com.cloudai.system.dto.LoginUserDTO;
