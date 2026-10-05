@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * Redis 薄封装：只封装本项目用到的方法，不做大而全
+ * <p>pipeline/transaction 上下文中 Boolean 方法可能返回 null。</p>
  */
 @RequiredArgsConstructor
 public class RedisUtil {
@@ -21,6 +22,9 @@ public class RedisUtil {
         redisTemplate.opsForValue().set(key, value, timeout, unit);
     }
 
+    /**
+     * 读取值；类型由调用方保证匹配，否则在调用点抛 ClassCastException
+     */
     @SuppressWarnings("unchecked")
     public <T> T get(String key) {
         return (T) redisTemplate.opsForValue().get(key);
