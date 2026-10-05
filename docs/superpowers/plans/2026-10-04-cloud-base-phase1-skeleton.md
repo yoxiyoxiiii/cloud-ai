@@ -1011,6 +1011,7 @@ package com.cloudai.common.core.exception;
 import com.cloudai.common.core.domain.R;
 import org.junit.jupiter.api.Test;
 import org.springframework.validation.BeanPropertyBindingResult;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -1036,7 +1037,7 @@ class GlobalExceptionHandlerTest {
 
     @Test
     void validException_mapsToParamError() {
-        BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(new Object(), "dto");
+        BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(new SampleDto(), "dto");
         bindingResult.rejectValue("userName", "NotBlank", "不能为空");
         MethodArgumentNotValidException e = new MethodArgumentNotValidException(null, bindingResult);
         R<Void> r = handler.handleValidException(e);
@@ -1049,6 +1050,14 @@ class GlobalExceptionHandlerTest {
         R<Void> r = handler.handleException(new RuntimeException("boom"));
         assertThat(r.getCode()).isEqualTo(500);
         assertThat(r.getMsg()).isEqualTo("系统异常，请稍后重试");
+    }
+
+    /** 仅用于提供可读属性：BeanPropertyBindingResult.rejectValue 需要目标 bean 存在对应 getter */
+    static class SampleDto {
+
+        public String getUserName() {
+            return null;
+        }
     }
 }
 ```
