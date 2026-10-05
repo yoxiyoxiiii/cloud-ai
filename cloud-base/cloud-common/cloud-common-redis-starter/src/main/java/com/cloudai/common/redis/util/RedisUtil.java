@@ -41,4 +41,9 @@ public class RedisUtil {
     public Boolean hasKey(String key) {
         return redisTemplate.hasKey(key);
     }
+
+    /** 按模式取键名集合（在线列表等小规模扫描用；键量大时换 SCAN） */
+    public java.util.Set<String> keys(String pattern) {
+        return redisTemplate.keys(pattern);
+    }
 }
