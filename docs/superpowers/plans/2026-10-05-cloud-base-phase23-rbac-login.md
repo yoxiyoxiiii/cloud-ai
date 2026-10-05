@@ -708,19 +708,20 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 **Files:**
 - Modify: `cloud-base/cloud-common/cloud-common-mybatis-starter/src/main/java/com/cloudai/common/mybatis/domain/BaseEntity.java`
 - Modify: `.../handler/AuditMetaObjectHandler.java`
-- Modify: `.../pom.xml`（+cloud-common-security-starter 依赖）
+- Modify: `.../pom.xml`（+spring-security-core 依赖）
 - Test: 修改既有 `AuditMetaObjectHandlerTest.java`
 
 - [ ] **Step 1: pom 增加依赖**
 
 ```xml
+        <!-- 仅用 SecurityContextHolder 读取操作人；避免传递整套安全栈（LoginUser 已下沉 core-starter） -->
         <dependency>
-            <groupId>com.cloudai</groupId>
-            <artifactId>cloud-common-security-starter</artifactId>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-core</artifactId>
         </dependency>
 ```
 
-（用于读取登录上下文；其自动配置在纯单测环境不激活，无副作用。）
+（不依赖 security-starter——否则 DB 消费者被传递激活整套 servlet 安全机制。）
 
 - [ ] **Step 2: 追加失败测试**（`AuditMetaObjectHandlerTest` 内新增）
 
@@ -846,7 +847,7 @@ public class AuditMetaObjectHandler implements MetaObjectHandler {
 - [ ] **Step 6: 运行测试确认通过**
 
 Run: `D:/software/apache-maven-3.8.4/bin/mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-mybatis-starter`
-Expected: `Tests run: 6`（原 4 + 新 2），全绿。
+Expected: `Tests run: 7`（原 4 + 新 3），全绿。
 
 - [ ] **Step 7: Commit**
 
@@ -3034,7 +3035,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ## 计划自检记录（写计划时核对）
 
 1. **Spec 覆盖**：RBAC 5 表（T2）、CRUD+分配（T7/T8）、登录聚合/inner（T5/T6）、账密登录双 token（T9）、网关鉴权+inner 屏蔽（T10）、@PreAuthorize 全链路（T3/T11）、注销/刷新/强退（T9/T12）、审计联动（T4/T12）。设计 §9 未做项已在范围精简声明。
-2. **类型一致性**：LoginUser（security-starter）/LoginUserDTO（system 与 sso 两份同构）/OnlineSession（sso）字段对齐；SecurityConstants 常量为网关与资源端唯一来源；R.fail(401/403/2001-2005/3001-3006) 错误码分段符合设计（2xxx 认证/3xxx system）。
+2. **类型一致性**：LoginUser（core-starter，2026-10-05 审查后从 security-starter 下沉）/LoginUserDTO（system 与 sso 两份同构）/OnlineSession（sso）字段对齐；SecurityConstants 常量为网关与资源端唯一来源；R.fail(401/403/2001-2005/3001-3006) 错误码分段符合设计（2xxx 认证/3xxx system）。
 3. **已知执行期决策点（留给实现者，需在提交说明记录）**：网关读取 OnlineSession 的反序列化方案（T10 Step 3 注——@class 类型头与 OnlineHolder 的兼容性以实测为准）。
 4. **风险预案**：H2 未引入，CRUD 逻辑靠 T11/T12 端到端验证；MySQL 连接失败先检查 3306 进程与空密码；Feign 首调超时注意 loadbalancer 缓存预热。
 
