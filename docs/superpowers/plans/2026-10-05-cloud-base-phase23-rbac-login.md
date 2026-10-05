@@ -3196,6 +3196,8 @@ Expected: create_by='admin'、create_time 非空（网关透传→HeaderAuthFilt
 
 - [ ] **Step 3: 设计文档 §9 附加精简记录**：注明 2026-10-05 按"最小闭环"执行——验证码/登录日志/部门/岗位/字典/参数/操作日志未做，列后续扩展清单。**扩展清单（Task 7/8 质量审查记档）**：删除/停用用户**及角色/菜单变更**均不联动失效 sso 在线会话（快照权限最长存活 2h，手动补救 sso:online:kick；后续可加 remove→sso inner 踢会话）；入参 Bean Validation（@NotBlank/@Size/@Valid，account/nickname 30 字符、status 取值、BCrypt 72 字节明文上限，与 HttpMessageNotReadableException 400 映射一起补）；删除/改自己角色的自杀防护（拒绝操作当前登录用户）；逻辑删除行占用 uk_account/**uk_role_key** 的长期策略（墓碑或物理清理；删后重建同 key 报误导性"已存在"）；resetPassword 换正式 DTO；menuIdsOf 对不存在角色返回空列表（与 3004 不一致，可统一）；assignMenus 可写入指向已删菜单的幽灵行（回显污染，无害）；listAll 二级排序 orderByAsc(id) 固定同 sort 兄弟顺序。
 
+**扩展清单（终审补充 2026-10-05）**：网关白名单 startsWith 无路径边界（新增 /system/demo-data 类前缀接口会意外免 token——改精确匹配或加 / 边界）；角色/菜单 add/edit 以实体作 @RequestBody（entity-as-DTO 可注入 id/deleted——换正式 Request DTO 时收敛）；TokenService.logout 仅 catch JwtException（空 Bearer 直连 sso 时 IAE 500，与网关侧不对称——补 | IllegalArgumentException）；JwtUtil javadoc 补"空串/非法输入抛 IllegalArgumentException"；网关 globalcors allowCredentials+通配 origin 上生产前收紧（阶段 1 遗留）。
+
 - [ ] **Step 4: 全量构建 + 提交**
 
 ```bash
