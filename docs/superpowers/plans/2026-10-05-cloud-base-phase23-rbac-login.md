@@ -1731,22 +1731,24 @@ public final class MenuTreeBuilder {
         Map<Long, List<MenuTreeNode>> byParent = menus.stream()
                 .map(MenuTreeBuilder::toNode)
                 .collect(Collectors.groupingBy(MenuTreeNode::getParentId));
-        List<MenuTreeNode> roots = new java.util.ArrayList<>(byParent.getOrDefault(0L, List.of()));
+        List<MenuTreeNode> roots = new ArrayList<>(byParent.getOrDefault(0L, List.of()));
         // 孤儿节点（父不存在于集合中）也挂到根级，避免数据问题导致菜单消失
         menus.stream().map(SysMenu::getParentId).distinct()
                 .filter(pid -> pid != 0 && menus.stream().noneMatch(m -> m.getId().equals(pid)))
                 .forEach(pid -> roots.addAll(byParent.getOrDefault(pid, List.of())));
-        roots.addAll(byParent.getOrDefault(null, List.of()));
-        roots.sort(Comparator.comparing(MenuTreeNode::getSort,
-                Comparator.nullsLast(Comparator.naturalOrder())));
-        byParent.values().forEach(children -> children.sort(Comparator
-                .comparing(MenuTreeNode::getSort, Comparator.nullsLast(Comparator.naturalOrder()))));
+        sortNodes(roots);
+        byParent.values().forEach(MenuTreeBuilder::sortNodes);
         roots.forEach(root -> fillChildren(root, byParent));
         return roots;
     }
 
+    private static void sortNodes(List<MenuTreeNode> nodes) {
+        nodes.sort(Comparator.comparing(MenuTreeNode::getSort,
+                Comparator.nullsLast(Comparator.naturalOrder())));
+    }
+
     private static void fillChildren(MenuTreeNode node, Map<Long, List<MenuTreeNode>> byParent) {
-        node.setChildren(new java.util.ArrayList<>(byParent.getOrDefault(node.getId(), List.of())));
+        node.setChildren(new ArrayList<>(byParent.getOrDefault(node.getId(), List.of())));
         node.getChildren().forEach(child -> fillChildren(child, byParent));
     }
 
@@ -1811,14 +1813,8 @@ public class SysRoleManageService {
     }
 
     public Long add(SysRole role) {
-        if (role.getRoleKey() == null || role.getRoleKey().isBlank()) {
-            throw new BusinessException("角色标识不能为空");
-        }
-        Long exists = roleMapper.selectCount(new LambdaQueryWrapper<SysRole>()
-                .eq(SysRole::getRoleKey, role.getRoleKey()));
-        if (exists > 0) {
-            throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
-        }
+        assertRoleKeyValid(role.getRoleKey());
+        assertRoleKeyFree(role.getRoleKey(), null);
         try {
             roleMapper.insert(role);
         } catch (org.springframework.dao.DuplicateKeyException e) {
@@ -1829,7 +1825,31 @@ public class SysRoleManageService {
 
     public void edit(SysRole role) {
         requireRole(role.getId());
-        roleMapper.updateById(role);
+        if (role.getRoleKey() != null) {
+            assertRoleKeyValid(role.getRoleKey());
+            assertRoleKeyFree(role.getRoleKey(), role.getId());
+        }
+        try {
+            roleMapper.updateById(role);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
+        }
+    }
+
+    private void assertRoleKeyValid(String roleKey) {
+        if (roleKey == null || roleKey.isBlank()) {
+            throw new BusinessException("角色标识不能为空");
+        }
+    }
+
+    /** 预检（编辑时排除自身）；逻辑删除墓碑仍占 uk_role_key，并发/墓碑场景由 DuplicateKey 兜底 */
+    private void assertRoleKeyFree(String roleKey, Long excludeId) {
+        Long count = roleMapper.selectCount(new LambdaQueryWrapper<SysRole>()
+                .eq(SysRole::getRoleKey, roleKey)
+                .ne(excludeId != null, SysRole::getId, excludeId));
+        if (count > 0) {
+            throw new BusinessException(3003, "角色标识已存在: " + roleKey);
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -1903,13 +1923,44 @@ public class SysMenuManageService {
         if (menu.getName() == null || menu.getName().isBlank()) {
             throw new BusinessException("菜单名称不能为空");
         }
+        validateParent(menu.getParentId(), null);
         menuMapper.insert(menu);
         return menu.getId();
     }
 
     public void edit(SysMenu menu) {
         requireMenu(menu.getId());
+        validateParent(menu.getParentId(), menu.getId());
         menuMapper.updateById(menu);
+    }
+
+    /** parentId 须为 0/null 或已存在菜单；编辑时不允许自指或把自身后代设为父（成环会使菜单支系从树上静默消失且 API 层不可恢复） */
+    private void validateParent(Long parentId, Long selfId) {
+        if (parentId == null || parentId == 0L) {
+            return;
+        }
+        if (parentId.equals(selfId)) {
+            throw new BusinessException(3007, "父菜单不能是自身");
+        }
+        SysMenu parent = menuMapper.selectById(parentId);
+        if (parent == null) {
+            throw new BusinessException(3007, "父菜单不存在: " + parentId);
+        }
+        if (selfId == null) {
+            return;
+        }
+        Long cursor = parent.getParentId();
+        int guard = 0;
+        while (cursor != null && cursor != 0L && guard++ < 100) {
+            if (cursor.equals(selfId)) {
+                throw new BusinessException(3007, "父菜单不能是自身的后代（会形成环）");
+            }
+            SysMenu up = menuMapper.selectById(cursor);
+            if (up == null) {
+                break;
+            }
+            cursor = up.getParentId();
+        }
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -3042,7 +3093,7 @@ Expected: create_by='admin'、create_time 非空（网关透传→HeaderAuthFilt
 
 - [ ] **Step 2: CLAUDE.md 更新**：架构拓扑标注 security-starter 的资源端装配（servlet-only）、sso→system Feign 链路、Redis 键（sso:online:/sso:refresh:）；关键约定补：网关层 401 用真实 HTTP 状态、服务层 403 走 HTTP200+body、@PreAuthorize 权限标识清单来源 sys_menu.perms；环境补：MySQL root/空密码 127.0.0.1:3306、jshell 执行 SQL 方法。
 
-- [ ] **Step 3: 设计文档 §9 附加精简记录**：注明 2026-10-05 按"最小闭环"执行——验证码/登录日志/部门/岗位/字典/参数/操作日志未做，列后续扩展清单。**扩展清单（Task 7 质量审查记档）**：删除/停用用户不联动失效 sso 在线会话（快照权限最长存活 2h，手动补救 sso:online:kick；后续可加 remove→sso inner 踢会话）；入参 Bean Validation（@NotBlank/@Size/@Valid，account/nickname 30 字符、status 取值、BCrypt 72 字节明文上限，与 HttpMessageNotReadableException 400 映射一起补）；删除/改自己角色的自杀防护（拒绝操作当前登录用户）；逻辑删除行占用 uk_account 的长期策略（墓碑或物理清理）；resetPassword 换正式 DTO。
+- [ ] **Step 3: 设计文档 §9 附加精简记录**：注明 2026-10-05 按"最小闭环"执行——验证码/登录日志/部门/岗位/字典/参数/操作日志未做，列后续扩展清单。**扩展清单（Task 7/8 质量审查记档）**：删除/停用用户**及角色/菜单变更**均不联动失效 sso 在线会话（快照权限最长存活 2h，手动补救 sso:online:kick；后续可加 remove→sso inner 踢会话）；入参 Bean Validation（@NotBlank/@Size/@Valid，account/nickname 30 字符、status 取值、BCrypt 72 字节明文上限，与 HttpMessageNotReadableException 400 映射一起补）；删除/改自己角色的自杀防护（拒绝操作当前登录用户）；逻辑删除行占用 uk_account/**uk_role_key** 的长期策略（墓碑或物理清理；删后重建同 key 报误导性"已存在"）；resetPassword 换正式 DTO；menuIdsOf 对不存在角色返回空列表（与 3004 不一致，可统一）；assignMenus 可写入指向已删菜单的幽灵行（回显污染，无害）；listAll 二级排序 orderByAsc(id) 固定同 sort 兄弟顺序。
 
 - [ ] **Step 4: 全量构建 + 提交**
 
