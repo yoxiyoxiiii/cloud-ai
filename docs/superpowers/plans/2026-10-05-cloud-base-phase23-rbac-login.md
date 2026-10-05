@@ -254,7 +254,7 @@ jshell --class-path "$CONN" /tmp/exec-sql.jsh
 - [ ] **Step 4: 验证数据**
 
 jshell 再执行查询 `USE cloud_system; SELECT account FROM sys_user; SELECT COUNT(*) FROM sys_menu; SELECT COUNT(*) FROM sys_role_menu;`
-Expected: admin / 21 / 21。
+Expected: admin / 19 / 19 / 17（19 行菜单；role_menu 19；非空 perms 17——目录 10/20 为空 perms。原期望 21/21/19 为计划笔误，2026-10-05 执行时修正）。
 
 - [ ] **Step 5: Commit**
 
@@ -1187,7 +1187,7 @@ curl http://localhost:9202/inner/user/admin
 # 停止服务
 ```
 
-Expected: `{"code":200,...,"data":{"userId":1,"account":"admin","password":"$2a$...","permissions":[...21 项含目录的空 perms 已过滤...],"status":0}}`（perms 应为 19 个非空权限标识）。
+Expected: `{"code":200,...,"data":{"userId":1,"account":"admin","password":"$2a$...","permissions":[...17 个非空权限标识...],"status":0}}`（19 菜单中 2 个目录 perms 为空已过滤，17 = 6 用户 + 5 角色 + 4 菜单 + 2 在线）。
 
 - [ ] **Step 3: Commit**
 
