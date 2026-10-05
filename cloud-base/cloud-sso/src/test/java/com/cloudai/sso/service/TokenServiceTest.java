@@ -114,6 +114,8 @@ class TokenServiceTest {
         session.setIp("127.0.0.1");
         when(redisUtil.keys("sso:online:*")).thenReturn(Set.of("sso:online:jti-old"));
         when(redisUtil.get("sso:online:jti-old")).thenReturn(session);
+        LoginUserDTO fresh = admin();
+        when(userClient.getUserByAccount("admin")).thenReturn(com.cloudai.common.core.domain.R.ok(fresh));
 
         LoginResult result = tokenService.refresh("rt-old");
 
@@ -121,6 +123,61 @@ class TokenServiceTest {
         assertThat(result.getAccessToken()).isNotBlank();
         verify(redisUtil).delete("sso:online:jti-old");
         verify(redisUtil, org.mockito.Mockito.never()).delete("sso:refresh:1");
+    }
+
+    @Test
+    void refresh_disabledUserRejected() throws Exception {
+        injectSecret();
+        when(redisUtil.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
+        when(redisUtil.get("sso:refresh:1")).thenReturn("rt-old");
+        OnlineSession session = new OnlineSession();
+        session.setTokenId("jti-old");
+        session.setUserId(1L);
+        session.setAccount("admin");
+        session.setLoginTime(1L);
+        when(redisUtil.keys("sso:online:*")).thenReturn(Set.of("sso:online:jti-old"));
+        when(redisUtil.get("sso:online:jti-old")).thenReturn(session);
+        LoginUserDTO disabled = admin();
+        disabled.setStatus(1);
+        when(userClient.getUserByAccount("admin")).thenReturn(com.cloudai.common.core.domain.R.ok(disabled));
+        assertThatThrownBy(() -> tokenService.refresh("rt-old"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("会话已失效");
+        verify(redisUtil).delete("sso:online:jti-old");
+    }
+
+    @Test
+    void refresh_usesLatestPermissions() throws Exception {
+        injectSecret();
+        when(redisUtil.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
+        when(redisUtil.get("sso:refresh:1")).thenReturn("rt-old");
+        OnlineSession session = new OnlineSession();
+        session.setTokenId("jti-old");
+        session.setUserId(1L);
+        session.setAccount("admin");
+        session.setPermissions(List.of("old:perm"));
+        session.setLoginTime(1L);
+        session.setIp("1.2.3.4");
+        when(redisUtil.keys("sso:online:*")).thenReturn(Set.of("sso:online:jti-old"));
+        when(redisUtil.get("sso:online:jti-old")).thenReturn(session);
+        LoginUserDTO fresh = admin();
+        fresh.setPermissions(List.of("new:perm"));
+        when(userClient.getUserByAccount("admin")).thenReturn(com.cloudai.common.core.domain.R.ok(fresh));
+
+        tokenService.refresh("rt-old");
+
+        org.mockito.ArgumentCaptor<OnlineSession> captor =
+                org.mockito.ArgumentCaptor.forClass(OnlineSession.class);
+        verify(redisUtil).set(startsWith(SecurityConstants.ONLINE_KEY_PREFIX), captor.capture(), anyLong(), any(TimeUnit.class));
+        assertThat(captor.getValue().getPermissions()).containsExactly("new:perm");
+    }
+
+    @Test
+    void logout_expiredTokenIsIdempotent() throws Exception {
+        injectSecret();
+        String token = com.cloudai.common.security.util.JwtUtil.createToken(TEST_SECRET, 1L, "admin", "jti-x", -10);
+        tokenService.logout(token);
+        verify(redisUtil, org.mockito.Mockito.never()).delete(anyString());
     }
 
     @Test

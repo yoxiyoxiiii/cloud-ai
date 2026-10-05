@@ -9,6 +9,7 @@ import com.cloudai.sso.client.SystemUserClient;
 import com.cloudai.sso.domain.OnlineSession;
 import com.cloudai.sso.dto.LoginResult;
 import com.cloudai.sso.dto.LoginUserDTO;
+import feign.FeignException;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -27,6 +28,9 @@ public class TokenService {
 
     private static final String REFRESH_KEY_PREFIX = "sso:refresh:";
 
+    /** 时序旁路防护用的固定散列（明文为随机无效串） */
+    private static final String DUMMY_HASH = "$2a$10$VAopGs8o/mcBgRg6G0G6..u1kOmyJqxrqhu74w9MhfYZgWKZHZBSG";
+
     private final SystemUserClient userClient;
     private final RedisUtil redisUtil;
     private final PasswordEncoder passwordEncoder;
@@ -42,13 +46,23 @@ public class TokenService {
     private long refreshTtlSeconds = 604800;
 
     public LoginResult login(String account, String password, String ip) {
-        R<LoginUserDTO> resp = userClient.getUserByAccount(account);
+        R<LoginUserDTO> resp;
+        try {
+            resp = userClient.getUserByAccount(account);
+        } catch (FeignException e) {
+            throw new BusinessException(2002, "用户服务不可用，请稍后重试");
+        }
         if (resp == null || resp.getCode() != 200) {
             throw new BusinessException(resp == null ? 2002 : resp.getCode(),
                     resp == null ? "用户服务不可用" : resp.getMsg());
         }
         LoginUserDTO dto = resp.getData();
-        if (dto == null || !passwordEncoder.matches(password, dto.getPassword())) {
+        if (dto == null) {
+            // 恒定时间：对固定散列跑一次匹配，抹平"账号不存在即快速返回"的时序旁路
+            passwordEncoder.matches(password, DUMMY_HASH);
+            throw new BusinessException(2001, "账号或密码错误");
+        }
+        if (!passwordEncoder.matches(password, dto.getPassword())) {
             throw new BusinessException(2001, "账号或密码错误");
         }
         if (dto.getStatus() == null || dto.getStatus() != 0) {
@@ -62,7 +76,11 @@ public class TokenService {
             throw new BusinessException(2004, "refreshToken 不能为空");
         }
         Long userId = null;
-        for (String key : redisUtil.keys(REFRESH_KEY_PREFIX + "*")) {
+        Set<String> keys = redisUtil.keys(REFRESH_KEY_PREFIX + "*");
+        if (keys == null) {
+            throw new BusinessException(2005, "refreshToken 无效或已过期");
+        }
+        for (String key : keys) {
             String value = redisUtil.get(key);
             if (refreshToken.equals(value)) {
                 userId = Long.valueOf(key.substring(REFRESH_KEY_PREFIX.length()));
@@ -77,19 +95,29 @@ public class TokenService {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }
         redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + session.getTokenId());
-        LoginUserDTO dto = new LoginUserDTO();
-        dto.setUserId(session.getUserId());
-        dto.setAccount(session.getAccount());
-        dto.setNickname(session.getAccount());
-        dto.setPassword("");
-        dto.setPermissions(session.getPermissions());
-        dto.setStatus(0);
-        LoginResult result = issueTokens(dto, session.getIp());
-        return result;
+        // 回查 system：校验账号未停用并取最新权限快照（防停用/降权用户经 refresh 保活旧权限）
+        LoginUserDTO latest;
+        try {
+            R<LoginUserDTO> resp = userClient.getUserByAccount(session.getAccount());
+            latest = resp == null ? null : resp.getData();
+        } catch (FeignException e) {
+            throw new BusinessException(2002, "用户服务不可用，请稍后重试");
+        }
+        if (latest == null || latest.getStatus() == null || latest.getStatus() != 0) {
+            throw new BusinessException(2005, "会话已失效，请重新登录");
+        }
+        // issueTokens 以新值覆盖 sso:refresh:{userId}，此处不得再 delete（曾致新 refreshToken 落地即死）
+        return issueTokens(latest, session.getIp());
     }
 
     public void logout(String accessToken) {
-        Claims claims = JwtUtil.parseToken(secret, accessToken);
+        Claims claims;
+        try {
+            claims = JwtUtil.parseToken(secret, accessToken);
+        } catch (io.jsonwebtoken.JwtException e) {
+            // 已过期/无效的 token 注销视为成功（幂等；其键随 TTL 自灭）
+            return;
+        }
         String tokenId = claims.getId();
         Long userId = Long.valueOf(claims.getSubject());
         redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
