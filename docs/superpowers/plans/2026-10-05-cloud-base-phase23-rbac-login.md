@@ -1320,6 +1320,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 package com.cloudai.system.dto;
 
 import lombok.Data;
+import lombok.ToString;
 
 import java.io.Serializable;
 
@@ -1334,6 +1335,7 @@ public class UserSaveRequest implements Serializable {
     private String account;
     private String nickname;
     /** 新增必填（明文，服务端 BCrypt）；修改忽略 */
+    @ToString.Exclude
     private String password;
     /** 0正常 1停用 */
     private Integer status;
@@ -1484,7 +1486,7 @@ public class SysUserManageService {
         requireUser(userId);
         userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getUserId, userId));
         if (roleIds != null) {
-            roleIds.forEach(roleId -> {
+            roleIds.stream().distinct().forEach(roleId -> {
                 SysUserRole ur = new SysUserRole();
                 ur.setUserId(userId);
                 ur.setRoleId(roleId);
@@ -3040,7 +3042,7 @@ Expected: create_by='admin'、create_time 非空（网关透传→HeaderAuthFilt
 
 - [ ] **Step 2: CLAUDE.md 更新**：架构拓扑标注 security-starter 的资源端装配（servlet-only）、sso→system Feign 链路、Redis 键（sso:online:/sso:refresh:）；关键约定补：网关层 401 用真实 HTTP 状态、服务层 403 走 HTTP200+body、@PreAuthorize 权限标识清单来源 sys_menu.perms；环境补：MySQL root/空密码 127.0.0.1:3306、jshell 执行 SQL 方法。
 
-- [ ] **Step 3: 设计文档 §9 附加精简记录**：注明 2026-10-05 按"最小闭环"执行——验证码/登录日志/部门/岗位/字典/参数/操作日志未做，列后续扩展清单。
+- [ ] **Step 3: 设计文档 §9 附加精简记录**：注明 2026-10-05 按"最小闭环"执行——验证码/登录日志/部门/岗位/字典/参数/操作日志未做，列后续扩展清单。**扩展清单（Task 7 质量审查记档）**：删除/停用用户不联动失效 sso 在线会话（快照权限最长存活 2h，手动补救 sso:online:kick；后续可加 remove→sso inner 踢会话）；入参 Bean Validation（@NotBlank/@Size/@Valid，account/nickname 30 字符、status 取值、BCrypt 72 字节明文上限，与 HttpMessageNotReadableException 400 映射一起补）；删除/改自己角色的自杀防护（拒绝操作当前登录用户）；逻辑删除行占用 uk_account 的长期策略（墓碑或物理清理）；resetPassword 换正式 DTO。
 
 - [ ] **Step 4: 全量构建 + 提交**
 
