@@ -2454,7 +2454,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 ### 移交后续阶段的备忘（来自阶段 1 质量审查）
 
-- **阶段 2**：真实端点上线时补 `HttpMessageNotReadableException`（脏 JSON → 1001/400）等框架协议异常 handler；明确"HTTP 状态恒 200、错误看 body.code"是否有意并写进文档（否则监控按 HTTP status 统计会失真）。**建表 DDL：`deleted TINYINT NOT NULL DEFAULT 0`**——@TableLogic 逻辑删除下，NULL 行会被 MP 的 `deleted = 0` 过滤条件隐身且 removeById 匹配不到；后续若加乐观锁/防全表攻击等 InnerInterceptor，保持 PaginationInnerInterceptor 在拦截器链最后。
+- **阶段 2**：真实端点上线时补 `HttpMessageNotReadableException`（脏 JSON → 1001/400）等框架协议异常 handler；明确"HTTP 状态恒 200、错误看 body.code"是否有意并写进文档（否则监控按 HTTP status 统计会失真）。**建表 DDL：`deleted TINYINT NOT NULL DEFAULT 0`**——@TableLogic 逻辑删除下，NULL 行会被 MP 的 `deleted = 0` 过滤条件隐身且 removeById 匹配不到；后续若加乐观锁/防全表攻击等 InnerInterceptor，保持 PaginationInnerInterceptor 在拦截器链最后。cloud-system 引入 common-mybatis/redis 后需在 Application 类加 `@MapperScan("com.cloudai.system.mapper")`（common-mybatis 未内置扫描，漏掉会报 Invalid bound statement）；数据源配置放 Nacos `cloud-system.yaml` 还是本地 yml 需在阶段 2 计划时定夺。
 - **阶段 3**：网关统一 401/403/503 JSON 走 `ErrorWebExceptionHandler`（WebFlux），不是 GlobalExceptionHandler advice；网关引入 common-core 前先确认 WebFlux 异常类型（WebExchangeBindException 与 MethodArgumentNotValidException 继承链不相交）。JwtUtil 应包装为配置 bean：启动时校验密钥长度（>=64 字节）fail-fast 并持有 Nacos 属性；若升级 RS256，先约定"字符串编码密钥材料（PEM）"——sso 持私钥、网关持公钥时同一参数语义不同。createBy/updateBy 审计填充：扩展 AuditMetaObjectHandler（或子类替换），不要并行注册第二个 MetaObjectHandler bean——@ConditionalOnMissingBean 会让时间填充被静默禁用。
 
 ### 阶段 3 Redis 序列化备忘（来自 Task 8 质量审查，均有实证）
