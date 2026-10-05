@@ -1,7 +1,7 @@
 package com.cloudai.common.security.filter;
 
+import com.cloudai.common.core.domain.LoginUser;
 import com.cloudai.common.security.constant.SecurityConstants;
-import com.cloudai.common.security.domain.LoginUser;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;

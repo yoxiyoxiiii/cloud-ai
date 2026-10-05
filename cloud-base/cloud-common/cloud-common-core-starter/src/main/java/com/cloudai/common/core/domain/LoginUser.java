@@ -1,4 +1,4 @@
-package com.cloudai.common.security.domain;
+package com.cloudai.common.core.domain;
 
 import lombok.Data;
 

@@ -20,9 +20,15 @@
             <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
         </dependency>
 
+        <!-- LoginUser 审计操作人来源（原经 security-starter 传递，现显式直依） -->
         <dependency>
             <groupId>com.cloudai</groupId>
-            <artifactId>cloud-common-security-starter</artifactId>
+            <artifactId>cloud-common-core-starter</artifactId>
+        </dependency>
+        <!-- 仅用 SecurityContextHolder 读取操作人；避免传递整套安全栈（LoginUser 已下沉 core-starter） -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-core</artifactId>
         </dependency>
     </dependencies>
 </project>
