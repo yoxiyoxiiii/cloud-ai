@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 
 /**
  * 实体基类：审计时间字段自动填充 + 逻辑删除。
- * createBy/updateBy 在阶段 3 接入登录上下文后填充。
+ * createBy/updateBy 由登录上下文（LoginUser.account）自动填充，匿名场景留空。
  */
 @Getter
 @Setter
