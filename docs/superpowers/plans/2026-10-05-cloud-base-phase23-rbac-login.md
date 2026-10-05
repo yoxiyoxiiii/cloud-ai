@@ -2603,9 +2603,8 @@ public class TokenService {
         dto.setPassword("");
         dto.setPermissions(session.getPermissions());
         dto.setStatus(0);
-        LoginResult result = issueTokens(dto, session.getIp());
-        redisUtil.delete(REFRESH_KEY_PREFIX + userId);
-        return result;
+        // issueTokens 以新值覆盖 sso:refresh:{userId}，此处不得再 delete（曾致新 refreshToken 落地即死）
+        return issueTokens(dto, session.getIp());
     }
 
     public void logout(String accessToken) {
