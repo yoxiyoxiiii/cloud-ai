@@ -11,10 +11,10 @@ import java.util.List;
  */
 public interface SysRoleMenuMapper {
 
-    List<Long> selectMenuIdsByRoleId(@Param("roleId") Long roleId);
+    List<Long> listMenuIdsByRoleId(@Param("roleId") Long roleId);
 
     /** 批量插入；空列表由 Service 跳过调用 */
-    int insertBatch(@Param("list") List<SysRoleMenu> list);
+    int saveBatch(@Param("list") List<SysRoleMenu> list);
 
     int deleteByRoleId(@Param("roleId") Long roleId);
 

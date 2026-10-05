@@ -47,9 +47,9 @@ class MapperXmlBindingTest {
                 .isEqualTo(30);
         // 抽查关键语句存在（JOIN 聚合 / 插件分页 / 动态 SQL / 批量插入）
         assertThat(mappings).contains(
-                "com.cloudai.system.mapper.SysUserMapper.selectPermsByAccount",
-                "com.cloudai.system.mapper.SysUserMapper.selectUserPage",
+                "com.cloudai.system.mapper.SysUserMapper.listPermsByAccount",
+                "com.cloudai.system.mapper.SysUserMapper.pageList",
                 "com.cloudai.system.mapper.SysRoleMapper.countByRoleKey",
-                "com.cloudai.system.mapper.SysUserRoleMapper.insertBatch");
+                "com.cloudai.system.mapper.SysUserRoleMapper.saveBatch");
     }
 }

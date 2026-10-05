@@ -19,8 +19,8 @@ public class SysUserLinkageService {
 
     private final SysUserMapper userMapper;
 
-    public LoginUserDTO getLoginUserByAccount(String account) {
-        SysUser user = userMapper.selectByAccount(account);
+    public LoginUserDTO findByAccount(String account) {
+        SysUser user = userMapper.findByAccount(account);
         if (user == null) {
             return null;
         }
@@ -31,7 +31,7 @@ public class SysUserLinkageService {
         dto.setPassword(user.getPassword());
         dto.setStatus(user.getStatus());
 
-        List<String> perms = userMapper.selectPermsByAccount(account);
+        List<String> perms = userMapper.listPermsByAccount(account);
         dto.setPermissions(perms == null ? List.of() : perms);
         return dto;
     }

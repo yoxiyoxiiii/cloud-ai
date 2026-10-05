@@ -14,23 +14,23 @@ import java.util.List;
 public interface SysRoleMapper {
 
     /** 分页查询：无 LIMIT，由 PaginationInnerInterceptor 追加 */
-    IPage<SysRole> selectRolePage(Page<SysRole> page);
+    IPage<SysRole> pageList(Page<SysRole> page);
 
     /** 启用状态角色（status=0），按 id 升序 */
-    List<SysRole> selectEnabledRoles();
+    List<SysRole> listEnabled();
 
-    SysRole selectRoleById(@Param("id") Long id);
+    SysRole findById(@Param("id") Long id);
 
     /** role_key 查重；excludeId 非空时排除自身（编辑场景） */
     Long countByRoleKey(@Param("roleKey") String roleKey, @Param("excludeId") Long excludeId);
 
-    int insertRole(SysRole role);
+    int save(SysRole role);
 
     /** 动态更新（仅非空列，等价原 updateById NOT_NULL 策略） */
-    int updateRole(SysRole role);
+    int update(SysRole role);
 
     /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
-    int deleteRoleById(@Param("id") Long id,
-                       @Param("updateBy") String updateBy,
-                       @Param("updateTime") LocalDateTime updateTime);
+    int deleteById(@Param("id") Long id,
+                   @Param("updateBy") String updateBy,
+                   @Param("updateTime") LocalDateTime updateTime);
 }

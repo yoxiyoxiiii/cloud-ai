@@ -6,8 +6,8 @@ import com.cloudai.common.core.domain.R;
 import com.cloudai.system.dto.ResetPasswordRequest;
 import com.cloudai.system.dto.UserRoleRequest;
 import com.cloudai.system.dto.UserSaveRequest;
-import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.service.SysUserManageService;
+import com.cloudai.system.vo.SysUserVo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -28,19 +28,19 @@ public class SysUserController {
 
     private final SysUserManageService manageService;
 
-    /** 分页查询用户列表（密码散列不外泄） */
+    /** 分页查询用户列表（VO 出参，不含 password/deleted） */
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('system:user:list')")
-    public R<PageResult<SysUser>> page(PageQuery query) {
-        PageResult<SysUser> page = manageService.page(query);
+    public R<PageResult<SysUserVo>> page(PageQuery query) {
+        PageResult<SysUserVo> page = manageService.pageList(query);
         return R.ok(page);
     }
 
-    /** 查询用户详情（密码散列不外泄） */
+    /** 查询用户详情（VO 出参，不含 password/deleted） */
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('system:user:list')")
-    public R<SysUser> detail(@PathVariable("id") Long id) {
-        SysUser user = manageService.detail(id);
+    public R<SysUserVo> detail(@PathVariable("id") Long id) {
+        SysUserVo user = manageService.findById(id);
         return R.ok(user);
     }
 
@@ -48,7 +48,7 @@ public class SysUserController {
     @PostMapping
     @PreAuthorize("hasAuthority('system:user:add')")
     public R<Long> add(@RequestBody UserSaveRequest req) {
-        Long userId = manageService.add(req);
+        Long userId = manageService.save(req);
         return R.ok(userId);
     }
 
@@ -56,7 +56,7 @@ public class SysUserController {
     @PutMapping
     @PreAuthorize("hasAuthority('system:user:edit')")
     public R<Void> edit(@RequestBody UserSaveRequest req) {
-        manageService.edit(req.getId(), req);
+        manageService.update(req.getId(), req);
         return R.ok();
     }
 
@@ -64,7 +64,7 @@ public class SysUserController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('system:user:remove')")
     public R<Void> remove(@PathVariable("id") Long id) {
-        manageService.remove(id);
+        manageService.delete(id);
         return R.ok();
     }
 
@@ -88,7 +88,7 @@ public class SysUserController {
     @GetMapping("/{id}/roles")
     @PreAuthorize("hasAuthority('system:user:list')")
     public R<List<Long>> roleIds(@PathVariable("id") Long id) {
-        List<Long> roleIds = manageService.roleIdsOf(id);
+        List<Long> roleIds = manageService.listRoleIds(id);
         return R.ok(roleIds);
     }
 }

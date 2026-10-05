@@ -4,13 +4,13 @@
 
     <!-- 纯关系表：无 deleted 列，物理 DELETE；create_time 由 Service 显式传值 -->
 
-    <select id="selectMenuIdsByRoleId" resultType="long">
+    <select id="listMenuIdsByRoleId" resultType="long">
         SELECT menu_id
           FROM sys_role_menu
          WHERE role_id = #{roleId}
     </select>
 
-    <insert id="insertBatch">
+    <insert id="saveBatch">
         INSERT INTO sys_role_menu (role_id, menu_id, create_time) VALUES
         <foreach collection="list" item="item" separator=",">
             (#{item.roleId}, #{item.menuId}, #{item.createTime})

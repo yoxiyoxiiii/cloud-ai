@@ -6,11 +6,13 @@ import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.system.convert.SysUserConvert;
 import com.cloudai.system.dto.UserSaveRequest;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.entity.SysUserRole;
 import com.cloudai.system.mapper.SysUserMapper;
 import com.cloudai.system.mapper.SysUserRoleMapper;
+import com.cloudai.system.vo.SysUserVo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -29,24 +31,23 @@ public class SysUserManageService {
     private final SysUserRoleMapper userRoleMapper;
     private final PasswordEncoder passwordEncoder;
 
-    public PageResult<SysUser> page(PageQuery query) {
-        IPage<SysUser> page = userMapper.selectUserPage(
+    public PageResult<SysUserVo> pageList(PageQuery query) {
+        IPage<SysUser> page = userMapper.pageList(
                 new Page<>(query.getPageNum(), query.getPageSize()));
-        page.getRecords().forEach(u -> u.setPassword(null));
-        return PageResult.of(page.getTotal(), page.getRecords());
+        List<SysUserVo> rows = page.getRecords().stream().map(SysUserConvert::toVo).toList();
+        return PageResult.of(page.getTotal(), rows);
     }
 
-    public SysUser detail(Long id) {
-        SysUser user = userMapper.selectUserById(id);
+    public SysUserVo findById(Long id) {
+        SysUser user = userMapper.findById(id);
         if (user == null) {
             throw new BusinessException(3001, "用户不存在");
         }
-        user.setPassword(null);
-        return user;
+        return SysUserConvert.toVo(user);
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public Long add(UserSaveRequest req) {
+    public Long save(UserSaveRequest req) {
         if (req.getAccount() == null || req.getAccount().isBlank()
                 || req.getPassword() == null || req.getPassword().isBlank()) {
             throw new BusinessException("账号与密码不能为空");
@@ -59,7 +60,7 @@ public class SysUserManageService {
         user.setAccount(req.getAccount());
         user.setNickname(req.getNickname() == null ? req.getAccount() : req.getNickname());
         user.setPassword(passwordEncoder.encode(req.getPassword()));
-        user.setStatus(req.getStatus() == null ? 0 : req.getStatus());
+        user.setStatus(req.getStatus() == null ? SysUser.Status.NORMAL.getCode() : req.getStatus());
         // 手写 SQL 无 MetaObjectHandler 自动填充：审计四值显式传入，插入时 update 值 = create 值
         String operator = SecurityUtils.currentAccount();
         LocalDateTime now = LocalDateTime.now();
@@ -68,7 +69,7 @@ public class SysUserManageService {
         user.setUpdateBy(operator);
         user.setUpdateTime(now);
         try {
-            userMapper.insertUser(user);
+            userMapper.save(user);
         } catch (org.springframework.dao.DuplicateKeyException e) {
             // 逻辑删除行仍占用 uk_account，countByAccount 查重看不到——捕获兜底转业务异常
             log.error("唯一键冲突：{}", e.getMessage());
@@ -78,19 +79,19 @@ public class SysUserManageService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void edit(Long id, UserSaveRequest req) {
+    public void update(Long id, UserSaveRequest req) {
         SysUser user = requireUser(id);
         user.setNickname(req.getNickname());
         user.setStatus(req.getStatus());
         user.setUpdateBy(SecurityUtils.currentAccount());
         user.setUpdateTime(LocalDateTime.now());
-        userMapper.updateUser(user);
+        userMapper.update(user);
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void remove(Long id) {
+    public void delete(Long id) {
         requireUser(id);
-        userMapper.deleteUserById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        userMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
         userRoleMapper.deleteByUserId(id);
     }
 
@@ -100,7 +101,7 @@ public class SysUserManageService {
             throw new BusinessException("密码不能为空");
         }
         requireUser(id);
-        userMapper.updateUserPassword(id, passwordEncoder.encode(newPassword),
+        userMapper.updatePassword(id, passwordEncoder.encode(newPassword),
                 SecurityUtils.currentAccount(), LocalDateTime.now());
     }
 
@@ -118,17 +119,17 @@ public class SysUserManageService {
                         return ur;
                     }).toList();
             if (!list.isEmpty()) {
-                userRoleMapper.insertBatch(list);
+                userRoleMapper.saveBatch(list);
             }
         }
     }
 
-    public List<Long> roleIdsOf(Long userId) {
-        return userRoleMapper.selectRoleIdsByUserId(userId);
+    public List<Long> listRoleIds(Long userId) {
+        return userRoleMapper.listRoleIdsByUserId(userId);
     }
 
     private SysUser requireUser(Long id) {
-        SysUser user = userMapper.selectUserById(id);
+        SysUser user = userMapper.findById(id);
         if (user == null) {
             throw new BusinessException(3001, "用户不存在");
         }

@@ -39,4 +39,28 @@ public abstract class BaseEntity implements Serializable {
     /** 逻辑删除：0 未删除 1 已删除 */
     @TableLogic
     private Integer deleted;
+
+    /** 逻辑删除字典：字段保持 Integer 映射，Java 侧引用枚举常量（禁魔法数） */
+    public enum Deleted {
+        NORMAL(0), DELETED(1);
+
+        private final int code;
+
+        Deleted(int code) {
+            this.code = code;
+        }
+
+        public int getCode() {
+            return code;
+        }
+
+        public static Deleted of(int code) {
+            for (Deleted d : values()) {
+                if (d.code == code) {
+                    return d;
+                }
+            }
+            throw new IllegalArgumentException("未知删除标记: " + code);
+        }
+    }
 }

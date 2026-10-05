@@ -69,6 +69,7 @@ public class TokenService {
         if (!passwordEncoder.matches(password, dto.getPassword())) {
             throw new BusinessException(2001, "账号或密码错误");
         }
+        // 0=正常（LoginUserDTO 为跨服务契约，语义由 cloud-system sys_user.status 定义，sso 不引 system 实体枚举）
         if (dto.getStatus() == null || dto.getStatus() != 0) {
             throw new BusinessException(2003, "账号已停用");
         }
@@ -114,6 +115,7 @@ public class TokenService {
             log.error("cloud-system 调用失败，account={}", old.getAccount(), e);
             throw new BusinessException(2002, "用户服务不可用，请稍后重试");
         }
+        // 0=正常（同上：跨服务 DTO，状态语义由 cloud-system 定义）
         if (latest == null || latest.getStatus() == null || latest.getStatus() != 0) {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }

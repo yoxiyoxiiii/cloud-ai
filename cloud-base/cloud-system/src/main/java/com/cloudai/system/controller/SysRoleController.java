@@ -6,6 +6,7 @@ import com.cloudai.common.core.domain.R;
 import com.cloudai.system.dto.RoleMenuRequest;
 import com.cloudai.system.entity.SysRole;
 import com.cloudai.system.service.SysRoleManageService;
+import com.cloudai.system.vo.SysRoleVo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -26,27 +27,27 @@ public class SysRoleController {
 
     private final SysRoleManageService manageService;
 
-    /** 分页查询角色列表 */
+    /** 分页查询角色列表（VO 出参） */
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('system:role:list')")
-    public R<PageResult<SysRole>> page(PageQuery query) {
-        PageResult<SysRole> page = manageService.page(query);
+    public R<PageResult<SysRoleVo>> page(PageQuery query) {
+        PageResult<SysRoleVo> page = manageService.pageList(query);
         return R.ok(page);
     }
 
-    /** 查询全部启用角色（下拉选项用） */
+    /** 查询全部启用角色（下拉选项用，VO 出参） */
     @GetMapping("/list")
     @PreAuthorize("hasAuthority('system:role:list')")
-    public R<List<SysRole>> list() {
-        List<SysRole> roles = manageService.listAll();
+    public R<List<SysRoleVo>> list() {
+        List<SysRoleVo> roles = manageService.listEnabled();
         return R.ok(roles);
     }
 
-    /** 新增角色（返回新角色 ID） */
+    /** 新增角色（返回新角色 ID；入参仍为实体接收写字段） */
     @PostMapping
     @PreAuthorize("hasAuthority('system:role:add')")
     public R<Long> add(@RequestBody SysRole role) {
-        Long roleId = manageService.add(role);
+        Long roleId = manageService.save(role);
         return R.ok(roleId);
     }
 
@@ -54,7 +55,7 @@ public class SysRoleController {
     @PutMapping
     @PreAuthorize("hasAuthority('system:role:edit')")
     public R<Void> edit(@RequestBody SysRole role) {
-        manageService.edit(role);
+        manageService.update(role);
         return R.ok();
     }
 
@@ -62,7 +63,7 @@ public class SysRoleController {
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('system:role:remove')")
     public R<Void> remove(@PathVariable("id") Long id) {
-        manageService.remove(id);
+        manageService.delete(id);
         return R.ok();
     }
 
@@ -78,7 +79,7 @@ public class SysRoleController {
     @GetMapping("/{id}/menus")
     @PreAuthorize("hasAuthority('system:role:list')")
     public R<List<Long>> menuIds(@PathVariable("id") Long id) {
-        List<Long> menuIds = manageService.menuIdsOf(id);
+        List<Long> menuIds = manageService.listMenuIds(id);
         return R.ok(menuIds);
     }
 }

@@ -36,27 +36,27 @@ class SysMenuManageServiceTest {
 
     @Test
     void edit_selfParentRejected() {
-        when(menuMapper.selectMenuById(10L)).thenReturn(menu(10L, 0L));
-        assertThatThrownBy(() -> service.edit(menu(10L, 10L)))
+        when(menuMapper.findById(10L)).thenReturn(menu(10L, 0L));
+        assertThatThrownBy(() -> service.update(menu(10L, 10L)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("父菜单不能是自身");
-        verify(menuMapper, never()).updateMenu(any(SysMenu.class));
+        verify(menuMapper, never()).update(any(SysMenu.class));
     }
 
     @Test
     void edit_cycleRejected() {
-        when(menuMapper.selectMenuById(10L)).thenReturn(menu(10L, 0L));
-        when(menuMapper.selectMenuById(13L)).thenReturn(menu(13L, 10L));
-        assertThatThrownBy(() -> service.edit(menu(10L, 13L)))
+        when(menuMapper.findById(10L)).thenReturn(menu(10L, 0L));
+        when(menuMapper.findById(13L)).thenReturn(menu(13L, 10L));
+        assertThatThrownBy(() -> service.update(menu(10L, 13L)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("后代");
-        verify(menuMapper, never()).updateMenu(any(SysMenu.class));
+        verify(menuMapper, never()).update(any(SysMenu.class));
     }
 
     @Test
     void edit_nonExistentParentRejected() {
-        when(menuMapper.selectMenuById(10L)).thenReturn(menu(10L, 0L));
-        assertThatThrownBy(() -> service.edit(menu(10L, 999L)))
+        when(menuMapper.findById(10L)).thenReturn(menu(10L, 0L));
+        assertThatThrownBy(() -> service.update(menu(10L, 999L)))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("父菜单不存在");
     }

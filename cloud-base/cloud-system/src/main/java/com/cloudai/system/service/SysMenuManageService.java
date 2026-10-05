@@ -20,10 +20,10 @@ public class SysMenuManageService {
     private final SysRoleMenuMapper roleMenuMapper;
 
     public List<SysMenu> listAll() {
-        return menuMapper.selectAllMenus();
+        return menuMapper.listAll();
     }
 
-    public Long add(SysMenu menu) {
+    public Long save(SysMenu menu) {
         if (menu.getName() == null || menu.getName().isBlank()) {
             throw new BusinessException("菜单名称不能为空");
         }
@@ -35,16 +35,16 @@ public class SysMenuManageService {
         menu.setCreateTime(now);
         menu.setUpdateBy(operator);
         menu.setUpdateTime(now);
-        menuMapper.insertMenu(menu);
+        menuMapper.save(menu);
         return menu.getId();
     }
 
-    public void edit(SysMenu menu) {
+    public void update(SysMenu menu) {
         requireMenu(menu.getId());
         validateParent(menu.getParentId(), menu.getId());
         menu.setUpdateBy(SecurityUtils.currentAccount());
         menu.setUpdateTime(LocalDateTime.now());
-        menuMapper.updateMenu(menu);
+        menuMapper.update(menu);
     }
 
     /** parentId 须为 0/null 或已存在菜单；编辑时不允许自指或把自身后代设为父（成环会使菜单支系从树上静默消失且 API 层不可恢复） */
@@ -55,7 +55,7 @@ public class SysMenuManageService {
         if (parentId.equals(selfId)) {
             throw new BusinessException(3007, "父菜单不能是自身");
         }
-        SysMenu parent = menuMapper.selectMenuById(parentId);
+        SysMenu parent = menuMapper.findById(parentId);
         if (parent == null) {
             throw new BusinessException(3007, "父菜单不存在: " + parentId);
         }
@@ -68,7 +68,7 @@ public class SysMenuManageService {
             if (cursor.equals(selfId)) {
                 throw new BusinessException(3007, "父菜单不能是自身的后代（会形成环）");
             }
-            SysMenu up = menuMapper.selectMenuById(cursor);
+            SysMenu up = menuMapper.findById(cursor);
             if (up == null) {
                 break;
             }
@@ -77,18 +77,18 @@ public class SysMenuManageService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void remove(Long id) {
+    public void delete(Long id) {
         requireMenu(id);
         Long childCount = menuMapper.countByParentId(id);
         if (childCount > 0) {
             throw new BusinessException(3005, "存在子菜单，先删除子级");
         }
-        menuMapper.deleteMenuById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        menuMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
         roleMenuMapper.deleteByMenuId(id);
     }
 
     private SysMenu requireMenu(Long id) {
-        SysMenu menu = menuMapper.selectMenuById(id);
+        SysMenu menu = menuMapper.findById(id);
         if (menu == null) {
             throw new BusinessException(3006, "菜单不存在");
         }

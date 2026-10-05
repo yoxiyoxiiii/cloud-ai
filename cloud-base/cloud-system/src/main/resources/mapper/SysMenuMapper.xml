@@ -8,14 +8,14 @@
         create_by, create_time, update_by, update_time, deleted
     </sql>
 
-    <select id="selectAllMenus" resultType="com.cloudai.system.entity.SysMenu">
+    <select id="listAll" resultType="com.cloudai.system.entity.SysMenu">
         SELECT <include refid="allColumns"/>
           FROM sys_menu
          WHERE deleted = 0
          ORDER BY sort, id
     </select>
 
-    <select id="selectMenuById" resultType="com.cloudai.system.entity.SysMenu">
+    <select id="findById" resultType="com.cloudai.system.entity.SysMenu">
         SELECT <include refid="allColumns"/>
           FROM sys_menu
          WHERE id = #{id} AND deleted = 0
@@ -28,7 +28,7 @@
     </select>
 
     <!-- 动态列等价原 insert 的 NOT_NULL 字段策略：业务列 null 时省略、交由列默认值 -->
-    <insert id="insertMenu" useGeneratedKeys="true" keyProperty="id">
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_menu
         <trim prefix="(" suffix=")" suffixOverrides=",">
             <if test="parentId != null">
@@ -75,7 +75,7 @@
     </insert>
 
     <!-- 动态列等价原 updateById 的 NOT_NULL 字段策略：null 列不改库值 -->
-    <update id="updateMenu">
+    <update id="update">
         UPDATE sys_menu
         <set>
             <if test="parentId != null">
@@ -104,7 +104,7 @@
         WHERE id = #{id} AND deleted = 0
     </update>
 
-    <update id="deleteMenuById">
+    <update id="deleteById">
         UPDATE sys_menu
            SET deleted = 1,
                update_time = #{updateTime}

@@ -22,7 +22,7 @@ public class InnerUserController {
     /** 按账号取登录聚合（含密码散列与权限集合）；账号不存在返回 data=null */
     @GetMapping("/{account}")
     public R<LoginUserDTO> getUserByAccount(@PathVariable("account") String account) {
-        LoginUserDTO loginUser = linkageService.getLoginUserByAccount(account);
+        LoginUserDTO loginUser = linkageService.findByAccount(account);
         return R.ok(loginUser);
     }
 }

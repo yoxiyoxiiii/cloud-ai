@@ -192,6 +192,101 @@ class ArchitectureGuardTest {
                 .isEmpty();
     }
 
+    // ---- 规范 v3：方法命名动词集 / Controller VO 隔离 / 禁三方拷贝 ----
+
+    /**
+     * 方法声明行：public 可选（接口方法隐式 public），捕获组=方法名；类型部分必须以字字符开头
+     * （防止缩进被当作"类型"，把 validateParent(...) 这类调用行误判成声明）；private/protected 行前置过滤。
+     */
+    private static final Pattern DECLARED_METHOD =
+            Pattern.compile("^\\s*(?:public\\s+)?(?:\\w[\\w<>,\\s\\[\\]]*?)\\s+(\\w+)\\s*\\(");
+
+    /**
+     * 方法命名白名单前缀：CRUD 动词集 find/save/update/pageList/list/delete/count；
+     * 另放行 reset/assign（重置密码/分配角色菜单——领域动作动词，非通用读写，保留原名）与 getter/setter（get/set/is）。
+     */
+    private static final Pattern NAMING_PREFIX_OK =
+            Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|get|set|is)\\w*");
+
+    /** 语句起始关键字（throw new Xxx( / return foo( 会被误判为声明，前置排除） */
+    private static final List<String> STATEMENT_KEYWORDS = List.of(
+            "throw", "return", "new", "if", "else", "for", "while", "switch", "catch", "do", "try");
+
+    /** Controller 实体泛型返回：R<SysUser> / R<PageResult<SysRole>> / R<List<SysMenu>>（Vo 后缀不匹配） */
+    private static final Pattern R_OF_ENTITY =
+            Pattern.compile("R<\\s*((?:PageResult|List)\\s*<\\s*)?Sys(?:User|Role|Menu)\\s*>");
+
+    /** 三方 Bean 拷贝工具 import（实体→VO 转换一律 convert 包原生 setter） */
+    private static final Pattern THIRD_PARTY_BEAN_COPY =
+            Pattern.compile("import\\s+[^;]*(?i:beanutils|mapstruct|modelmapper|dozer)");
+
+    @Test
+    void method_naming_prefix_whitelist() throws IOException {
+        // service+mapper 目录 public 方法名须命中动词集前缀；private 不扫；@Override（toString 等）豁免
+        List<String> violations = new ArrayList<>();
+        for (Path dir : List.of(MAIN_JAVA.resolve("com/cloudai/system/service"),
+                MAIN_JAVA.resolve("com/cloudai/system/mapper"))) {
+            for (Path file : listFiles(dir, "*.java")) {
+                String[] lines = Files.readString(file, StandardCharsets.UTF_8).split("\n");
+                for (int i = 0; i < lines.length; i++) {
+                    String name = extractMethodName(lines, i);
+                    if (name == null || NAMING_PREFIX_OK.matcher(name).matches() || isOverride(lines, i)) {
+                        continue;
+                    }
+                    violations.add(file + ":" + (i + 1) + " " + name + "（前缀不在动词集白名单）");
+                }
+            }
+        }
+        assertThat(violations).as("Service/Mapper 方法命名须为 find/save/update/pageList/list/delete/count 前缀")
+                .isEmpty();
+    }
+
+    @Test
+    void controller_returns_vo_only() throws IOException {
+        List<String> violations = scan(MAIN_JAVA.resolve("com/cloudai/system/controller"), "*.java",
+                R_OF_ENTITY);
+        assertThat(violations).as("Controller 禁 DB 实体直出（R<SysUser> 等），一律 XxxVo；"
+                        + "跨服务契约 LoginUserDTO 与树节点 MenuTreeNode 不受此限")
+                .isEmpty();
+    }
+
+    @Test
+    void no_third_party_bean_copy() throws IOException {
+        List<String> violations = scan(MAIN_JAVA, "*.java", THIRD_PARTY_BEAN_COPY);
+        assertThat(violations).as("禁 BeanUtils/mapstruct/ModelMapper/dozer 拷贝——convert 包原生 setter 逐字段").isEmpty();
+    }
+
+    /** 提取第 idx 行的方法声明名；注释/注解/private/protected/语句关键字行返回 null */
+    private String extractMethodName(String[] lines, int idx) {
+        String line = lines[idx];
+        String trimmed = line.trim();
+        if (trimmed.isEmpty() || trimmed.startsWith("*") || trimmed.startsWith("//")
+                || trimmed.startsWith("/*") || trimmed.startsWith("@")) {
+            return null;
+        }
+        if (line.matches("\\s*(private|protected)\\s.*")) {
+            return null;
+        }
+        String first = trimmed.split("[^A-Za-z]+", 2)[0];
+        if (STATEMENT_KEYWORDS.contains(first)) {
+            return null;
+        }
+        Matcher m = DECLARED_METHOD.matcher(line);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /** 签名行上方紧邻注解是否为 @Override（toString/equals 等 Object 方法豁免） */
+    private boolean isOverride(String[] lines, int idx) {
+        for (int j = idx - 1; j >= 0 && j >= idx - 3; j--) {
+            String t = lines[j].trim();
+            if (t.isEmpty()) {
+                continue;
+            }
+            return t.equals("@Override");
+        }
+        return false;
+    }
+
     /** 从签名行起做大括号深度配对，返回闭合 "}" 所在行号；先遇 ";"（无方法体）或到文件尾返回 null */
     private Integer blockEndLine(String[] lines, int signatureIdx) {
         int depth = 0;

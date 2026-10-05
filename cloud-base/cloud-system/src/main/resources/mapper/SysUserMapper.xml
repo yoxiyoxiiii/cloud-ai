@@ -11,21 +11,21 @@
         create_by, create_time, update_by, update_time, deleted
     </sql>
 
-    <select id="selectByAccount" resultType="com.cloudai.system.entity.SysUser">
+    <select id="findByAccount" resultType="com.cloudai.system.entity.SysUser">
         SELECT <include refid="allColumns"/>
           FROM sys_user
          WHERE account = #{account} AND deleted = 0
          LIMIT 1
     </select>
 
-    <select id="selectUserById" resultType="com.cloudai.system.entity.SysUser">
+    <select id="findById" resultType="com.cloudai.system.entity.SysUser">
         SELECT <include refid="allColumns"/>
           FROM sys_user
          WHERE id = #{id} AND deleted = 0
     </select>
 
     <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT -->
-    <select id="selectUserPage" resultType="com.cloudai.system.entity.SysUser">
+    <select id="pageList" resultType="com.cloudai.system.entity.SysUser">
         SELECT <include refid="allColumns"/>
           FROM sys_user
          WHERE deleted = 0
@@ -39,7 +39,7 @@
     </select>
 
     <!-- 登录权限聚合（替代原 5 连查）：账号 → 用户-角色 → 启用角色 → 角色-菜单 → 启用菜单 → 非空 perms -->
-    <select id="selectPermsByAccount" resultType="string">
+    <select id="listPermsByAccount" resultType="string">
         SELECT DISTINCT m.perms
           FROM sys_user u
           JOIN sys_user_role ur ON ur.user_id = u.id
@@ -49,7 +49,7 @@
          WHERE u.account = #{account} AND u.deleted = 0 AND m.perms != ''
     </select>
 
-    <insert id="insertUser" useGeneratedKeys="true" keyProperty="id">
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_user (account, nickname, password, status,
                               create_by, create_time, update_by, update_time)
         VALUES (#{account}, #{nickname}, #{password}, #{status},
@@ -57,7 +57,7 @@
     </insert>
 
     <!-- 动态列等价原 updateById 的 NOT_NULL 字段策略：null 列不改库值 -->
-    <update id="updateUser">
+    <update id="update">
         UPDATE sys_user
         <set>
             <if test="nickname != null">
@@ -74,7 +74,7 @@
         WHERE id = #{id} AND deleted = 0
     </update>
 
-    <update id="updateUserPassword">
+    <update id="updatePassword">
         UPDATE sys_user
            SET password = #{password},
                update_time = #{updateTime}
@@ -84,7 +84,7 @@
          WHERE id = #{id} AND deleted = 0
     </update>
 
-    <update id="deleteUserById">
+    <update id="deleteById">
         UPDATE sys_user
            SET deleted = 1,
                update_time = #{updateTime}

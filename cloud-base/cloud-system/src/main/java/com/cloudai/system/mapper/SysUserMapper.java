@@ -16,30 +16,30 @@ import java.util.List;
 public interface SysUserMapper {
 
     /** 按账号查（账号唯一，LIMIT 1 兜底） */
-    SysUser selectByAccount(@Param("account") String account);
+    SysUser findByAccount(@Param("account") String account);
 
-    SysUser selectUserById(@Param("id") Long id);
+    SysUser findById(@Param("id") Long id);
 
     /** 分页查询：无 LIMIT，由 PaginationInnerInterceptor 追加 */
-    IPage<SysUser> selectUserPage(Page<SysUser> page);
+    IPage<SysUser> pageList(Page<SysUser> page);
 
     Long countByAccount(@Param("account") String account);
 
     /** 登录权限聚合：账号 → 启用角色 → 启用菜单的权限标识（DISTINCT，非空 perms） */
-    List<String> selectPermsByAccount(@Param("account") String account);
+    List<String> listPermsByAccount(@Param("account") String account);
 
-    int insertUser(SysUser user);
+    int save(SysUser user);
 
     /** 动态更新（仅非空列，等价原 updateById NOT_NULL 策略） */
-    int updateUser(SysUser user);
+    int update(SysUser user);
 
-    int updateUserPassword(@Param("id") Long id,
-                           @Param("password") String password,
-                           @Param("updateBy") String updateBy,
-                           @Param("updateTime") LocalDateTime updateTime);
-
-    /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
-    int deleteUserById(@Param("id") Long id,
+    int updatePassword(@Param("id") Long id,
+                       @Param("password") String password,
                        @Param("updateBy") String updateBy,
                        @Param("updateTime") LocalDateTime updateTime);
+
+    /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
+    int deleteById(@Param("id") Long id,
+                   @Param("updateBy") String updateBy,
+                   @Param("updateTime") LocalDateTime updateTime);
 }

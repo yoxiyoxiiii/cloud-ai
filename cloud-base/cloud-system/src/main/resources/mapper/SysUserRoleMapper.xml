@@ -4,13 +4,13 @@
 
     <!-- 纯关系表：无 deleted 列，物理 DELETE；create_time 由 Service 显式传值 -->
 
-    <select id="selectRoleIdsByUserId" resultType="long">
+    <select id="listRoleIdsByUserId" resultType="long">
         SELECT role_id
           FROM sys_user_role
          WHERE user_id = #{userId}
     </select>
 
-    <insert id="insertBatch">
+    <insert id="saveBatch">
         INSERT INTO sys_user_role (user_id, role_id, create_time) VALUES
         <foreach collection="list" item="item" separator=",">
             (#{item.userId}, #{item.roleId}, #{item.createTime})

@@ -33,10 +33,10 @@ class SysRoleManageServiceTest {
     void add_blankKeyRejected() {
         SysRole role = new SysRole();
         role.setRoleKey(" ");
-        assertThatThrownBy(() -> service.add(role))
+        assertThatThrownBy(() -> service.save(role))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("角色标识不能为空");
-        verify(roleMapper, never()).insertRole(any(SysRole.class));
+        verify(roleMapper, never()).save(any(SysRole.class));
     }
 
     @Test
@@ -44,12 +44,12 @@ class SysRoleManageServiceTest {
         SysRole role = new SysRole();
         role.setId(2L);
         role.setRoleKey("admin");
-        when(roleMapper.selectRoleById(2L)).thenReturn(new SysRole());
+        when(roleMapper.findById(2L)).thenReturn(new SysRole());
         when(roleMapper.countByRoleKey(org.mockito.ArgumentMatchers.any(),
                 org.mockito.ArgumentMatchers.any())).thenReturn(1L);
-        assertThatThrownBy(() -> service.edit(role))
+        assertThatThrownBy(() -> service.update(role))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("角色标识已存在");
-        verify(roleMapper, never()).updateRole(any(SysRole.class));
+        verify(roleMapper, never()).update(any(SysRole.class));
     }
 }

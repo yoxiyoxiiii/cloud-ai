@@ -6,11 +6,13 @@ import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.system.convert.SysRoleConvert;
 import com.cloudai.system.entity.SysRole;
 import com.cloudai.system.entity.SysRoleMenu;
 import com.cloudai.system.mapper.SysRoleMapper;
 import com.cloudai.system.mapper.SysRoleMenuMapper;
 import com.cloudai.system.mapper.SysUserRoleMapper;
+import com.cloudai.system.vo.SysRoleVo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -28,17 +30,18 @@ public class SysRoleManageService {
     private final SysRoleMenuMapper roleMenuMapper;
     private final SysUserRoleMapper userRoleMapper;
 
-    public PageResult<SysRole> page(PageQuery query) {
-        IPage<SysRole> page = roleMapper.selectRolePage(
+    public PageResult<SysRoleVo> pageList(PageQuery query) {
+        IPage<SysRole> page = roleMapper.pageList(
                 new Page<>(query.getPageNum(), query.getPageSize()));
-        return PageResult.of(page.getTotal(), page.getRecords());
+        List<SysRoleVo> rows = page.getRecords().stream().map(SysRoleConvert::toVo).toList();
+        return PageResult.of(page.getTotal(), rows);
     }
 
-    public List<SysRole> listAll() {
-        return roleMapper.selectEnabledRoles();
+    public List<SysRoleVo> listEnabled() {
+        return roleMapper.listEnabled().stream().map(SysRoleConvert::toVo).toList();
     }
 
-    public Long add(SysRole role) {
+    public Long save(SysRole role) {
         assertRoleKeyValid(role.getRoleKey());
         assertRoleKeyFree(role.getRoleKey(), null);
         // 手写 SQL 无 MetaObjectHandler 自动填充：审计四值显式传入，插入时 update 值 = create 值
@@ -49,7 +52,7 @@ public class SysRoleManageService {
         role.setUpdateBy(operator);
         role.setUpdateTime(now);
         try {
-            roleMapper.insertRole(role);
+            roleMapper.save(role);
         } catch (org.springframework.dao.DuplicateKeyException e) {
             log.error("唯一键冲突：{}", e.getMessage());
             throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
@@ -57,7 +60,7 @@ public class SysRoleManageService {
         return role.getId();
     }
 
-    public void edit(SysRole role) {
+    public void update(SysRole role) {
         requireRole(role.getId());
         if (role.getRoleKey() != null) {
             assertRoleKeyValid(role.getRoleKey());
@@ -66,7 +69,7 @@ public class SysRoleManageService {
         role.setUpdateBy(SecurityUtils.currentAccount());
         role.setUpdateTime(LocalDateTime.now());
         try {
-            roleMapper.updateRole(role);
+            roleMapper.update(role);
         } catch (org.springframework.dao.DuplicateKeyException e) {
             log.error("唯一键冲突：{}", e.getMessage());
             throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
@@ -88,9 +91,9 @@ public class SysRoleManageService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void remove(Long id) {
+    public void delete(Long id) {
         requireRole(id);
-        roleMapper.deleteRoleById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        roleMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
         roleMenuMapper.deleteByRoleId(id);
         userRoleMapper.deleteByRoleId(id);
     }
@@ -109,17 +112,17 @@ public class SysRoleManageService {
                         return rm;
                     }).toList();
             if (!list.isEmpty()) {
-                roleMenuMapper.insertBatch(list);
+                roleMenuMapper.saveBatch(list);
             }
         }
     }
 
-    public List<Long> menuIdsOf(Long roleId) {
-        return roleMenuMapper.selectMenuIdsByRoleId(roleId);
+    public List<Long> listMenuIds(Long roleId) {
+        return roleMenuMapper.listMenuIdsByRoleId(roleId);
     }
 
     private SysRole requireRole(Long id) {
-        SysRole role = roleMapper.selectRoleById(id);
+        SysRole role = roleMapper.findById(id);
         if (role == null) {
             throw new BusinessException(3004, "角色不存在");
         }

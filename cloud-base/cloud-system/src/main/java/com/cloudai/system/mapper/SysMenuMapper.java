@@ -12,20 +12,20 @@ import java.util.List;
 public interface SysMenuMapper {
 
     /** 全量菜单，按 sort,id 升序（树构建数据源） */
-    List<SysMenu> selectAllMenus();
+    List<SysMenu> listAll();
 
-    SysMenu selectMenuById(@Param("id") Long id);
+    SysMenu findById(@Param("id") Long id);
 
     /** 子菜单计数（删除前校验） */
     Long countByParentId(@Param("parentId") Long parentId);
 
-    int insertMenu(SysMenu menu);
+    int save(SysMenu menu);
 
     /** 动态更新（仅非空列，等价原 updateById NOT_NULL 策略） */
-    int updateMenu(SysMenu menu);
+    int update(SysMenu menu);
 
     /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
-    int deleteMenuById(@Param("id") Long id,
-                       @Param("updateBy") String updateBy,
-                       @Param("updateTime") LocalDateTime updateTime);
+    int deleteById(@Param("id") Long id,
+                   @Param("updateBy") String updateBy,
+                   @Param("updateTime") LocalDateTime updateTime);
 }

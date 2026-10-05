@@ -9,21 +9,21 @@
     </sql>
 
     <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT -->
-    <select id="selectRolePage" resultType="com.cloudai.system.entity.SysRole">
+    <select id="pageList" resultType="com.cloudai.system.entity.SysRole">
         SELECT <include refid="allColumns"/>
           FROM sys_role
          WHERE deleted = 0
          ORDER BY id DESC
     </select>
 
-    <select id="selectEnabledRoles" resultType="com.cloudai.system.entity.SysRole">
+    <select id="listEnabled" resultType="com.cloudai.system.entity.SysRole">
         SELECT <include refid="allColumns"/>
           FROM sys_role
          WHERE status = 0 AND deleted = 0
          ORDER BY id
     </select>
 
-    <select id="selectRoleById" resultType="com.cloudai.system.entity.SysRole">
+    <select id="findById" resultType="com.cloudai.system.entity.SysRole">
         SELECT <include refid="allColumns"/>
           FROM sys_role
          WHERE id = #{id} AND deleted = 0
@@ -39,7 +39,7 @@
     </select>
 
     <!-- 动态列等价原 insert 的 NOT_NULL 字段策略：业务列 null 时省略、交由列默认值 -->
-    <insert id="insertRole" useGeneratedKeys="true" keyProperty="id">
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_role
         <trim prefix="(" suffix=")" suffixOverrides=",">
             <if test="name != null">
@@ -68,7 +68,7 @@
     </insert>
 
     <!-- 动态列等价原 updateById 的 NOT_NULL 字段策略：null 列不改库值 -->
-    <update id="updateRole">
+    <update id="update">
         UPDATE sys_role
         <set>
             <if test="name != null">
@@ -88,7 +88,7 @@
         WHERE id = #{id} AND deleted = 0
     </update>
 
-    <update id="deleteRoleById">
+    <update id="deleteById">
         UPDATE sys_role
            SET deleted = 1,
                update_time = #{updateTime}
