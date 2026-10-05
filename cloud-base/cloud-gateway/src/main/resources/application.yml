@@ -5,12 +5,32 @@ spring:
   application:
     name: cloud-gateway
   config:
-    import: optional:nacos:${spring.application.name}.yaml
+    import:
+      - optional:nacos:cloud-common.yaml
+      - optional:nacos:${spring.application.name}.yaml
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
     gateway:
       routes:
+        - id: inner-block-sso
+          uri: no://op
+          predicates:
+            - Path=/sso/inner/**
+          filters:
+            - SetStatus=403
+        - id: inner-block-system
+          uri: no://op
+          predicates:
+            - Path=/system/inner/**
+          filters:
+            - SetStatus=403
+        - id: inner-block-bpmn
+          uri: no://op
+          predicates:
+            - Path=/bpmn/inner/**
+          filters:
+            - SetStatus=403
         - id: cloud-sso
           uri: lb://cloud-sso
           predicates:
