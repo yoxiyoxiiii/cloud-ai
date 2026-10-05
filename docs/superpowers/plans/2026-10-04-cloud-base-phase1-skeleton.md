@@ -1938,8 +1938,6 @@ spring:
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
-      discovery:
-        namespace: public
 
 management:
   endpoints:
@@ -1973,7 +1971,7 @@ Expected: BUILD SUCCESS。
 
 - [ ] **Step 5: 启动服务（后台或独立终端）**
 
-Run: `mvn -f cloud-base/pom.xml spring-boot:run -pl cloud-sso`
+Run: `java -jar cloud-base/cloud-sso/target/cloud-sso-1.0.0-SNAPSHOT.jar`（后台运行，记录 PID；比 spring-boot:run 的 PID 更可控，规避 Windows 下 mvn 停止后 java 子进程残留占用端口的陷阱）
 （若 Nacos 不在 127.0.0.1:8848，先 `export NACOS_ADDR=<用户实际地址>`）
 Expected: 日志出现 `nacos registry, cloud-sso ... register finished`（注册成功）与 `Started SsoApplication`。
 
@@ -2060,8 +2058,6 @@ spring:
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
-      discovery:
-        namespace: public
 
 management:
   endpoints:
@@ -2095,7 +2091,7 @@ Expected: BUILD SUCCESS。
 
 - [ ] **Step 5: 启动服务（后台或独立终端）**
 
-Run: `mvn -f cloud-base/pom.xml spring-boot:run -pl cloud-system`
+Run: `java -jar cloud-base/cloud-system/target/cloud-system-1.0.0-SNAPSHOT.jar`（后台运行；构建已在 Step 4 完成。用 java -jar 而非 spring-boot:run——PID 直接可控，规避 Windows 下 mvn 停止后 java 子进程残留占用端口的陷阱）
 Expected: 日志出现 Nacos `register finished` 与 `Started SystemApplication`。
 
 - [ ] **Step 6: 直连验证**
@@ -2179,8 +2175,6 @@ spring:
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
-      discovery:
-        namespace: public
 
 management:
   endpoints:
@@ -2214,7 +2208,7 @@ Expected: BUILD SUCCESS。
 
 - [ ] **Step 5: 启动服务（后台或独立终端）**
 
-Run: `mvn -f cloud-base/pom.xml spring-boot:run -pl cloud-bpmn`
+Run: `java -jar cloud-base/cloud-bpmn/target/cloud-bpmn-1.0.0-SNAPSHOT.jar`（后台运行；构建已在 Step 4 完成，理由同 Task 10）
 Expected: 日志出现 Nacos `register finished` 与 `Started BpmnApplication`。
 
 - [ ] **Step 6: 直连验证**
@@ -2270,8 +2264,6 @@ spring:
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
-      discovery:
-        namespace: public
     gateway:
       routes:
         - id: cloud-sso
@@ -2335,11 +2327,13 @@ Expected: BUILD SUCCESS。
 - [ ] **Step 4: 依次启动三个业务服务与网关（4 个后台任务或 4 个终端）**
 
 ```bash
-mvn -f cloud-base/pom.xml spring-boot:run -pl cloud-sso
-mvn -f cloud-base/pom.xml spring-boot:run -pl cloud-system
-mvn -f cloud-base/pom.xml spring-boot:run -pl cloud-bpmn
-mvn -f cloud-base/pom.xml spring-boot:run -pl cloud-gateway
+java -jar cloud-base/cloud-sso/target/cloud-sso-1.0.0-SNAPSHOT.jar
+java -jar cloud-base/cloud-system/target/cloud-system-1.0.0-SNAPSHOT.jar
+java -jar cloud-base/cloud-bpmn/target/cloud-bpmn-1.0.0-SNAPSHOT.jar
+java -jar cloud-base/cloud-gateway/target/cloud-gateway-1.0.0-SNAPSHOT.jar
 ```
+
+（各自后台运行，记录 PID；用 java -jar 规避 mvn 子进程残留陷阱。）Task 12 构建需先 `mvn -f cloud-base/pom.xml clean install -pl cloud-gateway -am`，三个业务服务的 jar 已在各自任务产出（若 target 被清理则重跑各自构建）。
 
 Expected: 四个进程全部 Started 且无异常。
 
@@ -2407,11 +2401,16 @@ MyBatis-Plus 3.5.7 / MySQL 8 / Redis / Flowable 7.2.0（阶段4引入）
 
 前置：JDK 17、Maven 3.8+、运行中的 Nacos（默认 127.0.0.1:8848，可用环境变量 NACOS_ADDR 覆盖）。
 
+已知环境陷阱：
+
+- 多网卡注册 IP：Nacos 自动选网卡，本机可能注册到虚拟网卡 IP（如 192.168.152.1）。本机直连可达；若网卡变更导致网关 503，用环境配置修（不进仓库）：spring.cloud.inetutils.preferred-networks 或 ignored-interfaces。
+- Windows 停服残留：mvn spring-boot:run 停后 java 子进程可能仍占端口，netstat 找 PID 后 taskkill //F //PID；建议 java -jar 启动。
+
     mvn clean install
-    mvn spring-boot:run -pl cloud-sso
-    mvn spring-boot:run -pl cloud-system
-    mvn spring-boot:run -pl cloud-bpmn
-    mvn spring-boot:run -pl cloud-gateway   # 网关最后启动
+    java -jar cloud-base/cloud-sso/target/cloud-sso-1.0.0-SNAPSHOT.jar
+    java -jar cloud-base/cloud-system/target/cloud-system-1.0.0-SNAPSHOT.jar
+    java -jar cloud-base/cloud-bpmn/target/cloud-bpmn-1.0.0-SNAPSHOT.jar
+    java -jar cloud-base/cloud-gateway/target/cloud-gateway-1.0.0-SNAPSHOT.jar   # 网关最后启动
 
 验证：curl http://localhost:18080/system/demo/ping
 
@@ -2465,5 +2464,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - **DTO 演进坑**：默认 ObjectMapper `FAIL_ON_UNKNOWN_PROPERTIES=true`，删/改字段后旧缓存条目读取抛异常直到 TTL 过期（online 2h 可忍，refresh 是纯 String 无此问题）。
 - **反序列化信任边界**：default typing 仅靠 Jackson 黑名单防护（非白名单）。Redis 不得公网可达、必须 AUTH（凭据走 Nacos）；不要往 Redis 塞 GrantedAuthority/UserDetails 等安全类型，会话 DTO 保持纯 POJO。
 - **计划自检补充维度**：装配类模块保留最小 ApplicationContextRunner 冒烟测试（能抓住 optional 依赖缺失与装配破坏）。
+- **actuator 经网关可达**：actuator 与业务同端口，`/sso/actuator/health` 经 StripPrefix 后可达——阶段 3 网关白名单设计需决定 `/actuator/**` 是否屏蔽。
+- **Nacos 凭据**：若 Nacos 开启鉴权，沿 `NACOS_ADDR` 模式补 `NACOS_USERNAME`/`NACOS_PASSWORD` 占位符。
 - **计划自检补充维度**：涉及 WebFlux 的断言需核对 WebFlux 实际异常类型。
 
