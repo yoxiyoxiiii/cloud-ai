@@ -424,7 +424,8 @@ Expected: COMPILATION ERROR。
 package com.cloudai.common.security.constant;
 
 /**
- * 网关与资源端共享的内部透传 header 常量（网关剥离外部同名 header 后注入）
+ * 网关与资源端共享的内部透传 header 常量（网关剥离外部同名 header 后注入）。
+ * 信任前提：仅限网关下游信任链使用——直连服务端口可伪造任意 X-User-* 身份（服务端口不对公网暴露是部署约束）。
  */
 public final class SecurityConstants {
 
@@ -490,6 +491,7 @@ import java.util.List;
  * 从网关透传的 X-User-* header 构建认证上下文；无 header 即匿名；
  * userId 非数字视为无效（伪造防护兜底），整单按匿名处理。
  * 请求结束后清理 SecurityContext（无状态，线程池复用防串号）。
+ * 信任前提：本过滤器信任 X-User-* 仅因网关已剥离外部同名 header；直连服务端口等同身份伪造入口。
  */
 public class HeaderAuthFilter extends OncePerRequestFilter {
 
@@ -521,7 +523,10 @@ public class HeaderAuthFilter extends OncePerRequestFilter {
         String perms = request.getHeader(SecurityConstants.HEADER_USER_PERMS);
         List<String> permList = (perms == null || perms.isBlank())
                 ? List.of()
-                : Arrays.asList(perms.split(SecurityConstants.PERMS_SEPARATOR));
+                : Arrays.stream(perms.split(SecurityConstants.PERMS_SEPARATOR))
+                        .map(String::trim)
+                        .filter(s -> !s.isBlank())
+                        .toList();
         user.setPermissions(permList);
         var authorities = permList.stream().map(SimpleGrantedAuthority::new).toList();
         SecurityContextHolder.getContext().setAuthentication(
@@ -559,6 +564,26 @@ class CommonSecurityAutoConfigurationTest {
         });
     }
 
+    @Test
+    void accessDeniedReturns403EvenWithGlobalCatchAllAdvice() throws Exception {
+        var mvc = org.springframework.test.web.servlet.setup.MockMvcBuilders
+                .standaloneSetup(new ProbeController())
+                .setControllerAdvice(new com.cloudai.common.core.exception.GlobalExceptionHandler(),
+                        new CommonSecurityAutoConfiguration.SecurityExceptionAdvice())
+                .build();
+        mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/probe"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.code").value(403));
+    }
+
+    @org.springframework.web.bind.annotation.RestController
+    static class ProbeController {
+        @org.springframework.web.bind.annotation.GetMapping("/probe")
+        public com.cloudai.common.core.domain.R<Void> probe() {
+            throw new AccessDeniedException("denied");
+        }
+    }
+
     @Configuration(proxyBeanMethods = false)
     @EnableWebMvc
     @EnableWebSecurity
@@ -582,6 +607,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.HttpStatus;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -630,15 +657,18 @@ public class CommonSecurityAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(name = "securityExceptionAdvice")
-    public Object securityExceptionAdvice() {
+    public SecurityExceptionAdvice securityExceptionAdvice() {
         return new SecurityExceptionAdvice();
     }
 
     /**
-     * 方法级权限拒绝 → 统一 R 格式（HTTP 200 + code 403）
+     * 方法级权限拒绝 → 统一 R 格式（HTTP 200 + code 403）。
+     * 必须最高优先级：core-starter 的 GlobalExceptionHandler 有 Exception.class 兜底，
+     * 无序时按 advice 字母序抢先，会把 AccessDeniedException 吞成 500。
      */
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     @RestControllerAdvice
-    static class SecurityExceptionAdvice {
+    public static class SecurityExceptionAdvice {
 
         @ExceptionHandler(AccessDeniedException.class)
         public R<Void> handleAccessDenied(AccessDeniedException e) {
@@ -661,7 +691,7 @@ com.cloudai.common.security.config.CommonSecurityAutoConfiguration
 - [ ] **Step 10: 运行全部测试确认通过**
 
 Run: `D:/software/apache-maven-3.8.4/bin/mvn -f cloud-base/pom.xml clean install -pl cloud-common/cloud-common-security-starter`
-Expected: BUILD SUCCESS，`Tests run: 12`（JwtUtil 7 + HeaderAuthFilter 4 + AutoConfig 1）。
+Expected: BUILD SUCCESS，`Tests run: 13`（JwtUtil 7 + HeaderAuthFilter 4 + AutoConfig 2，含双 advice 优先级回归）。
 
 - [ ] **Step 11: Commit**
 
