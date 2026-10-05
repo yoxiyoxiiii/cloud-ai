@@ -38,10 +38,11 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    /** 前缀白名单：登录/刷新、demo、文档、监控 */
+    /** 前缀白名单：登录/刷新、demo、inner（SetStatus 403 屏蔽路由对匿名一致生效）、文档、监控 */
     private static final List<String> WHITELIST = List.of(
             "/sso/auth/login", "/sso/auth/refresh",
             "/sso/demo", "/system/demo", "/bpmn/demo",
+            "/sso/inner", "/system/inner", "/bpmn/inner",
             "/actuator", "/v3/api-docs", "/swagger-ui", "/webjars", "/doc");
 
     private final StringRedisTemplate stringRedisTemplate;

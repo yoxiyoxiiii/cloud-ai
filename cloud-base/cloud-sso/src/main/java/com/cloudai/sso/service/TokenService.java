@@ -2,17 +2,19 @@ package com.cloudai.sso.service;
 
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
-import com.cloudai.common.redis.util.RedisUtil;
 import com.cloudai.common.security.constant.SecurityConstants;
 import com.cloudai.common.security.util.JwtUtil;
 import com.cloudai.sso.client.SystemUserClient;
 import com.cloudai.sso.domain.OnlineSession;
 import com.cloudai.sso.dto.LoginResult;
 import com.cloudai.sso.dto.LoginUserDTO;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -31,8 +33,15 @@ public class TokenService {
     /** 时序旁路防护用的固定散列（明文为随机无效串） */
     private static final String DUMMY_HASH = "$2a$10$VAopGs8o/mcBgRg6G0G6..u1kOmyJqxrqhu74w9MhfYZgWKZHZBSG";
 
+    /**
+     * 在线会话以纯 JSON 字符串写入（StringRedisTemplate）：
+     * 网关用 OnlineSessionView 解析 permissions，带 default typing 的值
+     * （@class 头 + List 的 ["java.util.ArrayList",[...]] 包裹）会解析失败致权限丢失。
+     */
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final SystemUserClient userClient;
-    private final RedisUtil redisUtil;
+    private final StringRedisTemplate stringRedisTemplate;
     private final PasswordEncoder passwordEncoder;
 
     @Value("${cloud.jwt.secret}")
@@ -76,12 +85,12 @@ public class TokenService {
             throw new BusinessException(2004, "refreshToken 不能为空");
         }
         Long userId = null;
-        Set<String> keys = redisUtil.keys(REFRESH_KEY_PREFIX + "*");
+        Set<String> keys = stringRedisTemplate.keys(REFRESH_KEY_PREFIX + "*");
         if (keys == null) {
             throw new BusinessException(2005, "refreshToken 无效或已过期");
         }
         for (String key : keys) {
-            String value = redisUtil.get(key);
+            String value = stringRedisTemplate.opsForValue().get(key);
             if (refreshToken.equals(value)) {
                 userId = Long.valueOf(key.substring(REFRESH_KEY_PREFIX.length()));
                 break;
@@ -94,7 +103,7 @@ public class TokenService {
         if (session == null) {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }
-        redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + session.getTokenId());
+        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + session.getTokenId());
         // 回查 system：校验账号未停用并取最新权限快照（防停用/降权用户经 refresh 保活旧权限）
         LoginUserDTO latest;
         try {
@@ -120,18 +129,23 @@ public class TokenService {
         }
         String tokenId = claims.getId();
         Long userId = Long.valueOf(claims.getSubject());
-        redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
-        redisUtil.delete(REFRESH_KEY_PREFIX + userId);
+        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
+        stringRedisTemplate.delete(REFRESH_KEY_PREFIX + userId);
     }
 
     public List<OnlineSession> onlineList() {
         List<OnlineSession> list = new ArrayList<>();
-        Set<String> keys = redisUtil.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
+        Set<String> keys = stringRedisTemplate.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
         if (keys != null) {
             keys.forEach(key -> {
-                OnlineSession session = redisUtil.get(key);
-                if (session != null) {
-                    list.add(session);
+                String json = stringRedisTemplate.opsForValue().get(key);
+                if (json == null) {
+                    return;
+                }
+                try {
+                    list.add(JSON.readValue(json, OnlineSession.class));
+                } catch (JsonProcessingException ignored) {
+                    // 跳过损坏条目
                 }
             });
         }
@@ -139,7 +153,7 @@ public class TokenService {
     }
 
     public void kick(String tokenId) {
-        redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
+        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
     }
 
     private LoginResult issueTokens(LoginUserDTO dto, String ip) {
@@ -154,8 +168,16 @@ public class TokenService {
         session.setPermissions(dto.getPermissions());
         session.setLoginTime(System.currentTimeMillis());
         session.setIp(ip);
-        redisUtil.set(SecurityConstants.ONLINE_KEY_PREFIX + tokenId, session, accessTtlSeconds, TimeUnit.SECONDS);
-        redisUtil.set(REFRESH_KEY_PREFIX + dto.getUserId(), refreshToken, refreshTtlSeconds, TimeUnit.SECONDS);
+        String sessionJson;
+        try {
+            sessionJson = JSON.writeValueAsString(session);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("在线会话序列化失败", e);
+        }
+        stringRedisTemplate.opsForValue().set(SecurityConstants.ONLINE_KEY_PREFIX + tokenId,
+                sessionJson, accessTtlSeconds, TimeUnit.SECONDS);
+        stringRedisTemplate.opsForValue().set(REFRESH_KEY_PREFIX + dto.getUserId(),
+                refreshToken, refreshTtlSeconds, TimeUnit.SECONDS);
 
         LoginResult result = new LoginResult();
         result.setAccessToken(accessToken);
@@ -165,13 +187,22 @@ public class TokenService {
     }
 
     private OnlineSession findOnlineSessionByUserId(Long userId) {
-        Set<String> keys = redisUtil.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
+        Set<String> keys = stringRedisTemplate.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
         if (keys == null) {
             return null;
         }
         for (String key : keys) {
-            OnlineSession session = redisUtil.get(key);
-            if (session != null && userId.equals(session.getUserId())) {
+            String json = stringRedisTemplate.opsForValue().get(key);
+            if (json == null) {
+                continue;
+            }
+            OnlineSession session;
+            try {
+                session = JSON.readValue(json, OnlineSession.class);
+            } catch (JsonProcessingException e) {
+                continue;
+            }
+            if (userId.equals(session.getUserId())) {
                 return session;
             }
         }
