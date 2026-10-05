@@ -33,6 +33,7 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     component: Layout,
     redirect: '/system/user',
+    meta: { title: '首页' },
     children: [
       {
         path: 'system/user',
