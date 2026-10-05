@@ -2800,6 +2800,38 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Modify: `cloud-base/cloud-gateway/pom.xml`
 - Modify: `cloud-base/cloud-gateway/src/main/resources/application.yml`
 - Create: `cloud-base/cloud-gateway/src/main/java/com/cloudai/gateway/filter/AuthGlobalFilter.java`
+- Create: `cloud-base/cloud-gateway/src/main/java/com/cloudai/gateway/config/GatewaySecurityConfig.java`
+
+- [ ] **Step 2b: 网关显式响应式 permitAll 安全链（Task 11 全链路验证时发现的必修项）**
+
+依赖 security-starter（取 JwtUtil/常量）传递带入 spring-boot-starter-security 后，Boot 的 ReactiveSecurityAutoConfiguration 会在 WebFlux 网关激活默认链（Basic+CSRF 全量拦截，先于 GlobalFilter），必须显式覆盖：
+
+```java
+package com.cloudai.gateway.config;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
+import org.springframework.security.config.web.server.ServerHttpSecurity;
+import org.springframework.security.web.server.SecurityWebFilterChain;
+
+/**
+ * 网关自身的响应式安全链显式放行：网关鉴权由 AuthGlobalFilter 承担（JWT 验签 + Redis 在线检查 + X-User-* 透传）。
+ * 背景：依赖 security-starter（取 JwtUtil/常量）传递带入 spring-boot-starter-security，
+ * Boot 的 ReactiveSecurityAutoConfiguration 会激活默认链（Basic + CSRF 全量拦截），必须显式覆盖。
+ */
+@Configuration
+@EnableWebFluxSecurity
+public class GatewaySecurityConfig {
+
+    @Bean
+    public SecurityWebFilterChain securityWebFilterChain(ServerHttpSecurity http) {
+        return http.csrf(ServerHttpSecurity.CsrfSpec::disable)
+                .authorizeExchange(ex -> ex.anyExchange().permitAll())
+                .build();
+    }
+}
+```
 
 - [ ] **Step 1: pom 增加依赖**
 
@@ -3157,6 +3189,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - **登录无锁定/限速/验证码**：内网部署可接受；上公网前必须补（配合上面的 refresh 未认证面）。
 - **refresh 滑动窗口**：每次刷新重置 7d，无绝对上限——MVP 接受。
 - **Feign fallback 前置条件**：`spring.cloud.openfeign.circuitbreaker.enabled=true` + circuitbreaker 依赖才生效；未启用时 TokenService 显式 catch FeignException 兜底 2002。
+- **网关 × security-starter 传递耦合**：security-starter 传递 spring-boot-starter-security，Boot 的 ReactiveSecurityAutoConfiguration 在 WebFlux 网关激活默认 Basic+CSRF 全量拦截链——网关必须自带 GatewaySecurityConfig（响应式 permitAll）覆盖。若未来把 JwtUtil/SecurityConstants 拆到无安全依赖的更小模块，此配置可移除。
 - **Task 10 注意**：网关应透传 X-Forwarded-For，sso 在线列表的 ip 取该值（当前 getRemoteAddr 在网关后将恒显示网关 IP）。
 - **入参校验**：LoginRequest 无 @NotBlank/@Valid（password null → 500），随 Bean Validation 统一补。
 
