@@ -1000,6 +1000,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Create: `cloud-base/cloud-common/cloud-common-core/src/main/java/com/cloudai/common/core/exception/BusinessException.java`
 - Create: `cloud-base/cloud-common/cloud-common-core/src/main/java/com/cloudai/common/core/exception/GlobalExceptionHandler.java`
 - Create: `cloud-base/cloud-common/cloud-common-core/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`
+- Modify: `cloud-base/cloud-common/cloud-common-core/src/main/java/com/cloudai/common/core/domain/R.java`（新增 fail(ErrorCode, String) 重载）
 - Test: `cloud-base/cloud-common/cloud-common-core/src/test/java/com/cloudai/common/core/exception/GlobalExceptionHandlerTest.java`
 
 - [ ] **Step 1: 写失败测试 `GlobalExceptionHandlerTest.java`**
@@ -1009,6 +1010,7 @@ package com.cloudai.common.core.exception;
 
 import com.cloudai.common.core.domain.R;
 import org.junit.jupiter.api.Test;
+import org.springframework.validation.BeanPropertyBindingResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -1030,6 +1032,16 @@ class GlobalExceptionHandlerTest {
         R<Void> r = handler.handleBusinessException(e);
         assertThat(r.getCode()).isEqualTo(3001);
         assertThat(r.getMsg()).isEqualTo("用户不存在");
+    }
+
+    @Test
+    void validException_mapsToParamError() {
+        BeanPropertyBindingResult bindingResult = new BeanPropertyBindingResult(new Object(), "dto");
+        bindingResult.rejectValue("userName", "NotBlank", "不能为空");
+        MethodArgumentNotValidException e = new MethodArgumentNotValidException(null, bindingResult);
+        R<Void> r = handler.handleValidException(e);
+        assertThat(r.getCode()).isEqualTo(1001);
+        assertThat(r.getMsg()).contains("userName").contains("不能为空");
     }
 
     @Test
@@ -1119,6 +1131,18 @@ public class GlobalExceptionHandler {
 }
 ```
 
+- [ ] **Step 4b: 为 R 新增 fail(ErrorCode, String) 重载**
+
+`R.java` 在 `fail(ErrorCode)` 方法之后追加：
+
+```java
+    public static <T> R<T> fail(ErrorCode errorCode, String msg) {
+        return build(errorCode.getCode(), msg, null);
+    }
+```
+
+（供 handleValidException 等场景使用枚举码 + 自定义消息，替代裸 int。）
+
 - [ ] **Step 5: 创建自动装配注册文件**
 
 路径：`cloud-base/cloud-common/cloud-common-core/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`
@@ -1132,7 +1156,7 @@ com.cloudai.common.core.exception.GlobalExceptionHandler
 - [ ] **Step 6: 运行测试确认通过**
 
 Run: `mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core`
-Expected: `Tests run: 12`（含此前 9 个 + 本任务 3 个），全部 PASS，BUILD SUCCESS。
+Expected: `Tests run: 13`（含此前 9 个 + 本任务 4 个），全部 PASS，BUILD SUCCESS。
 
 - [ ] **Step 7: Commit**
 
