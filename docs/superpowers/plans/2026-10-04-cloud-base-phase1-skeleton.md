@@ -1853,7 +1853,7 @@ class CommonRedisAutoConfigurationTest {
     @Test
     void registersRedisTemplateAndUtil() {
         runner.run(ctx -> {
-            assertThat(ctx).hasSingleBean("redisTemplate");
+            assertThat(ctx).hasBean("redisTemplate");
             assertThat(ctx).hasSingleBean(RedisUtil.class);
         });
     }
