@@ -80,8 +80,37 @@ cloud-base/
 - **公共模块自动装配**：业务服务引依赖即生效；用户自定义同名 bean 会覆盖（@ConditionalOnMissingBean）。网关是 WebFlux——**不得引入 spring-boot-starter-web**；GlobalExceptionHandler 的 advice 只覆盖 WebMVC controller（网关鉴权拒绝由 AuthGlobalFilter 直接写 R JSON，见"认证链路"）。
 - **DDL**（阶段2起）：逻辑删除列必须 `deleted TINYINT NOT NULL DEFAULT 0`（NULL 行会被 @TableLogic 过滤隐身）。
 - **跨域只在网关做**（下游配 CORS 会产生双 ACAO 头）。
-- **Controller 返回两行式**：service 调用结果先落局部变量再 `return R.ok(x)`，禁止内联 `return R.ok(service.xxx(...))`（可读性/断点友好）。
 - 包名 `com.cloudai.<service>`，groupId `com.cloudai`。
+
+### 编码规范（自 cloud-system 沉淀；三层保障 = 本节 + `/cloud-system-crud` 技能 + ArchitectureGuardTest）
+
+**分层依赖**：Controller → Service → Mapper（XML）。Controller 禁止 import mapper；Feign 内部接口放 `controller/feign/` 子包。
+
+**Controller 层**：
+- 两行式返回——禁止内联 `return R.ok(service.xxx(...))`：
+  ```java
+  SysUser user = manageService.detail(id);
+  return R.ok(user);
+  ```
+- `@PathVariable("id") Long id` 必须显式命名（Spring 6.1 隐式命名在无 -parameters 时 500）
+- 管理端点必须 `@PreAuthorize("hasAuthority('module:entity:action')")`，权限标识需先入 sys_menu 种子
+
+**Service 层**：
+- 业务校验前置（空值/空白 → BusinessException）+ 唯一性查重 + `DuplicateKeyException` 兜底转业务码（防并发 TOCTOU 与墓碑占键）
+- 多表写操作 `@Transactional(rollbackFor = Exception.class)`；只读不加
+- 错误码分段：1xxx 通用 / 2xxx 认证 / 3xxx system（新增实体接续分配，如 3008+）
+- 写操作审计字段显式传参：`SecurityUtils.currentAccount()` + `LocalDateTime.now()`（插入四值= create 值；更新两值）
+
+**持久层（手写 SQL，mapper XML）**：
+- 主表（带 deleted）所有查询/更新 WHERE 显式 `deleted = 0`；删除 = `UPDATE SET deleted=1` + update 审计两值；纯关系表（sys_user_role/sys_role_menu）物理 DELETE
+- 只用 `#{}` 占位（禁 `${}`）；分页用 `IPage<T> method(Page<T> page)` + XML 不写 LIMIT；`LIMIT 1` 仅唯一键防御
+- 动态列用 `<trim>/<set>` + `<if>`（等价 MP NOT_NULL 策略，避免 NULL 打穿 NOT NULL DEFAULT 列）
+- 聚合查询优先 JOIN 一次成型（参考 selectPermsByAccount）
+- 列名-实体映射依赖驼峰（application.yml 已显式 `map-underscore-to-camel-case: true`）
+
+**DTO/实体**：密码类敏感字段 `@ToString.Exclude` + `@JsonProperty(WRITE_ONLY)`；关联表实体不继承 BaseEntity（纯关系，无逻辑删除列）
+
+**新增 CRUD 端点**：使用 `/cloud-system-crud` 技能（五件套模板 + 检查清单）；机械规则由 `cloud-system` 的 `ArchitectureGuardTest` 强制（内联 R.ok/隐式 @PathVariable/Wrapper/BaseMapper/controller 依赖 mapper/XML `${}` 等，写错构建即红）。
 
 ### 分阶段路线（当前：阶段 1 已合并 main；阶段 2+3 已完成，待合并）
 
