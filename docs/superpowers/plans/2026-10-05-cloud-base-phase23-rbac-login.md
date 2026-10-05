@@ -2182,7 +2182,8 @@ class RedisUtilKeysTest {
             RedisTemplate<String, Object> template =
                     new com.cloudai.common.redis.config.CommonRedisAutoConfiguration().redisTemplate(factory);
             RedisUtil redis = new RedisUtil(template);
-            Assumptions.assumeTrue(Boolean.TRUE.equals(factory.getConnection().ping()), "本机 Redis 未运行，跳过");
+            template.afterPropertiesSet();
+            Assumptions.assumeTrue("PONG".equalsIgnoreCase(factory.getConnection().ping()), "本机 Redis 未运行，跳过");
             redis.set("test:keys:a", "1");
             redis.set("test:keys:b", "2");
             Set<String> keys = redis.keys("test:keys:*");
@@ -2551,10 +2552,10 @@ public class TokenService {
     private String secret;
 
     @Value("${cloud.jwt.access-token-ttl:7200}")
-    private long accessTtlSeconds;
+    private long accessTtlSeconds = 7200;
 
     @Value("${cloud.jwt.refresh-token-ttl:604800}")
-    private long refreshTtlSeconds;
+    private long refreshTtlSeconds = 604800;
 
     public LoginResult login(String account, String password, String ip) {
         R<LoginUserDTO> resp = userClient.getUserByAccount(account);
