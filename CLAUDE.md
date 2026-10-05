@@ -38,7 +38,7 @@ curl http://localhost:18080/system/demo/ping
 - **停服**：Git Bash 的 `$!` 是 MSYS 包装进程 PID，不是真实 java PID。用 `netstat -ano | grep LISTENING | grep :<port>` 找 PID 再 `taskkill //F //PID <pid>`。
 - **Nacos 注册 IP**：多网卡机器上 Nacos 客户端可能注册到虚拟网卡 IP（本机是 192.168.152.1），本机可达不影响；若网关 503，用环境级配置 `spring.cloud.inetutils.preferred-networks` 修（不进仓库）。
 - **端口**：网关 18080（8080 被本机 RocketMQ Dashboard 容器占用，勿改回）；9201-9203 为服务端口。
-- **Nacos** 已在 127.0.0.1:8848 运行（Docker）；Redis 6379 / MySQL 由本机 Docker 提供。
+- **Nacos** 已在 127.0.0.1:8848 运行（Docker）；Redis 6379（Docker）；MySQL 127.0.0.1:3306 为**原生服务**（root/空密码，实测 5.7.24，无 mysql 客户端——用 jshell + mysql-connector-j 执行 SQL）。
 - 控制台中文乱码（GBK）不影响判断；Maven 输出 javac 报错为乱码时看行号即可。
 
 ## Architecture

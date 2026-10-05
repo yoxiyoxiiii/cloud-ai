@@ -5,7 +5,7 @@
 ## 技术栈
 
 JDK 17 / Spring Boot 3.3.4 / Spring Cloud 2023.0.3 / Spring Cloud Alibaba 2023.0.3.3（Nacos）
-MyBatis-Plus 3.5.7 / MySQL 8 / Redis / Flowable 7.2.0（阶段4引入）
+MyBatis-Plus 3.5.7 / MySQL 5.7+（本机 5.7.24） / Redis / Flowable 7.2.0（阶段4引入）
 
 ## 模块
 
