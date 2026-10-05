@@ -6,7 +6,7 @@ import org.apache.ibatis.reflection.MetaObject;
 import java.time.LocalDateTime;
 
 /**
- * 审计字段自动填充：无对应属性的实体自动跳过
+ * 审计字段自动填充：无对应属性的实体自动跳过；填充语义为服务器时间总是生效（覆盖调用方已设值）。
  */
 public class AuditMetaObjectHandler implements MetaObjectHandler {
 

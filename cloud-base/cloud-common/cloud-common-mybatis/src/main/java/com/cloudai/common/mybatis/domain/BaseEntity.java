@@ -3,7 +3,8 @@ package com.cloudai.common.mybatis.domain;
 import com.baomidou.mybatisplus.annotation.FieldFill;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableLogic;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
@@ -12,7 +13,8 @@ import java.time.LocalDateTime;
  * 实体基类：审计时间字段自动填充 + 逻辑删除。
  * createBy/updateBy 在阶段 3 接入登录上下文后填充。
  */
-@Data
+@Getter
+@Setter
 public abstract class BaseEntity implements Serializable {
 
     private static final long serialVersionUID = 1L;

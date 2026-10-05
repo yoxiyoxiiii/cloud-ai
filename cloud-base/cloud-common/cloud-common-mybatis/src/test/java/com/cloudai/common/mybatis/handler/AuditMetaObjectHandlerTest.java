@@ -50,4 +50,11 @@ class AuditMetaObjectHandlerTest {
         MetaObject metaObject = SystemMetaObject.forObject(entity);
         assertThatCode(() -> handler.insertFill(metaObject)).doesNotThrowAnyException();
     }
+
+    @Test
+    void updateFill_skipsEntitiesWithoutAuditFields() {
+        PlainEntity entity = new PlainEntity();
+        MetaObject metaObject = SystemMetaObject.forObject(entity);
+        assertThatCode(() -> handler.updateFill(metaObject)).doesNotThrowAnyException();
+    }
 }
