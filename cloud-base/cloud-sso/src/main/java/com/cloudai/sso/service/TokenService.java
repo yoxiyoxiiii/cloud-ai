@@ -6,6 +6,7 @@ import com.cloudai.common.security.constant.SecurityConstants;
 import com.cloudai.common.security.util.JwtUtil;
 import com.cloudai.sso.client.SystemUserClient;
 import com.cloudai.sso.domain.OnlineSession;
+import com.cloudai.sso.domain.RefreshTokenValue;
 import com.cloudai.sso.dto.LoginResult;
 import com.cloudai.sso.dto.LoginUserDTO;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -84,30 +85,36 @@ public class TokenService {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw new BusinessException(2004, "refreshToken 不能为空");
         }
-        Long userId = null;
         Set<String> keys = stringRedisTemplate.keys(REFRESH_KEY_PREFIX + "*");
         if (keys == null) {
             throw new BusinessException(2005, "refreshToken 无效或已过期");
         }
+        RefreshTokenValue matched = null;
         for (String key : keys) {
-            String value = stringRedisTemplate.opsForValue().get(key);
-            if (refreshToken.equals(value)) {
-                userId = Long.valueOf(key.substring(REFRESH_KEY_PREFIX.length()));
+            RefreshTokenValue value = parseRefreshValue(stringRedisTemplate.opsForValue().get(key));
+            if (value != null && refreshToken.equals(value.getToken())) {
+                matched = value;
                 break;
             }
         }
-        if (userId == null) {
+        if (matched == null) {
             throw new BusinessException(2005, "refreshToken 无效或已过期");
         }
-        OnlineSession session = findOnlineSessionByUserId(userId);
-        if (session == null) {
+        // 读旧会话（保留 ip）后精确删除绑定会话（多会话下不误杀其他端）
+        String onlineJson = stringRedisTemplate.opsForValue()
+                .get(SecurityConstants.ONLINE_KEY_PREFIX + matched.getTokenId());
+        if (onlineJson == null) {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }
-        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + session.getTokenId());
+        OnlineSession old = parseSession(onlineJson);
+        if (old == null) {
+            throw new BusinessException(2005, "会话已失效，请重新登录");
+        }
+        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + matched.getTokenId());
         // 回查 system：校验账号未停用并取最新权限快照（防停用/降权用户经 refresh 保活旧权限）
         LoginUserDTO latest;
         try {
-            R<LoginUserDTO> resp = userClient.getUserByAccount(session.getAccount());
+            R<LoginUserDTO> resp = userClient.getUserByAccount(old.getAccount());
             latest = resp == null ? null : resp.getData();
         } catch (FeignException e) {
             throw new BusinessException(2002, "用户服务不可用，请稍后重试");
@@ -116,7 +123,7 @@ public class TokenService {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }
         // issueTokens 以新值覆盖 sso:refresh:{userId}，此处不得再 delete（曾致新 refreshToken 落地即死）
-        return issueTokens(latest, session.getIp());
+        return issueTokens(latest, old.getIp());
     }
 
     public void logout(String accessToken) {
@@ -176,8 +183,14 @@ public class TokenService {
         }
         stringRedisTemplate.opsForValue().set(SecurityConstants.ONLINE_KEY_PREFIX + tokenId,
                 sessionJson, accessTtlSeconds, TimeUnit.SECONDS);
+        String refreshJson;
+        try {
+            refreshJson = JSON.writeValueAsString(new RefreshTokenValue(tokenId, refreshToken));
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("refreshToken 序列化失败", e);
+        }
         stringRedisTemplate.opsForValue().set(REFRESH_KEY_PREFIX + dto.getUserId(),
-                refreshToken, refreshTtlSeconds, TimeUnit.SECONDS);
+                refreshJson, refreshTtlSeconds, TimeUnit.SECONDS);
 
         LoginResult result = new LoginResult();
         result.setAccessToken(accessToken);
@@ -186,26 +199,25 @@ public class TokenService {
         return result;
     }
 
-    private OnlineSession findOnlineSessionByUserId(Long userId) {
-        Set<String> keys = stringRedisTemplate.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
-        if (keys == null) {
+    private RefreshTokenValue parseRefreshValue(String json) {
+        if (json == null) {
             return null;
         }
-        for (String key : keys) {
-            String json = stringRedisTemplate.opsForValue().get(key);
-            if (json == null) {
-                continue;
-            }
-            OnlineSession session;
-            try {
-                session = JSON.readValue(json, OnlineSession.class);
-            } catch (JsonProcessingException e) {
-                continue;
-            }
-            if (userId.equals(session.getUserId())) {
-                return session;
-            }
+        try {
+            return JSON.readValue(json, RefreshTokenValue.class);
+        } catch (JsonProcessingException e) {
+            return null; // 旧格式/损坏值一律视为不匹配
         }
-        return null;
+    }
+
+    private OnlineSession parseSession(String json) {
+        if (json == null) {
+            return null;
+        }
+        try {
+            return JSON.readValue(json, OnlineSession.class);
+        } catch (JsonProcessingException e) {
+            return null;
+        }
     }
 }

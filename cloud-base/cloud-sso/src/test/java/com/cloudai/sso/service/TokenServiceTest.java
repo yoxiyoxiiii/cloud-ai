@@ -124,7 +124,8 @@ class TokenServiceTest {
         injectSecret();
         when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
-        when(valueOps.get("sso:refresh:1")).thenReturn("rt-old");
+        when(valueOps.get("sso:refresh:1"))
+                .thenReturn("{\"tokenId\":\"jti-old\",\"token\":\"rt-old\"}");
         OnlineSession session = new OnlineSession();
         session.setTokenId("jti-old");
         session.setUserId(1L);
@@ -132,7 +133,6 @@ class TokenServiceTest {
         session.setPermissions(List.of("p1"));
         session.setLoginTime(1L);
         session.setIp("127.0.0.1");
-        when(stringRedisTemplate.keys("sso:online:*")).thenReturn(Set.of("sso:online:jti-old"));
         when(valueOps.get("sso:online:jti-old")).thenReturn(sessionJson(session));
         LoginUserDTO fresh = admin();
         when(userClient.getUserByAccount("admin")).thenReturn(com.cloudai.common.core.domain.R.ok(fresh));
@@ -146,17 +146,41 @@ class TokenServiceTest {
     }
 
     @Test
+    void refresh_deletesOnlyBoundSession() throws Exception {
+        injectSecret();
+        when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh:1"))
+                .thenReturn("{\"tokenId\":\"jti-2\",\"token\":\"rt-2\"}");
+        OnlineSession session2 = new OnlineSession();
+        session2.setTokenId("jti-2");
+        session2.setUserId(1L);
+        session2.setAccount("admin");
+        session2.setPermissions(List.of("p1"));
+        session2.setLoginTime(1L);
+        session2.setIp("1.2.3.4");
+        when(valueOps.get("sso:online:jti-2")).thenReturn(
+                new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(session2));
+        when(userClient.getUserByAccount("admin")).thenReturn(com.cloudai.common.core.domain.R.ok(admin()));
+
+        tokenService.refresh("rt-2");
+
+        verify(stringRedisTemplate).delete("sso:online:jti-2");   // 只删绑定会话
+        verify(stringRedisTemplate, org.mockito.Mockito.never()).delete("sso:online:jti-1"); // 不误杀
+    }
+
+    @Test
     void refresh_disabledUserRejected() throws Exception {
         injectSecret();
         when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
-        when(valueOps.get("sso:refresh:1")).thenReturn("rt-old");
+        when(valueOps.get("sso:refresh:1"))
+                .thenReturn("{\"tokenId\":\"jti-old\",\"token\":\"rt-old\"}");
         OnlineSession session = new OnlineSession();
         session.setTokenId("jti-old");
         session.setUserId(1L);
         session.setAccount("admin");
         session.setLoginTime(1L);
-        when(stringRedisTemplate.keys("sso:online:*")).thenReturn(Set.of("sso:online:jti-old"));
         when(valueOps.get("sso:online:jti-old")).thenReturn(sessionJson(session));
         LoginUserDTO disabled = admin();
         disabled.setStatus(1);
@@ -172,7 +196,8 @@ class TokenServiceTest {
         injectSecret();
         when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
-        when(valueOps.get("sso:refresh:1")).thenReturn("rt-old");
+        when(valueOps.get("sso:refresh:1"))
+                .thenReturn("{\"tokenId\":\"jti-old\",\"token\":\"rt-old\"}");
         OnlineSession session = new OnlineSession();
         session.setTokenId("jti-old");
         session.setUserId(1L);
@@ -180,7 +205,6 @@ class TokenServiceTest {
         session.setPermissions(List.of("old:perm"));
         session.setLoginTime(1L);
         session.setIp("1.2.3.4");
-        when(stringRedisTemplate.keys("sso:online:*")).thenReturn(Set.of("sso:online:jti-old"));
         when(valueOps.get("sso:online:jti-old")).thenReturn(sessionJson(session));
         LoginUserDTO fresh = admin();
         fresh.setPermissions(List.of("new:perm"));
