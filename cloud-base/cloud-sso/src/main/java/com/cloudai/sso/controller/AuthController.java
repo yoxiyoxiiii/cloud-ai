@@ -29,24 +29,28 @@ public class AuthController {
 
     private final TokenService tokenService;
 
+    /** 账号密码登录，签发 accessToken/refreshToken 双令牌 */
     @PostMapping("/login")
     public R<LoginResult> login(@RequestBody LoginRequest req, HttpServletRequest http) {
         LoginResult result = tokenService.login(req.getAccount(), req.getPassword(), http.getRemoteAddr());
         return R.ok(result);
     }
 
+    /** 以 refreshToken 换发新双令牌（回查最新权限快照） */
     @PostMapping("/refresh")
     public R<LoginResult> refresh(@RequestBody RefreshRequest req) {
         LoginResult result = tokenService.refresh(req.getRefreshToken());
         return R.ok(result);
     }
 
+    /** 注销当前会话（在线与 refresh 键即时失效） */
     @PostMapping("/logout")
     public R<Void> logout(@RequestHeader("Authorization") String authorization) {
         tokenService.logout(stripBearer(authorization));
         return R.ok();
     }
 
+    /** 查询在线会话列表 */
     @GetMapping("/online")
     @PreAuthorize("hasAuthority('sso:online:list')")
     public R<List<OnlineSession>> online() {
@@ -54,6 +58,7 @@ public class AuthController {
         return R.ok(sessions);
     }
 
+    /** 强制下线指定会话 */
     @DeleteMapping("/online/{tokenId}")
     @PreAuthorize("hasAuthority('sso:online:kick')")
     public R<Void> kick(@PathVariable("tokenId") String tokenId) {

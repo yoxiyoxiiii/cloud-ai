@@ -33,22 +33,36 @@
         SELECT COUNT(*)
           FROM sys_role
          WHERE role_key = #{roleKey} AND deleted = 0
-        <if test="excludeId != null">AND id != #{excludeId}</if>
+        <if test="excludeId != null">
+            AND id != #{excludeId}
+        </if>
     </select>
 
     <!-- 动态列等价原 insert 的 NOT_NULL 字段策略：业务列 null 时省略、交由列默认值 -->
     <insert id="insertRole" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_role
         <trim prefix="(" suffix=")" suffixOverrides=",">
-            <if test="name != null">name,</if>
-            <if test="roleKey != null">role_key,</if>
-            <if test="status != null">status,</if>
+            <if test="name != null">
+                name,
+            </if>
+            <if test="roleKey != null">
+                role_key,
+            </if>
+            <if test="status != null">
+                status,
+            </if>
             create_by, create_time, update_by, update_time,
         </trim>
         <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
-            <if test="name != null">#{name},</if>
-            <if test="roleKey != null">#{roleKey},</if>
-            <if test="status != null">#{status},</if>
+            <if test="name != null">
+                #{name},
+            </if>
+            <if test="roleKey != null">
+                #{roleKey},
+            </if>
+            <if test="status != null">
+                #{status},
+            </if>
             #{createBy}, #{createTime}, #{updateBy}, #{updateTime},
         </trim>
     </insert>
@@ -57,10 +71,18 @@
     <update id="updateRole">
         UPDATE sys_role
         <set>
-            <if test="name != null">name = #{name},</if>
-            <if test="roleKey != null">role_key = #{roleKey},</if>
-            <if test="status != null">status = #{status},</if>
-            <if test="updateBy != null">update_by = #{updateBy},</if>
+            <if test="name != null">
+                name = #{name},
+            </if>
+            <if test="roleKey != null">
+                role_key = #{roleKey},
+            </if>
+            <if test="status != null">
+                status = #{status},
+            </if>
+            <if test="updateBy != null">
+                update_by = #{updateBy},
+            </if>
             update_time = #{updateTime},
         </set>
         WHERE id = #{id} AND deleted = 0
@@ -70,7 +92,9 @@
         UPDATE sys_role
            SET deleted = 1,
                update_time = #{updateTime}
-               <if test="updateBy != null">, update_by = #{updateBy}</if>
+               <if test="updateBy != null">
+                   , update_by = #{updateBy}
+               </if>
          WHERE id = #{id} AND deleted = 0
     </update>
 </mapper>

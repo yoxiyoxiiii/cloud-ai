@@ -1,1 +1,2 @@
 com.cloudai.common.security.config.CommonSecurityAutoConfiguration
+com.cloudai.common.security.config.JwtPropertiesAutoConfiguration

@@ -12,12 +12,14 @@ import com.cloudai.system.mapper.SysRoleMapper;
 import com.cloudai.system.mapper.SysRoleMenuMapper;
 import com.cloudai.system.mapper.SysUserRoleMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SysRoleManageService {
@@ -49,6 +51,7 @@ public class SysRoleManageService {
         try {
             roleMapper.insertRole(role);
         } catch (org.springframework.dao.DuplicateKeyException e) {
+            log.error("唯一键冲突：{}", e.getMessage());
             throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
         }
         return role.getId();
@@ -65,6 +68,7 @@ public class SysRoleManageService {
         try {
             roleMapper.updateRole(role);
         } catch (org.springframework.dao.DuplicateKeyException e) {
+            log.error("唯一键冲突：{}", e.getMessage());
             throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
         }
     }

@@ -26,6 +26,7 @@ public class SysRoleController {
 
     private final SysRoleManageService manageService;
 
+    /** 分页查询角色列表 */
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('system:role:list')")
     public R<PageResult<SysRole>> page(PageQuery query) {
@@ -33,6 +34,7 @@ public class SysRoleController {
         return R.ok(page);
     }
 
+    /** 查询全部启用角色（下拉选项用） */
     @GetMapping("/list")
     @PreAuthorize("hasAuthority('system:role:list')")
     public R<List<SysRole>> list() {
@@ -40,6 +42,7 @@ public class SysRoleController {
         return R.ok(roles);
     }
 
+    /** 新增角色（返回新角色 ID） */
     @PostMapping
     @PreAuthorize("hasAuthority('system:role:add')")
     public R<Long> add(@RequestBody SysRole role) {
@@ -47,6 +50,7 @@ public class SysRoleController {
         return R.ok(roleId);
     }
 
+    /** 修改角色基本信息（名称/标识/状态） */
     @PutMapping
     @PreAuthorize("hasAuthority('system:role:edit')")
     public R<Void> edit(@RequestBody SysRole role) {
@@ -54,6 +58,7 @@ public class SysRoleController {
         return R.ok();
     }
 
+    /** 删除角色（逻辑删除并解除菜单/用户绑定） */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('system:role:remove')")
     public R<Void> remove(@PathVariable("id") Long id) {
@@ -61,6 +66,7 @@ public class SysRoleController {
         return R.ok();
     }
 
+    /** 全量分配角色菜单权限（先清后插） */
     @PutMapping("/menu")
     @PreAuthorize("hasAuthority('system:role:assignMenu')")
     public R<Void> assignMenus(@RequestBody RoleMenuRequest req) {
@@ -68,6 +74,7 @@ public class SysRoleController {
         return R.ok();
     }
 
+    /** 查询角色已绑定的菜单 ID 列表 */
     @GetMapping("/{id}/menus")
     @PreAuthorize("hasAuthority('system:role:list')")
     public R<List<Long>> menuIds(@PathVariable("id") Long id) {

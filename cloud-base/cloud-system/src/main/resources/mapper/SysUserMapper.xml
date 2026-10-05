@@ -78,7 +78,9 @@
         UPDATE sys_user
            SET password = #{password},
                update_time = #{updateTime}
-               <if test="updateBy != null">, update_by = #{updateBy}</if>
+               <if test="updateBy != null">
+                   , update_by = #{updateBy}
+               </if>
          WHERE id = #{id} AND deleted = 0
     </update>
 
@@ -86,7 +88,9 @@
         UPDATE sys_user
            SET deleted = 1,
                update_time = #{updateTime}
-               <if test="updateBy != null">, update_by = #{updateBy}</if>
+               <if test="updateBy != null">
+                   , update_by = #{updateBy}
+               </if>
          WHERE id = #{id} AND deleted = 0
     </update>
 </mapper>

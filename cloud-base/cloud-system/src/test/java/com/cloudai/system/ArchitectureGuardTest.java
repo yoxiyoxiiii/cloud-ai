@@ -30,6 +30,19 @@ class ArchitectureGuardTest {
     /** @PathVariable 必须显式命名：禁止裸类型形式 */
     private static final Pattern BARE_PATH_VARIABLE = Pattern.compile("@PathVariable\\s+(Long|String|Integer)");
 
+    /** mapper XML 单行 <if>：开标签后同行还有内容即违规（[^<\\r\\n] 兼容 CRLF 工作副本） */
+    private static final Pattern SINGLE_LINE_IF = Pattern.compile("<if\\s+test=\"[^\"]*\">[^<\\r\\n]");
+
+    /** DDL 列定义行：缩进 + 列名 + 类型（PRIMARY/UNIQUE/KEY 等约束行不以类型关键字结尾开头，不匹配） */
+    private static final Pattern DDL_COLUMN_LINE =
+            Pattern.compile("^\\s+\\w+\\s+(BIGINT|VARCHAR|TINYINT|INT|CHAR|DATETIME)\\b");
+
+    /** 方法签名行：行首可见性修饰符且含 "("（赋值/控制流/注解行不以可见性修饰符开头） */
+    private static final Pattern METHOD_SIGNATURE = Pattern.compile("^\\s*(public|private|protected)\\s+[^=;]*\\(");
+
+    /** 建库脚本位于聚合根 scripts/（模块构建 cwd = cloud-system） */
+    private static final Path DDL_SQL = Paths.get("..", "scripts", "sql", "cloud_system.sql");
+
     @Test
     void controller_returns_twoLineStyle_noInlineServiceCall() throws IOException {
         List<String> violations = scan(MAIN_JAVA.resolve("com/cloudai/system/controller"), "*.java",
@@ -104,6 +117,102 @@ class ArchitectureGuardTest {
             }
         }
         assertThat(violations).isEmpty();
+    }
+
+    // ---- 2026-10-05 通用约束（CLAUDE.md"通用约束"6 条之机械可判部分） ----
+
+    @Test
+    void mapper_xml_if_tag_body_must_be_multiline() throws IOException {
+        List<String> violations = scan(MAIN_MAPPER_XML, "*.xml", SINGLE_LINE_IF);
+        assertThat(violations).as("mapper XML 禁单行 <if test=\"...\">content</if>：标签体必须换行（git diff/评审可见性）")
+                .isEmpty();
+    }
+
+    @Test
+    void controller_must_not_use_map_type() throws IOException {
+        List<String> violations = scan(MAIN_JAVA.resolve("com/cloudai/system/controller"), "*.java",
+                Pattern.compile("Map\\s*<"));
+        assertThat(violations).as("Controller 入参/返回禁止 Map——一律 DTO（字段可校验、可演进、可文档化）").isEmpty();
+    }
+
+    @Test
+    void method_body_max_100_lines() throws IOException {
+        // 简单可靠版：签名行（行首可见性修饰符 + "("）起做大括号深度配对，跨行到闭合算方法体行数。
+        // 局限：大括号按字符计，不剔除字符串字面量/注释中的大括号（本模块现状无此写法）；接口/抽象方法（";" 先于 "{"）跳过。
+        List<String> violations = new ArrayList<>();
+        for (Path file : listFiles(MAIN_JAVA, "*.java")) {
+            String[] lines = Files.readString(file, StandardCharsets.UTF_8).split("\n", -1);
+            for (int i = 0; i < lines.length; i++) {
+                if (!METHOD_SIGNATURE.matcher(lines[i]).find()) {
+                    continue;
+                }
+                Integer end = blockEndLine(lines, i);
+                if (end != null && end - i + 1 > 100) {
+                    violations.add(file + ":" + (i + 1) + " " + lines[i].trim() + " (" + (end - i + 1) + " 行)");
+                }
+            }
+        }
+        assertThat(violations).as("方法体 >100 行（硬上限；目标 50 行）——单一职责，超限必须拆分").isEmpty();
+    }
+
+    @Test
+    void sql_ddl_every_column_commented() throws IOException {
+        List<String> violations = new ArrayList<>();
+        if (Files.exists(DDL_SQL)) {
+            boolean inCreateTable = false;
+            String table = "";
+            int lineNo = 0;
+            for (String line : Files.readAllLines(DDL_SQL, StandardCharsets.UTF_8)) {
+                lineNo++;
+                if (line.startsWith("CREATE TABLE")) {
+                    inCreateTable = true;
+                    table = line.replaceFirst("CREATE TABLE\\s+(\\w+).*", "$1");
+                } else if (inCreateTable && line.startsWith(")")) {
+                    inCreateTable = false;
+                } else if (inCreateTable && DDL_COLUMN_LINE.matcher(line).find() && !line.contains("COMMENT")) {
+                    violations.add("cloud_system.sql:" + lineNo + " " + table + " → " + line.trim());
+                }
+            }
+        }
+        assertThat(violations).as("DDL 每列必须有 COMMENT（含关联表与审计列）——自查 information_schema 与建表脚本一致")
+                .isEmpty();
+    }
+
+    @Test
+    void no_multiple_field_value_injection() throws IOException {
+        List<String> violations = new ArrayList<>();
+        for (Path file : listFiles(MAIN_JAVA, "*.java")) {
+            long count = Files.readString(file, StandardCharsets.UTF_8).lines()
+                    .filter(line -> line.contains("@Value(")).count();
+            if (count >= 2) {
+                violations.add(file + " → " + count + " 处 @Value");
+            }
+        }
+        assertThat(violations).as("同文件 >=2 个 @Value：同前缀多值须封装 @ConfigurationProperties 对象（如 JwtProperties）")
+                .isEmpty();
+    }
+
+    /** 从签名行起做大括号深度配对，返回闭合 "}" 所在行号；先遇 ";"（无方法体）或到文件尾返回 null */
+    private Integer blockEndLine(String[] lines, int signatureIdx) {
+        int depth = 0;
+        boolean opened = false;
+        for (int i = signatureIdx; i < lines.length; i++) {
+            for (int c = 0; c < lines[i].length(); c++) {
+                char ch = lines[i].charAt(c);
+                if (ch == '{') {
+                    depth++;
+                    opened = true;
+                } else if (ch == '}') {
+                    depth--;
+                    if (opened && depth == 0) {
+                        return i;
+                    }
+                } else if (ch == ';' && !opened) {
+                    return null;
+                }
+            }
+        }
+        return null;
     }
 
     // ---- 扫描基础设施 ----

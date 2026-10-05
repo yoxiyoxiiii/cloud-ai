@@ -3,6 +3,7 @@ package com.cloudai.system.controller;
 import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;
+import com.cloudai.system.dto.ResetPasswordRequest;
 import com.cloudai.system.dto.UserRoleRequest;
 import com.cloudai.system.dto.UserSaveRequest;
 import com.cloudai.system.entity.SysUser;
@@ -19,7 +20,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/user")
@@ -28,6 +28,7 @@ public class SysUserController {
 
     private final SysUserManageService manageService;
 
+    /** 分页查询用户列表（密码散列不外泄） */
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('system:user:list')")
     public R<PageResult<SysUser>> page(PageQuery query) {
@@ -35,6 +36,7 @@ public class SysUserController {
         return R.ok(page);
     }
 
+    /** 查询用户详情（密码散列不外泄） */
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('system:user:list')")
     public R<SysUser> detail(@PathVariable("id") Long id) {
@@ -42,6 +44,7 @@ public class SysUserController {
         return R.ok(user);
     }
 
+    /** 新增用户（返回新用户 ID） */
     @PostMapping
     @PreAuthorize("hasAuthority('system:user:add')")
     public R<Long> add(@RequestBody UserSaveRequest req) {
@@ -49,6 +52,7 @@ public class SysUserController {
         return R.ok(userId);
     }
 
+    /** 修改用户基本信息（昵称/状态） */
     @PutMapping
     @PreAuthorize("hasAuthority('system:user:edit')")
     public R<Void> edit(@RequestBody UserSaveRequest req) {
@@ -56,6 +60,7 @@ public class SysUserController {
         return R.ok();
     }
 
+    /** 删除用户（逻辑删除并解除角色绑定） */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('system:user:remove')")
     public R<Void> remove(@PathVariable("id") Long id) {
@@ -63,13 +68,15 @@ public class SysUserController {
         return R.ok();
     }
 
+    /** 管理员重置指定用户密码 */
     @PutMapping("/password/{id}")
     @PreAuthorize("hasAuthority('system:user:resetPwd')")
-    public R<Void> resetPassword(@PathVariable("id") Long id, @RequestBody Map<String, String> body) {
-        manageService.resetPassword(id, body.get("password"));
+    public R<Void> resetPassword(@PathVariable("id") Long id, @RequestBody ResetPasswordRequest req) {
+        manageService.resetPassword(id, req.getPassword());
         return R.ok();
     }
 
+    /** 全量分配用户角色（先清后插） */
     @PutMapping("/role")
     @PreAuthorize("hasAuthority('system:user:assignRole')")
     public R<Void> assignRoles(@RequestBody UserRoleRequest req) {
@@ -77,6 +84,7 @@ public class SysUserController {
         return R.ok();
     }
 
+    /** 查询用户已绑定的角色 ID 列表 */
     @GetMapping("/{id}/roles")
     @PreAuthorize("hasAuthority('system:user:list')")
     public R<List<Long>> roleIds(@PathVariable("id") Long id) {

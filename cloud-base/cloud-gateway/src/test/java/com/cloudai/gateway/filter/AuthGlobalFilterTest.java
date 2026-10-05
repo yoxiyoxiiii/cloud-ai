@@ -1,6 +1,7 @@
 package com.cloudai.gateway.filter;
 
 import com.cloudai.common.security.constant.SecurityConstants;
+import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,8 +15,6 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
 import reactor.core.publisher.Mono;
-
-import java.lang.reflect.Field;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -40,11 +39,10 @@ class AuthGlobalFilterTest {
     private AuthGlobalFilter filter;
 
     @BeforeEach
-    void setUp() throws Exception {
-        filter = new AuthGlobalFilter(stringRedisTemplate);
-        Field secret = AuthGlobalFilter.class.getDeclaredField("secret");
-        secret.setAccessible(true);
-        secret.set(filter, SECRET);
+    void setUp() {
+        JwtProperties jwtProperties = new JwtProperties();
+        jwtProperties.setSecret(SECRET);
+        filter = new AuthGlobalFilter(stringRedisTemplate, jwtProperties);
         lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
     }
 

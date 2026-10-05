@@ -3,6 +3,7 @@ package com.cloudai.sso.service;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.constant.SecurityConstants;
+import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;
 import com.cloudai.sso.client.SystemUserClient;
 import com.cloudai.sso.domain.OnlineSession;
@@ -14,7 +15,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -25,6 +26,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TokenService {
@@ -44,22 +46,14 @@ public class TokenService {
     private final SystemUserClient userClient;
     private final StringRedisTemplate stringRedisTemplate;
     private final PasswordEncoder passwordEncoder;
-
-    @Value("${cloud.jwt.secret}")
-    private String secret;
-
-    /** 字段初始化默认值供纯单元测试使用（无 Spring 注入）；运行时由 Nacos 配置覆盖 */
-    @Value("${cloud.jwt.access-token-ttl:7200}")
-    private long accessTtlSeconds = 7200;
-
-    @Value("${cloud.jwt.refresh-token-ttl:604800}")
-    private long refreshTtlSeconds = 604800;
+    private final JwtProperties jwtProperties;
 
     public LoginResult login(String account, String password, String ip) {
         R<LoginUserDTO> resp;
         try {
             resp = userClient.getUserByAccount(account);
         } catch (FeignException e) {
+            log.error("cloud-system 调用失败，account={}", account, e);
             throw new BusinessException(2002, "用户服务不可用，请稍后重试");
         }
         if (resp == null || resp.getCode() != 200) {
@@ -117,6 +111,7 @@ public class TokenService {
             R<LoginUserDTO> resp = userClient.getUserByAccount(old.getAccount());
             latest = resp == null ? null : resp.getData();
         } catch (FeignException e) {
+            log.error("cloud-system 调用失败，account={}", old.getAccount(), e);
             throw new BusinessException(2002, "用户服务不可用，请稍后重试");
         }
         if (latest == null || latest.getStatus() == null || latest.getStatus() != 0) {
@@ -129,7 +124,7 @@ public class TokenService {
     public void logout(String accessToken) {
         Claims claims;
         try {
-            claims = JwtUtil.parseToken(secret, accessToken);
+            claims = JwtUtil.parseToken(jwtProperties.getSecret(), accessToken);
         } catch (io.jsonwebtoken.JwtException e) {
             // 已过期/无效的 token 注销视为成功（幂等；其键随 TTL 自灭）
             return;
@@ -165,7 +160,8 @@ public class TokenService {
 
     private LoginResult issueTokens(LoginUserDTO dto, String ip) {
         String tokenId = UUID.randomUUID().toString();
-        String accessToken = JwtUtil.createToken(secret, dto.getUserId(), dto.getAccount(), tokenId, accessTtlSeconds);
+        String accessToken = JwtUtil.createToken(jwtProperties.getSecret(), dto.getUserId(), dto.getAccount(), tokenId,
+                jwtProperties.getAccessTokenTtl());
         String refreshToken = UUID.randomUUID().toString();
 
         OnlineSession session = new OnlineSession();
@@ -182,7 +178,7 @@ public class TokenService {
             throw new IllegalStateException("在线会话序列化失败", e);
         }
         stringRedisTemplate.opsForValue().set(SecurityConstants.ONLINE_KEY_PREFIX + tokenId,
-                sessionJson, accessTtlSeconds, TimeUnit.SECONDS);
+                sessionJson, jwtProperties.getAccessTokenTtl(), TimeUnit.SECONDS);
         String refreshJson;
         try {
             refreshJson = JSON.writeValueAsString(new RefreshTokenValue(tokenId, refreshToken));
@@ -190,12 +186,12 @@ public class TokenService {
             throw new IllegalStateException("refreshToken 序列化失败", e);
         }
         stringRedisTemplate.opsForValue().set(REFRESH_KEY_PREFIX + dto.getUserId(),
-                refreshJson, refreshTtlSeconds, TimeUnit.SECONDS);
+                refreshJson, jwtProperties.getRefreshTokenTtl(), TimeUnit.SECONDS);
 
         LoginResult result = new LoginResult();
         result.setAccessToken(accessToken);
         result.setRefreshToken(refreshToken);
-        result.setExpiresIn(accessTtlSeconds);
+        result.setExpiresIn(jwtProperties.getAccessTokenTtl());
         return result;
     }
 

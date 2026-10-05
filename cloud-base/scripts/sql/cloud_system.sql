@@ -32,11 +32,11 @@ CREATE TABLE sys_role (
     name        VARCHAR(30) NOT NULL COMMENT '角色名称',
     role_key    VARCHAR(30) NOT NULL COMMENT '角色标识',
     status      TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
-    create_by   VARCHAR(30)  DEFAULT NULL,
-    create_time DATETIME    DEFAULT NULL,
-    update_by   VARCHAR(30)  DEFAULT NULL,
-    update_time DATETIME    DEFAULT NULL,
-    deleted     TINYINT     NOT NULL DEFAULT 0,
+    create_by   VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
+    create_time DATETIME    DEFAULT NULL COMMENT '创建时间',
+    update_by   VARCHAR(30)  DEFAULT NULL COMMENT '更新人',
+    update_time DATETIME    DEFAULT NULL COMMENT '更新时间',
+    deleted     TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     PRIMARY KEY (id),
     UNIQUE KEY uk_role_key (role_key)
 ) ENGINE = InnoDB COMMENT = '角色表';
@@ -50,30 +50,30 @@ CREATE TABLE sys_menu (
     type        CHAR(1)     NOT NULL DEFAULT 'C' COMMENT 'M目录 C菜单 F按钮',
     sort        INT         NOT NULL DEFAULT 0 COMMENT '排序',
     status      TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
-    create_by   VARCHAR(30)  DEFAULT NULL,
-    create_time DATETIME    DEFAULT NULL,
-    update_by   VARCHAR(30)  DEFAULT NULL,
-    update_time DATETIME    DEFAULT NULL,
-    deleted     TINYINT     NOT NULL DEFAULT 0,
+    create_by   VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
+    create_time DATETIME    DEFAULT NULL COMMENT '创建时间',
+    update_by   VARCHAR(30)  DEFAULT NULL COMMENT '更新人',
+    update_time DATETIME    DEFAULT NULL COMMENT '更新时间',
+    deleted     TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     PRIMARY KEY (id),
     KEY idx_parent_id (parent_id)
 ) ENGINE = InnoDB COMMENT = '菜单权限表';
 
 CREATE TABLE sys_user_role (
-    id          BIGINT   NOT NULL AUTO_INCREMENT,
-    user_id     BIGINT   NOT NULL,
-    role_id     BIGINT   NOT NULL,
-    create_time DATETIME DEFAULT NULL,
+    id          BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    user_id     BIGINT   NOT NULL COMMENT '用户ID',
+    role_id     BIGINT   NOT NULL COMMENT '角色ID',
+    create_time DATETIME DEFAULT NULL COMMENT '创建时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_user_role (user_id, role_id),
     KEY idx_role_id (role_id)
 ) ENGINE = InnoDB COMMENT = '用户角色关联（纯关系表：物理删除，无逻辑删除列）';
 
 CREATE TABLE sys_role_menu (
-    id          BIGINT   NOT NULL AUTO_INCREMENT,
-    role_id     BIGINT   NOT NULL,
-    menu_id     BIGINT   NOT NULL,
-    create_time DATETIME DEFAULT NULL,
+    id          BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    role_id     BIGINT   NOT NULL COMMENT '角色ID',
+    menu_id     BIGINT   NOT NULL COMMENT '菜单ID',
+    create_time DATETIME DEFAULT NULL COMMENT '创建时间',
     PRIMARY KEY (id),
     UNIQUE KEY uk_role_menu (role_id, menu_id),
     KEY idx_menu_id (menu_id)

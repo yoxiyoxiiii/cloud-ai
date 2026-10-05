@@ -2,6 +2,7 @@ package com.cloudai.gateway.filter;
 
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.security.constant.SecurityConstants;
+import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -9,7 +10,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
@@ -46,13 +46,11 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/actuator");
 
     private final StringRedisTemplate stringRedisTemplate;
+    private final JwtProperties jwtProperties;
 
     /** 忽略未知字段（会话 JSON 含网关不需的字段；值格式见 SecurityConstants.ONLINE_KEY_PREFIX 契约） */
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
-
-    @Value("${cloud.jwt.secret}")
-    private String secret;
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
@@ -68,7 +66,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         }
         Claims claims;
         try {
-            claims = JwtUtil.parseToken(secret, authorization.substring(BEARER_PREFIX.length()));
+            claims = JwtUtil.parseToken(jwtProperties.getSecret(), authorization.substring(BEARER_PREFIX.length()));
         } catch (JwtException | IllegalArgumentException e) {
             // IllegalArgumentException：jjwt 对空串等非法输入抛出（非 JwtException 子类）
             return unauthorized(exchange);

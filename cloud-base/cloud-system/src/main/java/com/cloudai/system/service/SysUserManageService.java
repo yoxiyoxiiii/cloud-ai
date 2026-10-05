@@ -12,6 +12,7 @@ import com.cloudai.system.entity.SysUserRole;
 import com.cloudai.system.mapper.SysUserMapper;
 import com.cloudai.system.mapper.SysUserRoleMapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -19,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class SysUserManageService {
@@ -69,6 +71,7 @@ public class SysUserManageService {
             userMapper.insertUser(user);
         } catch (org.springframework.dao.DuplicateKeyException e) {
             // 逻辑删除行仍占用 uk_account，countByAccount 查重看不到——捕获兜底转业务异常
+            log.error("唯一键冲突：{}", e.getMessage());
             throw new BusinessException(3002, "账号已存在: " + req.getAccount());
         }
         return user.getId();

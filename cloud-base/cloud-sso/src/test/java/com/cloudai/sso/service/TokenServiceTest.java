@@ -3,6 +3,7 @@ package com.cloudai.sso.service;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.constant.SecurityConstants;
+import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.sso.client.SystemUserClient;
 import com.cloudai.sso.domain.OnlineSession;
 import com.cloudai.sso.dto.LoginResult;
@@ -74,10 +75,13 @@ class TokenServiceTest {
         }
     }
 
+    /** @InjectMocks 构造注入拿不到非 mock 的 JwtProperties（为 null），反射补上测试密钥与默认 TTL */
     private void injectSecret() throws Exception {
-        Field secretField = TokenService.class.getDeclaredField("secret");
-        secretField.setAccessible(true);
-        secretField.set(tokenService, TEST_SECRET);
+        JwtProperties jwtProperties = new JwtProperties();
+        jwtProperties.setSecret(TEST_SECRET);
+        Field propsField = TokenService.class.getDeclaredField("jwtProperties");
+        propsField.setAccessible(true);
+        propsField.set(tokenService, jwtProperties);
     }
 
     @Test
