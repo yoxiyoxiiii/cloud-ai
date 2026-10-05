@@ -110,7 +110,15 @@ cloud-base/
 
 **DTO/实体**：密码类敏感字段 `@ToString.Exclude` + `@JsonProperty(WRITE_ONLY)`；关联表实体不继承 BaseEntity（纯关系，无逻辑删除列）
 
-**新增 CRUD 端点**：使用 `/backend-crud` 技能（五件套模板 + 检查清单，适用于所有后端服务）；机械规则由 `cloud-system` 的 `ArchitectureGuardTest` 强制（内联 R.ok/隐式 @PathVariable/Wrapper/BaseMapper/controller 依赖 mapper/XML `${}` 等，写错构建即红）。
+**通用约束（2026-10-05 追加，全后端强制）**：
+1. **DDL 每列必须有 COMMENT**（含关联表与审计列）
+2. **mapper.xml `<if>` 标签体必须换行**（`<if test="...">` 与内容、`</if>` 不写同一行）
+3. **Controller 方法必须有 javadoc 注释；入参与返回必须是对象（DTO），禁止 Map 接参/返回**
+4. **Service 层 catch 异常必须 `log.error` 记录根因后再转业务异常**（@Slf4j）
+5. **方法单一职责**：方法体以 ≤50 行为目标、100 行硬上限，超限必须拆分；**入参超过 3 个必须封装为对象**
+6. **Spring 属性注入优先对象封装**：同前缀多值用 `@ConfigurationProperties` 对象（如 JwtProperties），不散装 @Value
+
+**新增 CRUD 端点**：使用 `/backend-crud` 技能（五件套模板 + 检查清单，适用于所有后端服务）；机械规则由 `cloud-system` 的 `ArchitectureGuardTest` 强制（内联 R.ok/隐式 @PathVariable/Wrapper/BaseMapper/controller 依赖 mapper/XML `${}`/单行 `<if>`/Map 接参等，写错构建即红）。
 
 ### 分阶段路线（当前：阶段 1 已合并 main；阶段 2+3 已完成，待合并）
 

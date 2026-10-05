@@ -23,7 +23,7 @@ CREATE TABLE xxx_yyy (
 ) ENGINE = InnoDB COMMENT = 'Xxx说明';
 ```
 
-要点：审计四列 + `deleted TINYINT NOT NULL DEFAULT 0`；唯一键 `uk_xxx`；纯关系表（无业务生命周期的关联）**不要** deleted/审计列。
+要点：审计四列 + `deleted TINYINT NOT NULL DEFAULT 0`；唯一键 `uk_xxx`；**每列必须有 COMMENT（含关联表与审计列）**；纯关系表（无业务生命周期的关联）**不要** deleted/审计列，但列同样要 COMMENT。
 
 权限种子（管理端点需要）：权限体系集中在 cloud-system 的 sys_menu——追加 INSERT（perms 形如 `<svc>:xxx:list/add/edit/remove`，`<svc>` 为本服务短名如 system/bpmn）+ `INSERT INTO sys_role_menu ... SELECT 1, id FROM sys_menu` 增量。
 
@@ -281,6 +281,7 @@ public class XxxYyyController {
 
     private final XxxYyyManageService manageService;
 
+    /** 分页查询（每个方法必须有 javadoc；入参/返回一律对象，禁止 Map） */
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('<svc>:xxx:list')")
     public R<PageResult<XxxYyy>> page(PageQuery query) {
@@ -318,7 +319,9 @@ public class XxxYyyController {
 }
 ```
 
-说明：两行式只约束"有返回值"的端点（service 结果先落变量再 `R.ok(x)`）；无数据端点（删除/更新）保持 `service 调用; return R.ok();` 两行。服务间内部接口放 `controller/feign/` 子包（参考 InnerUserController），路径 `/inner/xxx/**`。
+说明：两行式只约束"有返回值"的端点（service 结果先落变量再 `R.ok(x)`）；无数据端点（删除/更新）保持 `service 调用; return R.ok();` 两行。服务间内部接口放 `controller/feign/` 子包（参考 InnerUserController），路径 `/inner/xxx/**`。多字段入参（如重置密码）建独立 Request DTO，禁止 Map 接参。
+
+**属性注入**：同前缀多值配置（如 cloud.jwt.*）用 `@ConfigurationProperties` 对象注入（参考 security-starter 的 JwtProperties），不散装 @Value；**Service 层 catch 后必须 `log.error` 记录根因再转业务异常**；方法 ≤50 行（100 硬上限）、入参 >3 封装对象。
 
 ## 完成后检查清单
 
