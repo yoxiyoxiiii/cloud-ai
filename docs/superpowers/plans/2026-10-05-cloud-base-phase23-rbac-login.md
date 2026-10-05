@@ -714,6 +714,11 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - [ ] **Step 1: pom 增加依赖**
 
 ```xml
+        <!-- LoginUser 在 core-starter，主代码直接使用需显式直依 -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-core-starter</artifactId>
+        </dependency>
         <!-- 仅用 SecurityContextHolder 读取操作人；避免传递整套安全栈（LoginUser 已下沉 core-starter） -->
         <dependency>
             <groupId>org.springframework.security</groupId>
