@@ -1661,7 +1661,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.context.annotation.Bean;
 
 /**
- * MyBatis-Plus 通用配置：MySQL 分页插件 + 审计填充
+ * MyBatis-Plus 通用配置：MySQL 分页插件（单页上限 200）+ 审计填充
  */
 @AutoConfiguration
 public class CommonMybatisAutoConfiguration {
