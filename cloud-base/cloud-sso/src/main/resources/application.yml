@@ -5,7 +5,9 @@ spring:
   application:
     name: cloud-sso
   config:
-    import: optional:nacos:${spring.application.name}.yaml
+    import:
+      - optional:nacos:cloud-common.yaml
+      - optional:nacos:${spring.application.name}.yaml
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
