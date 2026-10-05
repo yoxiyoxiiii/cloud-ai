@@ -19,7 +19,7 @@ public class SysUserVo implements Serializable {
 
     private String nickname;
 
-    /** 0正常 1停用（字典见 SysUser.Status） */
+    /** 0正常 1停用（字典见 SysUser.StatusEnum） */
     private Integer status;
 
     private String createBy;

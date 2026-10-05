@@ -41,12 +41,12 @@ public abstract class BaseEntity implements Serializable {
     private Integer deleted;
 
     /** 逻辑删除字典：字段保持 Integer 映射，Java 侧引用枚举常量（禁魔法数） */
-    public enum Deleted {
+    public enum DeletedEnum {
         NORMAL(0), DELETED(1);
 
         private final int code;
 
-        Deleted(int code) {
+        DeletedEnum(int code) {
             this.code = code;
         }
 
@@ -54,8 +54,8 @@ public abstract class BaseEntity implements Serializable {
             return code;
         }
 
-        public static Deleted of(int code) {
-            for (Deleted d : values()) {
+        public static DeletedEnum of(int code) {
+            for (DeletedEnum d : values()) {
                 if (d.code == code) {
                     return d;
                 }

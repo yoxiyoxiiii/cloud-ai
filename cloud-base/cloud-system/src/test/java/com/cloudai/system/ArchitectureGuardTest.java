@@ -227,7 +227,8 @@ class ArchitectureGuardTest {
         for (Path dir : List.of(MAIN_JAVA.resolve("com/cloudai/system/service"),
                 MAIN_JAVA.resolve("com/cloudai/system/mapper"))) {
             for (Path file : listFiles(dir, "*.java")) {
-                String[] lines = Files.readString(file, StandardCharsets.UTF_8).split("\n");
+                // CRLF 工作副本：剥行尾 \r，否则 private 豁免的整行 matches() 因 .* 不吃 \r 而失效
+                String[] lines = Files.readString(file, StandardCharsets.UTF_8).split("\\r?\\n");
                 for (int i = 0; i < lines.length; i++) {
                     String name = extractMethodName(lines, i);
                     if (name == null || NAMING_PREFIX_OK.matcher(name).matches() || isOverride(lines, i)) {
@@ -254,6 +255,26 @@ class ArchitectureGuardTest {
     void no_third_party_bean_copy() throws IOException {
         List<String> violations = scan(MAIN_JAVA, "*.java", THIRD_PARTY_BEAN_COPY);
         assertThat(violations).as("禁 BeanUtils/mapstruct/ModelMapper/dozer 拷贝——convert 包原生 setter 逐字段").isEmpty();
+    }
+
+    // ---- 规范 v4（2026-10-06）：实体内嵌枚举 Enum 后缀 ----
+
+    /** 实体内嵌枚举声明：enum 关键字 + 枚举名 */
+    private static final Pattern NESTED_ENUM_DECL = Pattern.compile("\\benum\\s+(\\w+)");
+
+    @Test
+    void entity_nested_enum_must_have_enum_suffix() throws IOException {
+        List<String> violations = new ArrayList<>();
+        for (Path file : listFiles(MAIN_JAVA.resolve("com/cloudai/system/entity"), "*.java")) {
+            Matcher m = NESTED_ENUM_DECL.matcher(Files.readString(file, StandardCharsets.UTF_8));
+            while (m.find()) {
+                String name = m.group(1);
+                if (!name.endsWith("Enum")) {
+                    violations.add(file.getFileName() + " → enum " + name);
+                }
+            }
+        }
+        assertThat(violations).as("实体内嵌枚举必须以 Enum 为后缀（如 StatusEnum/DeletedEnum）").isEmpty();
     }
 
     /** 提取第 idx 行的方法声明名；注释/注解/private/protected/语句关键字行返回 null */

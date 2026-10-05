@@ -1,11 +1,11 @@
 ---
 name: backend-crud
-description: 在任意后端服务（cloud-system/cloud-bpmn/新增 DB 服务）新增实体/管理端点/CRUD 五件套时使用——建表、实体、Mapper 接口、mapper XML、Service、Controller 模板与规范检查清单。凡涉及"新增表/新增接口/新增 CRUD/新增 /inner 端点"均应触发本技能。
+description: 在任意后端服务（cloud-system/cloud-bpmn/新增 DB 服务）新增实体/管理端点/CRUD 时使用——建表 SQL、实体、Mapper 接口、mapper XML、请求 DTO、VO+Convert、Service、Controller 全套模板与规范检查清单。凡涉及"新增表/新增接口/新增 CRUD/新增 /inner 端点"均应触发本技能。
 ---
 
-# 后端 CRUD 五件套模板（适用于所有 DB 服务）
+# 后端 CRUD 全套模板（适用于所有 DB 服务）
 
-按此技能创建的代码自动满足 CLAUDE.md"编码规范"与 ArchitectureGuardTest。以新增实体 `XxxYyy`（表 `xxx_yyy`）为例，逐层给出模板。
+按此技能创建的代码自动满足 CLAUDE.md「编码规范」与 ArchitectureGuardTest；**与 CLAUDE.md 冲突时以 CLAUDE.md 为准**。模板与 cloud-system 现网代码同风格：Mapper/Service 方法名用动词集且**省实体名前缀**（接口名已限定实体，如 `SysUserMapper.findById` 而非 `findUserById`）。以新增实体 `XxxYyy`（表 `xxx_yyy`，服务短名 `<svc>`）为例。
 
 ## 步骤 0：建表 SQL（scripts/sql/ 追加）
 
@@ -14,20 +14,21 @@ CREATE TABLE xxx_yyy (
     id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '主键',
     name        VARCHAR(30) NOT NULL COMMENT '名称',
     status      TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
-    create_by   VARCHAR(30)  DEFAULT NULL,
-    create_time DATETIME     DEFAULT NULL,
-    update_by   VARCHAR(30)  DEFAULT NULL,
-    update_time DATETIME     DEFAULT NULL,
+    create_by   VARCHAR(30) DEFAULT NULL COMMENT '创建人',
+    create_time DATETIME    DEFAULT NULL COMMENT '创建时间',
+    update_by   VARCHAR(30) DEFAULT NULL COMMENT '更新人',
+    update_time DATETIME    DEFAULT NULL COMMENT '更新时间',
     deleted     TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_name (name)
 ) ENGINE = InnoDB COMMENT = 'Xxx说明';
 ```
 
-要点：审计四列 + `deleted TINYINT NOT NULL DEFAULT 0`；唯一键 `uk_xxx`；**每列必须有 COMMENT（含关联表与审计列）**；纯关系表（无业务生命周期的关联）**不要** deleted/审计列，但列同样要 COMMENT。
+要点：审计四列 + `deleted TINYINT NOT NULL DEFAULT 0`（防 NULL 行被 @TableLogic 过滤隐身）；唯一键 `uk_xxx`；**每列必须有 COMMENT，含审计列（创建人/创建时间/更新人/更新时间，守护测试机械检查）**；纯关系表（无业务生命周期的关联）**不要** deleted/审计列，但列同样要 COMMENT。
 
-权限种子（管理端点需要）：权限体系集中在 cloud-system 的 sys_menu——追加 INSERT（perms 形如 `<svc>:xxx:list/add/edit/remove`，`<svc>` 为本服务短名如 system/bpmn）+ `INSERT INTO sys_role_menu ... SELECT 1, id FROM sys_menu` 增量。
+权限种子（管理端点需要）：权限体系集中在 cloud-system 的 sys_menu——追加 INSERT（perms 形如 `<svc>:xxx:list/add/edit/remove`，领域动作可加 `resetPwd`/`assignRole` 等）+ `INSERT INTO sys_role_menu ... SELECT 1, id FROM sys_menu` 增量映射 admin 角色。
 
-## 步骤 1：实体（entity/XxxYyy.java）
+## 步骤 1：实体（entity/XxxYyy.java，状态枚举内嵌）
 
 ```java
 package com.cloudai.<service>.entity;
@@ -53,10 +54,34 @@ public class XxxYyy extends BaseEntity {
 
     /** 0正常 1停用 */
     private Integer status;
+
+    /** 状态枚举内嵌实体，命名以 Enum 为后缀（字段保持 Integer 映射；Java 侧禁魔法数，SQL 字面量除外） */
+    public enum StatusEnum {
+        NORMAL(0), DISABLED(1);
+
+        private final int code;
+
+        StatusEnum(int code) {
+            this.code = code;
+        }
+
+        public int getCode() {
+            return code;
+        }
+
+        public static StatusEnum of(int code) {
+            for (StatusEnum s : values()) {
+                if (s.code == code) {
+                    return s;
+                }
+            }
+            throw new IllegalArgumentException("未知状态: " + code);
+        }
+    }
 }
 ```
 
-注解仅为元数据（手写 SQL 不依赖 @TableLogic 自动语义）；敏感字段（如密码）加 `@ToString.Exclude` + `@JsonProperty(access = JsonProperty.Access.WRITE_ONLY)`。
+注解仅为元数据（手写 SQL 不依赖 @TableLogic 自动语义）。敏感字段（密码等）加 `@ToString.Exclude` + `@JsonProperty(access = JsonProperty.Access.WRITE_ONLY)`；纯关系表实体**不继承** BaseEntity。
 
 ## 步骤 2：Mapper 接口（mapper/XxxYyyMapper.java）
 
@@ -66,34 +91,38 @@ package com.cloudai.<service>.mapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.<service>.entity.XxxYyy;
-import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Param;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
+/**
+ * Xxx 表 SQL（XML：mapper/XxxYyyMapper.xml）。
+ * 逻辑删除与审计字段由手写 SQL 显式维护：查询带 deleted=0，删除为 UPDATE deleted=1；
+ * INSERT/UPDATE 的审计列由 Service 显式传参（更新走实体 updateBy/updateTime 字段）。
+ */
 public interface XxxYyyMapper {
 
-    XxxYyy selectXxxById(@Param("id") Long id);
+    XxxYyy findById(@Param("id") Long id);
 
-    IPage<XxxYyy> selectXxxPage(Page<XxxYyy> page);
+    /** 分页查询：无 LIMIT，由 PaginationInnerInterceptor 追加 */
+    IPage<XxxYyy> pageList(Page<XxxYyy> page);
 
+    /** 唯一键查重（编辑时传 excludeId 排除自身，新增传 null） */
     Long countByName(@Param("name") String name, @Param("excludeId") Long excludeId);
 
-    @Options(useGeneratedKeys = true, keyProperty = "id")
-    int insertXxx(XxxYyy xxx);
+    int save(XxxYyy xxx);
 
-    int updateXxx(@Param("xxx") XxxYyy xxx,
-                  @Param("updateBy") String updateBy,
-                  @Param("updateTime") LocalDateTime updateTime);
+    /** 动态更新（仅非空列；审计两值随实体 updateBy/updateTime 传入） */
+    int update(XxxYyy xxx);
 
-    int deleteXxxById(@Param("id") Long id,
-                      @Param("updateBy") String updateBy,
-                      @Param("updateTime") LocalDateTime updateTime);
+    /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
+    int deleteById(@Param("id") Long id,
+                   @Param("updateBy") String updateBy,
+                   @Param("updateTime") LocalDateTime updateTime);
 }
 ```
 
-禁止 `extends BaseMapper`；聚合查询（跨表取权限等）放相关主表 Mapper（参考 SysUserMapper.selectPermsByAccount 的 JOIN）。
+规则：方法名用动词集（find/save/update/pageList/list/delete/count），**不带实体名**；禁止 `extends BaseMapper`；聚合查询（跨表 JOIN 取权限等）放相关主表 Mapper（参考 `SysUserMapper.listPermsByAccount` 一次成型）；领域更新（如改密码）独立方法（参考 `updatePassword`）；主键回填靠 XML `useGeneratedKeys`，不用接口 @Options。
 
 ## 步骤 3：mapper XML（resources/mapper/XxxYyyMapper.xml）
 
@@ -102,58 +131,153 @@ public interface XxxYyyMapper {
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.cloudai.<service>.mapper.XxxYyyMapper">
 
+    <!-- 查询显式 deleted = 0，删除为 UPDATE deleted=1；审计列由 Service 显式传参 -->
     <sql id="allColumns">
         id, name, status, create_by, create_time, update_by, update_time, deleted
     </sql>
 
-    <select id="selectXxxById" resultType="com.cloudai.<service>.entity.XxxYyy">
-        SELECT <include refid="allColumns"/> FROM xxx_yyy
-        WHERE id = #{id} AND deleted = 0
+    <select id="findById" resultType="com.cloudai.<service>.entity.XxxYyy">
+        SELECT <include refid="allColumns"/>
+          FROM xxx_yyy
+         WHERE id = #{id} AND deleted = 0
     </select>
 
-    <!-- 分页：不写 LIMIT，PaginationInnerInterceptor 接管（maxLimit 200） -->
-    <select id="selectXxxPage" resultType="com.cloudai.<service>.entity.XxxYyy">
-        SELECT <include refid="allColumns"/> FROM xxx_yyy
-        WHERE deleted = 0
-        ORDER BY id DESC
+    <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT -->
+    <select id="pageList" resultType="com.cloudai.<service>.entity.XxxYyy">
+        SELECT <include refid="allColumns"/>
+          FROM xxx_yyy
+         WHERE deleted = 0
+         ORDER BY id DESC
     </select>
 
     <select id="countByName" resultType="long">
-        SELECT COUNT(*) FROM xxx_yyy
-        WHERE name = #{name} AND deleted = 0
-        <if test="excludeId != null">AND id != #{excludeId}</if>
+        SELECT COUNT(*)
+          FROM xxx_yyy
+         WHERE name = #{name} AND deleted = 0
+            <if test="excludeId != null">
+                AND id != #{excludeId}
+            </if>
     </select>
 
-    <insert id="insertXxx">
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO xxx_yyy (name, status, create_by, create_time, update_by, update_time)
         VALUES (#{name}, #{status}, #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
     </insert>
 
-    <!-- 动态列 + <set> 剥尾逗号；update_by 匿名保留原值（<if>） -->
-    <update id="updateXxx">
+    <!-- 动态列等价 NOT_NULL 字段策略：null 列不改库值；<if> 标签体必须换行 -->
+    <update id="update">
         UPDATE xxx_yyy
         <set>
-            <if test="xxx.name != null">name = #{xxx.name},</if>
-            <if test="xxx.status != null">status = #{xxx.status},</if>
-            <if test="updateBy != null">update_by = #{updateBy},</if>
+            <if test="name != null">
+                name = #{name},
+            </if>
+            <if test="status != null">
+                status = #{status},
+            </if>
+            <if test="updateBy != null">
+                update_by = #{updateBy},
+            </if>
             update_time = #{updateTime},
         </set>
-        WHERE id = #{xxx.id} AND deleted = 0
+        WHERE id = #{id} AND deleted = 0
     </update>
 
-    <!-- 逻辑删除 = 墓碑 UPDATE，带审计两值 -->
-    <update id="deleteXxxById">
-        UPDATE xxx_yyy SET deleted = 1
-        <if test="updateBy != null">, update_by = #{updateBy}</if>
-        , update_time = #{updateTime}
-        WHERE id = #{id} AND deleted = 0
+    <!-- update_by 匿名保留原值：<if> 判空，逗号前置 -->
+    <update id="deleteById">
+        UPDATE xxx_yyy
+           SET deleted = 1,
+               update_time = #{updateTime}
+               <if test="updateBy != null">
+                   , update_by = #{updateBy}
+               </if>
+         WHERE id = #{id} AND deleted = 0
     </update>
 </mapper>
 ```
 
-规则：主表 SQL 必带 `deleted`（查询 0 / 删除置 1）；只用 `#{}`；纯关系表物理 DELETE + `<foreach>` 批量插入（service 层空列表跳过）。
+规则：主表每条 select/update 语句必含 `deleted`（守护测试按表名词边界检查）；只用 `#{}` 禁 `${}`；分页不写 LIMIT，`LIMIT 1` 仅唯一键防御；**`<if>` 标签体必须换行**（单行 `<if>` 构建即红）；update_by 用 `<if>` 判空保留原值（匿名场景语义）；纯关系表物理 DELETE + `<foreach>` 批量插入（Service 层空列表跳过）。
 
-## 步骤 4：Service（service/XxxYyyManageService.java）
+## 步骤 4：请求 DTO 与 VO（dto/ + vo/ + convert/）
+
+**入参 DTO**（Controller/Service 入参一律对象，禁 Map；写操作不裸传实体——新增/修改语义不同字段必填性不同）：
+
+```java
+package com.cloudai.<service>.dto;
+
+import lombok.Data;
+import lombok.ToString;
+
+import java.io.Serializable;
+
+/** Xxx 新增/修改入参（新增必填 name；修改必填 id） */
+@Data
+public class XxxSaveRequest implements Serializable {
+
+    private static final long serialVersionUID = 1L;
+
+    /** 修改必填；新增忽略 */
+    private Long id;
+    /** 新增必填；修改按需 */
+    private String name;
+    /** 0正常 1停用 */
+    private Integer status;
+}
+```
+
+领域动作（重置密码/分配角色等）建独立 DTO（参考 `ResetPasswordRequest`/`UserRoleRequest`）；DTO 内敏感字段加 `@ToString.Exclude`。
+
+**出参 VO**（Controller 一律 VO，禁 DB 实体直出）：
+
+```java
+package com.cloudai.<service>.vo;
+
+import lombok.Data;
+
+import java.io.Serializable;
+import java.time.LocalDateTime;
+
+/** Xxx 出参 VO（页面所需字段子集；敏感字段与 deleted 不进 VO） */
+@Data
+public class XxxYyyVo implements Serializable {
+
+    private static final long serialVersionUID = 1L;
+
+    private Long id;
+    private String name;
+    /** 0正常 1停用 */
+    private Integer status;
+    private String createBy;
+    private LocalDateTime createTime;
+}
+```
+
+**Convert**（转换统一在 convert 包，原生 setter 逐字段，禁 BeanUtils/mapstruct 等三方拷贝）：
+
+```java
+package com.cloudai.<service>.convert;
+
+import com.cloudai.<service>.entity.XxxYyy;
+import com.cloudai.<service>.vo.XxxYyyVo;
+
+/** 实体 → VO 转换（原生 setter 逐字段，禁三方拷贝工具） */
+public final class XxxYyyConvert {
+
+    private XxxYyyConvert() {
+    }
+
+    public static XxxYyyVo toVo(XxxYyy xxx) {
+        XxxYyyVo vo = new XxxYyyVo();
+        vo.setId(xxx.getId());
+        vo.setName(xxx.getName());
+        vo.setStatus(xxx.getStatus());
+        vo.setCreateBy(xxx.getCreateBy());
+        vo.setCreateTime(xxx.getCreateTime());
+        return vo;
+    }
+}
+```
+
+## 步骤 5：Service（service/XxxYyyManageService.java）
 
 ```java
 package com.cloudai.<service>.service;
@@ -164,79 +288,96 @@ import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.<service>.convert.XxxYyyConvert;
+import com.cloudai.<service>.dto.XxxSaveRequest;
 import com.cloudai.<service>.entity.XxxYyy;
 import com.cloudai.<service>.mapper.XxxYyyMapper;
+import com.cloudai.<service>.vo.XxxYyyVo;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class XxxYyyManageService {
 
-    /** 错误码按服务分段接续分配：1xxx 通用 / 2xxx 认证 / 3xxx system（现用至 3007）/ 4xxx bpmn */
+    /** 错误码按服务分段接续分配：1xxx 通用 / 2xxx 认证 / 3xxx system（现用至 3007，新增从 3008 起）/ 4xxx bpmn */
     private static final int ERR_XXX_NOT_FOUND = 3008;
     private static final int ERR_XXX_DUP = 3009;
 
     private final XxxYyyMapper xxxMapper;
 
-    public PageResult<XxxYyy> page(PageQuery query) {
-        IPage<XxxYyy> page = xxxMapper.selectXxxPage(new Page<>(query.getPageNum(), query.getPageSize()));
-        return PageResult.of(page.getTotal(), page.getRecords());
+    /** 只读不加事务注解 */
+    public PageResult<XxxYyyVo> pageList(PageQuery query) {
+        IPage<XxxYyy> page = xxxMapper.pageList(new Page<>(query.getPageNum(), query.getPageSize()));
+        List<XxxYyyVo> rows = page.getRecords().stream().map(XxxYyyConvert::toVo).toList();
+        return PageResult.of(page.getTotal(), rows);
     }
 
-    public XxxYyy detail(Long id) {
-        XxxYyy xxx = requireXxx(id);
-        return xxx;
+    public XxxYyyVo findById(Long id) {
+        return XxxYyyConvert.toVo(requireXxx(id));
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public Long add(XxxYyy xxx) {
-        if (xxx.getName() == null || xxx.getName().isBlank()) {
+    public Long save(XxxSaveRequest req) {
+        if (req.getName() == null || req.getName().isBlank()) {
             throw new BusinessException("名称不能为空");
         }
-        Long exists = xxxMapper.countByName(xxx.getName(), null);
+        Long exists = xxxMapper.countByName(req.getName(), null);
         if (exists > 0) {
-            throw new BusinessException(ERR_XXX_DUP, "名称已存在: " + xxx.getName());
+            throw new BusinessException(ERR_XXX_DUP, "名称已存在: " + req.getName());
         }
+        XxxYyy xxx = new XxxYyy();
+        xxx.setName(req.getName());
+        xxx.setStatus(req.getStatus() == null ? XxxYyy.StatusEnum.NORMAL.getCode() : req.getStatus());
         auditCreate(xxx);
         try {
-            xxxMapper.insertXxx(xxx);
-        } catch (org.springframework.dao.DuplicateKeyException e) {
-            // 查重看不到并发插入与墓碑占键，兜底转业务码
-            throw new BusinessException(ERR_XXX_DUP, "名称已存在: " + xxx.getName());
+            xxxMapper.save(xxx);
+        } catch (DuplicateKeyException e) {
+            // 逻辑删除墓碑仍占用唯一键，countByName 查重看不到——捕获兜底转业务码
+            log.error("唯一键冲突：{}", e.getMessage());
+            throw new BusinessException(ERR_XXX_DUP, "名称已存在: " + req.getName());
         }
         return xxx.getId();
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void edit(XxxYyy xxx) {
-        requireXxx(xxx.getId());
-        if (xxx.getName() != null) {
-            Long exists = xxxMapper.countByName(xxx.getName(), xxx.getId());
-            if (exists > 0) {
-                throw new BusinessException(ERR_XXX_DUP, "名称已存在: " + xxx.getName());
-            }
+    public void update(Long id, XxxSaveRequest req) {
+        requireXxx(id);
+        Long exists = xxxMapper.countByName(req.getName(), id);
+        if (exists > 0) {
+            throw new BusinessException(ERR_XXX_DUP, "名称已存在: " + req.getName());
         }
+        XxxYyy xxx = requireXxx(id);
+        xxx.setName(req.getName());
+        xxx.setStatus(req.getStatus());
+        xxx.setUpdateBy(SecurityUtils.currentAccount());
+        xxx.setUpdateTime(LocalDateTime.now());
         try {
-            xxxMapper.updateXxx(xxx, SecurityUtils.currentAccount(), LocalDateTime.now());
-        } catch (org.springframework.dao.DuplicateKeyException e) {
-            throw new BusinessException(ERR_XXX_DUP, "名称已存在: " + xxx.getName());
+            xxxMapper.update(xxx);
+        } catch (DuplicateKeyException e) {
+            log.error("唯一键冲突：{}", e.getMessage());
+            throw new BusinessException(ERR_XXX_DUP, "名称已存在: " + req.getName());
         }
     }
 
     @Transactional(rollbackFor = Exception.class)
-    public void remove(Long id) {
+    public void delete(Long id) {
         requireXxx(id);
-        xxxMapper.deleteXxxById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
-        // 有关联关系表时在此物理清理
+        xxxMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        // 有关联关系表时在此物理清理（参考 SysUserManageService.delete → userRoleMapper.deleteByUserId）
     }
 
+    /** 手写 SQL 无自动填充：审计四值显式构造，插入时 update 值 = create 值 */
     private void auditCreate(XxxYyy xxx) {
-        LocalDateTime now = LocalDateTime.now();
         String operator = SecurityUtils.currentAccount();
+        LocalDateTime now = LocalDateTime.now();
         xxx.setCreateBy(operator);
         xxx.setCreateTime(now);
         xxx.setUpdateBy(operator);
@@ -244,7 +385,7 @@ public class XxxYyyManageService {
     }
 
     private XxxYyy requireXxx(Long id) {
-        XxxYyy xxx = xxxMapper.selectXxxById(id);
+        XxxYyy xxx = xxxMapper.findById(id);
         if (xxx == null) {
             throw new BusinessException(ERR_XXX_NOT_FOUND, "记录不存在");
         }
@@ -253,7 +394,9 @@ public class XxxYyyManageService {
 }
 ```
 
-## 步骤 5：Controller（controller/XxxYyyController.java）
+规则：业务校验前置 + 唯一性查重 + DuplicateKey 兜底（**catch 内必须先 `log.error` 记根因再转业务异常**）；多表写 `@Transactional(rollbackFor = Exception.class)`；方法 ≤50 行目标 / 100 硬上限，入参 >3 封装对象。
+
+## 步骤 6：Controller（controller/XxxYyyController.java）
 
 ```java
 package com.cloudai.<service>.controller;
@@ -261,8 +404,9 @@ package com.cloudai.<service>.controller;
 import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;
-import com.cloudai.<service>.entity.XxxYyy;
+import com.cloudai.<service>.dto.XxxSaveRequest;
 import com.cloudai.<service>.service.XxxYyyManageService;
+import com.cloudai.<service>.vo.XxxYyyVo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -281,95 +425,66 @@ public class XxxYyyController {
 
     private final XxxYyyManageService manageService;
 
-    /** 分页查询（每个方法必须有 javadoc；入参/返回一律对象，禁止 Map） */
+    /** 分页查询（VO 出参，不含敏感字段） */
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('<svc>:xxx:list')")
-    public R<PageResult<XxxYyy>> page(PageQuery query) {
-        PageResult<XxxYyy> page = manageService.page(query);
+    public R<PageResult<XxxYyyVo>> page(PageQuery query) {
+        PageResult<XxxYyyVo> page = manageService.pageList(query);
         return R.ok(page);
     }
 
+    /** 查询详情（VO 出参） */
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('<svc>:xxx:list')")
-    public R<XxxYyy> detail(@PathVariable("id") Long id) {
-        XxxYyy xxx = manageService.detail(id);
+    public R<XxxYyyVo> detail(@PathVariable("id") Long id) {
+        XxxYyyVo xxx = manageService.findById(id);
         return R.ok(xxx);
     }
 
+    /** 新增（返回新记录 ID） */
     @PostMapping
     @PreAuthorize("hasAuthority('<svc>:xxx:add')")
-    public R<Long> add(@RequestBody XxxYyy xxx) {
-        Long id = manageService.add(xxx);
+    public R<Long> add(@RequestBody XxxSaveRequest req) {
+        Long id = manageService.save(req);
         return R.ok(id);
     }
 
+    /** 修改基本信息 */
     @PutMapping
     @PreAuthorize("hasAuthority('<svc>:xxx:edit')")
-    public R<Void> edit(@RequestBody XxxYyy xxx) {
-        manageService.edit(xxx);
+    public R<Void> edit(@RequestBody XxxSaveRequest req) {
+        manageService.update(req.getId(), req);
         return R.ok();
     }
 
+    /** 删除（逻辑删除，关联关系物理清理） */
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('<svc>:xxx:remove')")
     public R<Void> remove(@PathVariable("id") Long id) {
-        manageService.remove(id);
+        manageService.delete(id);
         return R.ok();
     }
 }
 ```
 
-说明：两行式只约束"有返回值"的端点（service 结果先落变量再 `R.ok(x)`）；无数据端点（删除/更新）保持 `service 调用; return R.ok();` 两行。服务间内部接口放 `controller/feign/` 子包（参考 InnerUserController），路径 `/inner/xxx/**`。多字段入参（如重置密码）建独立 Request DTO，禁止 Map 接参。
+说明：两行式只约束"有返回值"的端点（service 结果先落局部变量再 `R.ok(x)`）；无数据端点保持 `service 调用; return R.ok();` 两行；**每个方法必须有 javadoc**；`@PathVariable("id")` 显式命名；领域动作端点用独立 DTO（重置密码/分配角色参考 `SysUserController.resetPassword/assignRoles`）；服务间内部接口放 `controller/feign/` 子包，路径 `/inner/xxx/**`，**首个 /inner 端点必须与网关屏蔽规则同任务落地**。
 
-**属性注入**：同前缀多值配置（如 cloud.jwt.*）用 `@ConfigurationProperties` 对象注入（参考 security-starter 的 JwtProperties），不散装 @Value；**Service 层 catch 后必须 `log.error` 记录根因再转业务异常**；方法 ≤50 行（100 硬上限）、入参 >3 封装对象。
+## 通用约束（全后端强制；机械项由守护测试保证）
 
-**方法命名**（Service/Mapper）：`findXxx` 单查 / `saveXxx` 新增 / `updateXxx` 修改 / `pageListXxx` 分页 / `listXxx` 列表 / `deleteXxx` 删除 / `countXxx` 计数。
-
-**状态枚举**：status 类字段在实体内建嵌套枚举（字段类型保持 Integer）：
-```java
-public class XxxYyy extends BaseEntity {
-    ...
-    /** 0正常 1停用 */
-    private Integer status;
-
-    public enum Status {
-        NORMAL(0), DISABLED(1);
-
-        private final int code;
-        Status(int code) { this.code = code; }
-        public int getCode() { return code; }
-        public static Status of(int code) {
-            for (Status s : values()) { if (s.code == code) { return s; } }
-            throw new IllegalArgumentException("未知状态: " + code);
-        }
-    }
-}
-```
-Java 侧引用 `XxxYyy.Status.NORMAL.getCode()`，禁魔法数。
-
-**VO 隔离**：Controller 返回一律 vo/XxxYyyVo（含需要的实体字段子集，不含 password/deleted），Service 层转换后返回；转换集中 convert 包：
-```java
-public class XxxYyyConvert {
-    public static XxxYyyVo toVo(XxxYyy xxx) {
-        XxxYyyVo vo = new XxxYyyVo();
-        vo.setId(xxx.getId());
-        vo.setName(xxx.getName());
-        vo.setStatus(xxx.getStatus());
-        vo.setCreateBy(xxx.getCreateBy());
-        vo.setCreateTime(xxx.getCreateTime());
-        return vo;
-    }
-}
-```
-原生 setter 逐字段设置，禁 BeanUtils/mapstruct 等三方拷贝。
+- 同前缀多值配置用 `@ConfigurationProperties` 对象（参考 security-starter 的 JwtProperties），同文件 ≥2 个 @Value 违规
+- Java 侧禁魔法数：状态引用内嵌枚举常量（`XxxYyy.StatusEnum.NORMAL.getCode()`），SQL 字面量除外；**内嵌枚举一律 Enum 后缀**（StatusEnum/DeletedEnum，守护测试检查）
+- 分层依赖 Controller → Service → Mapper：Controller 禁 import mapper；Feign 内部接口在 `controller/feign/`
 
 ## 完成后检查清单
 
-- [ ] 主表每条 SQL 都有 `deleted`（查询=0 / 删除置 1 带 update 两值）？
-- [ ] INSERT 显式审计四值 / UPDATE 两值（Service 构造）？
-- [ ] 全部 `#{}`，无 `${}`？分页无 LIMIT？
-- [ ] Controller 两行式 + `@PathVariable("id")` 显式 + 每个管理端点有 @PreAuthorize？
-- [ ] 权限标识已入 sys_menu 种子（cloud-system 库）并映射 admin 角色？
-- [ ] 唯一键查重 + DuplicateKey 兜底？错误码按本服务分段接续分配？
-- [ ] `mvn -f cloud-base/pom.xml clean install -pl cloud-<service> -am` 全绿？本服务若有 ArchitectureGuardTest/MapperXmlBindingTest 一并通过（cloud-system 已有，新 DB 服务建议复制这两个守护测试）？
-- [ ] 起服务 curl 新端点（带 admin X-User-* header 直连）验证 + DB 抽查审计字段？
+- [ ] 主表每条 SQL 都有 `deleted`（查询=0 / 删除置 1 带 update 审计）？纯关系表物理 DELETE？
+- [ ] DDL 每列有 COMMENT（审计列=创建人/创建时间/更新人/更新时间）？
+- [ ] Mapper/Service 方法名在动词集白名单（find/save/update/pageList/list/delete/count + 领域动作 reset/assign 等）且不带实体名前缀？
+- [ ] INSERT 显式审计四值 / UPDATE 两值（Service 构造）；update 单参（审计随实体）、deleteById 三参？
+- [ ] 全部 `#{}` 无 `${}`？分页无 LIMIT？`<if>` 标签体全部换行？
+- [ ] Controller：两行式 + `@PathVariable` 显式命名 + 每方法 javadoc + 全管理端点 @PreAuthorize + 出参 VO（无 `R<实体>`）+ 入参 DTO（禁 Map）？
+- [ ] convert 包 final 类 + 私有构造 + 原生 setter，无三方拷贝工具 import？
+- [ ] 权限标识已入 sys_menu 种子并映射 admin 角色？
+- [ ] 唯一键查重 + DuplicateKey 兜底（catch 内先 log.error）？错误码按服务分段接续分配？
+- [ ] `mvn -f cloud-base/pom.xml clean install -pl cloud-<service> -am` 全绿（含 ArchitectureGuardTest/MapperXmlBindingTest；新 DB 服务复制这两个守护测试）？
+- [ ] 起服务按契约 curl 新端点（经网关带 admin token）+ DB 抽查审计字段？

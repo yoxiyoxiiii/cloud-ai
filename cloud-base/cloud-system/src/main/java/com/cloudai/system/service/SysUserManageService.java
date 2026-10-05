@@ -60,7 +60,7 @@ public class SysUserManageService {
         user.setAccount(req.getAccount());
         user.setNickname(req.getNickname() == null ? req.getAccount() : req.getNickname());
         user.setPassword(passwordEncoder.encode(req.getPassword()));
-        user.setStatus(req.getStatus() == null ? SysUser.Status.NORMAL.getCode() : req.getStatus());
+        user.setStatus(req.getStatus() == null ? SysUser.StatusEnum.NORMAL.getCode() : req.getStatus());
         // 手写 SQL 无 MetaObjectHandler 自动填充：审计四值显式传入，插入时 update 值 = create 值
         String operator = SecurityUtils.currentAccount();
         LocalDateTime now = LocalDateTime.now();

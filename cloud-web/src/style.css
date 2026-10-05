@@ -1,0 +1,8 @@
+/* 全局最小 reset：浏览器默认 body margin(8px) 会使 100vh 布局溢出出现滚动条 */
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}

@@ -19,7 +19,7 @@ public class SysRoleVo implements Serializable {
 
     private String roleKey;
 
-    /** 0正常 1停用（字典见 SysRole.Status） */
+    /** 0正常 1停用（字典见 SysRole.StatusEnum） */
     private Integer status;
 
     private String createBy;

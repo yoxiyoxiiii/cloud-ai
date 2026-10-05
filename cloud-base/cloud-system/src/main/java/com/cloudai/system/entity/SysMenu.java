@@ -33,12 +33,12 @@ public class SysMenu extends BaseEntity {
     private Integer status;
 
     /** 状态字典：字段保持 Integer 映射，Java 侧引用枚举常量（禁魔法数） */
-    public enum Status {
+    public enum StatusEnum {
         NORMAL(0), DISABLED(1);
 
         private final int code;
 
-        Status(int code) {
+        StatusEnum(int code) {
             this.code = code;
         }
 
@@ -46,8 +46,8 @@ public class SysMenu extends BaseEntity {
             return code;
         }
 
-        public static Status of(int code) {
-            for (Status s : values()) {
+        public static StatusEnum of(int code) {
+            for (StatusEnum s : values()) {
                 if (s.code == code) {
                     return s;
                 }
