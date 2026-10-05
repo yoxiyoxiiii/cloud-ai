@@ -1,1 +1,2 @@
 com.cloudai.common.core.exception.GlobalExceptionHandler
+com.cloudai.common.core.config.CommonJacksonAutoConfiguration
