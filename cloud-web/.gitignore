@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# e2e 测试产物：截图/日志是一次性验收证据（视觉核对结论以文字记录在报告），不进 git
+e2e/artifacts
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
