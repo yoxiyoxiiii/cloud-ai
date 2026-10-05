@@ -2525,6 +2525,7 @@ import com.cloudai.sso.domain.OnlineSession;
 import com.cloudai.sso.dto.LoginResult;
 import com.cloudai.sso.dto.LoginUserDTO;
 import io.jsonwebtoken.Claims;
+import feign.FeignException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -2544,6 +2545,9 @@ public class TokenService {
 
     private static final String REFRESH_KEY_PREFIX = "sso:refresh:";
 
+    /** 时序旁路防护用的固定散列（明文为随机无效串，实现时 jshell 生成 BCrypt 填入） */
+    private static final String DUMMY_HASH = "<BCrypt(\"dummy-not-a-real-password\")>";
+
     private final SystemUserClient userClient;
     private final RedisUtil redisUtil;
     private final PasswordEncoder passwordEncoder;
@@ -2558,13 +2562,24 @@ public class TokenService {
     private long refreshTtlSeconds = 604800;
 
     public LoginResult login(String account, String password, String ip) {
-        R<LoginUserDTO> resp = userClient.getUserByAccount(account);
+        R<LoginUserDTO> resp;
+        try {
+            resp = userClient.getUserByAccount(account);
+        } catch (FeignException e) {
+            // fallback 类仅在启用熔断器时生效，此处显式兜底（system 宕机 → 2002 而非 500）
+            throw new BusinessException(2002, "用户服务不可用，请稍后重试");
+        }
         if (resp == null || resp.getCode() != 200) {
             throw new BusinessException(resp == null ? 2002 : resp.getCode(),
                     resp == null ? "用户服务不可用" : resp.getMsg());
         }
         LoginUserDTO dto = resp.getData();
-        if (dto == null || !passwordEncoder.matches(password, dto.getPassword())) {
+        if (dto == null) {
+            // 恒定时间：对固定散列跑一次匹配，抹平"账号不存在即快速返回"的时序旁路
+            passwordEncoder.matches(password, DUMMY_HASH);
+            throw new BusinessException(2001, "账号或密码错误");
+        }
+        if (!passwordEncoder.matches(password, dto.getPassword())) {
             throw new BusinessException(2001, "账号或密码错误");
         }
         if (dto.getStatus() == null || dto.getStatus() != 0) {
@@ -2596,19 +2611,29 @@ public class TokenService {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }
         redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + session.getTokenId());
-        LoginUserDTO dto = new LoginUserDTO();
-        dto.setUserId(session.getUserId());
-        dto.setAccount(session.getAccount());
-        dto.setNickname(session.getAccount());
-        dto.setPassword("");
-        dto.setPermissions(session.getPermissions());
-        dto.setStatus(0);
+        // 回查 system：校验账号未停用并取最新权限快照（防停用/降权用户经 refresh 保活旧权限）
+        LoginUserDTO latest;
+        try {
+            R<LoginUserDTO> resp = userClient.getUserByAccount(session.getAccount());
+            latest = resp == null ? null : resp.getData();
+        } catch (FeignException e) {
+            throw new BusinessException(2002, "用户服务不可用，请稍后重试");
+        }
+        if (latest == null || latest.getStatus() == null || latest.getStatus() != 0) {
+            throw new BusinessException(2005, "会话已失效，请重新登录");
+        }
         // issueTokens 以新值覆盖 sso:refresh:{userId}，此处不得再 delete（曾致新 refreshToken 落地即死）
-        return issueTokens(dto, session.getIp());
+        return issueTokens(latest, session.getIp());
     }
 
     public void logout(String accessToken) {
-        Claims claims = JwtUtil.parseToken(secret, accessToken);
+        Claims claims;
+        try {
+            claims = JwtUtil.parseToken(secret, accessToken);
+        } catch (io.jsonwebtoken.JwtException e) {
+            // 已过期/无效的 token 注销视为成功（幂等；其键随 TTL 自灭）
+            return;
+        }
         String tokenId = claims.getId();
         Long userId = Long.valueOf(claims.getSubject());
         redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
@@ -3113,6 +3138,15 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 2. **类型一致性**：LoginUser（core-starter，2026-10-05 审查后从 security-starter 下沉）/LoginUserDTO（system 与 sso 两份同构）/OnlineSession（sso）字段对齐；SecurityConstants 常量为网关与资源端唯一来源；R.fail(401/403/2001-2005/3001-3006) 错误码分段符合设计（2xxx 认证/3xxx system）。
 3. **已知执行期决策点（留给实现者，需在提交说明记录）**：网关读取 OnlineSession 的反序列化方案（T10 Step 3 注——@class 类型头与 OnlineHolder 的兼容性以实测为准）。
 4. **风险预案**：H2 未引入，CRUD 逻辑靠 T11/T12 端到端验证；MySQL 连接失败先检查 3306 进程与空密码；Feign 首调超时注意 loadbalancer 缓存预热。
+
+## 已知取舍与阶段后续（Task 9 质量审查记档）
+
+- **refresh 键模型**：当前 `sso:refresh:{userId}` 单值 + KEYS 扫描——未认证的 /auth/refresh 可放大 Redis CPU；多端登录时单活跃 refreshToken（后登录覆盖前者）且 refresh 取"第一个" online session 行为不确定。阶段 3 优化：refresh 以 token 自身为键存 `sso:refresh-token:{token}` → {userId, jti}，单次 GET 定位，消除 KEYS。
+- **登录无锁定/限速/验证码**：内网部署可接受；上公网前必须补（配合上面的 refresh 未认证面）。
+- **refresh 滑动窗口**：每次刷新重置 7d，无绝对上限——MVP 接受。
+- **Feign fallback 前置条件**：`spring.cloud.openfeign.circuitbreaker.enabled=true` + circuitbreaker 依赖才生效；未启用时 TokenService 显式 catch FeignException 兜底 2002。
+- **Task 10 注意**：网关应透传 X-Forwarded-For，sso 在线列表的 ip 取该值（当前 getRemoteAddr 在网关后将恒显示网关 IP）。
+- **入参校验**：LoginRequest 无 @NotBlank/@Valid（password null → 500），随 Bean Validation 统一补。
 
 ## 执行完成后
 
