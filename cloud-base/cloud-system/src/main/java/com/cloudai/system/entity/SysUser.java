@@ -7,6 +7,7 @@ import com.cloudai.common.mybatis.domain.BaseEntity;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.ToString;
 
 @Data
 @EqualsAndHashCode(callSuper = true)
@@ -22,7 +23,8 @@ public class SysUser extends BaseEntity {
 
     private String nickname;
 
-    /** BCrypt 散列；序列化时不出现在响应中 */
+    /** BCrypt 散列；序列化与 toString 均不出现 */
+    @ToString.Exclude
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     private String password;
 
