@@ -874,7 +874,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 - Create: `.../entity/SysUser.java` `SysRole.java` `SysMenu.java` `SysUserRole.java` `SysRoleMenu.java`
 - Create: `.../mapper/SysUserMapper.java` `SysRoleMapper.java` `SysMenuMapper.java` `SysUserRoleMapper.java` `SysRoleMenuMapper.java`
 - Create: `.../dto/LoginUserDTO.java`
-- Create: `.../service/SysUserService.java`
+- Create: `.../service/SysUserLinkageService.java`
 
 - [ ] **Step 1: pom 增加依赖**（springdoc 之后）
 
@@ -930,8 +930,10 @@ public class SystemApplication {
 ```java
 package com.cloudai.system.entity;
 
-import com.cloudai.common.mybatis.domain.BaseEntity;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.cloudai.common.mybatis.domain.BaseEntity;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -1138,7 +1140,7 @@ public class LoginUserDTO implements Serializable {
 }
 ```
 
-- [ ] **Step 7: 实现 `SysUserService.java`**
+- [ ] **Step 7: 实现 `SysUserLinkageService.java`**
 
 ```java
 package com.cloudai.system.service;
