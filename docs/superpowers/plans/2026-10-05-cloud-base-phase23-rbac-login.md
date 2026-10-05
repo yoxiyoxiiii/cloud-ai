@@ -28,7 +28,6 @@ cloud-base/
 ├── cloud-common/cloud-common-security-starter/
 │   └── src/main/java/com/cloudai/common/security/
 │       ├── constant/SecurityConstants.java           # T3（X-User-* header 常量，网关与资源端共用）
-│       ├── domain/LoginUser.java                     # T3
 │       ├── filter/HeaderAuthFilter.java              # T3
 │       └── config/CommonSecurityAutoConfiguration.java # T3（servlet 端 SecurityFilterChain+方法安全+PasswordEncoder）
 │   └── src/main/resources/META-INF/spring/...imports # T3（新建）
@@ -275,7 +274,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 **Files:**
 - Modify: `cloud-base/cloud-common/cloud-common-security-starter/pom.xml`
 - Create: `.../src/main/java/com/cloudai/common/security/constant/SecurityConstants.java`
-- Create: `.../src/main/java/com/cloudai/common/security/domain/LoginUser.java`
+- Create: `cloud-base/cloud-common/cloud-common-core-starter/src/main/java/com/cloudai/common/core/domain/LoginUser.java`（放 core-starter——mybatis-starter 审计填充也要用，避免持久层传递安全栈）
 - Create: `.../src/main/java/com/cloudai/common/security/filter/HeaderAuthFilter.java`
 - Create: `.../src/main/java/com/cloudai/common/security/config/CommonSecurityAutoConfiguration.java`
 - Create: `.../src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`
@@ -317,7 +316,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 package com.cloudai.common.security.filter;
 
 import com.cloudai.common.security.constant.SecurityConstants;
-import com.cloudai.common.security.domain.LoginUser;
+import com.cloudai.common.core.domain.LoginUser;
 import jakarta.servlet.FilterChain;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -445,7 +444,7 @@ public final class SecurityConstants {
 - [ ] **Step 5: 实现 `LoginUser.java`**
 
 ```java
-package com.cloudai.common.security.domain;
+package com.cloudai.common.core.domain;
 
 import lombok.Data;
 
@@ -473,7 +472,7 @@ public class LoginUser implements Serializable {
 package com.cloudai.common.security.filter;
 
 import com.cloudai.common.security.constant.SecurityConstants;
-import com.cloudai.common.security.domain.LoginUser;
+import com.cloudai.common.core.domain.LoginUser;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -728,7 +727,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ```java
     @Test
     void insertFill_fillsOperatorFromSecurityContext() {
-        var loginUser = new com.cloudai.common.security.domain.LoginUser();
+        var loginUser = new com.cloudai.common.core.domain.LoginUser();
         loginUser.setAccount("admin");
         var auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
                 loginUser, null, java.util.List.of());
@@ -748,6 +747,24 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
         OrderEntity entity = new OrderEntity();
         handler.insertFill(SystemMetaObject.forObject(entity));
         assertThat(entity.getCreateBy()).isNull();
+    }
+
+    @Test
+    void updateFill_fillsOperatorFromSecurityContext() {
+        var loginUser = new com.cloudai.common.core.domain.LoginUser();
+        loginUser.setAccount("admin");
+        var auth = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                loginUser, null, java.util.List.of());
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(auth);
+        try {
+            OrderEntity entity = new OrderEntity();
+            entity.setCreateBy("someone");
+            handler.updateFill(SystemMetaObject.forObject(entity));
+            assertThat(entity.getUpdateBy()).isEqualTo("admin");
+            assertThat(entity.getCreateBy()).isEqualTo("someone");
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
     }
 ```
 
@@ -771,7 +788,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 package com.cloudai.common.mybatis.handler;
 
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
-import com.cloudai.common.security.domain.LoginUser;
+import com.cloudai.common.core.domain.LoginUser;
 import org.apache.ibatis.reflection.MetaObject;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
