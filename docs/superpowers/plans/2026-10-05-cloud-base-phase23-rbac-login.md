@@ -1549,7 +1549,7 @@ public class SysUserController {
 
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('system:user:list')")
-    public R<SysUser> detail(@PathVariable Long id) {
+    public R<SysUser> detail(@PathVariable("id") Long id) {
         return R.ok(manageService.detail(id));
     }
 
@@ -1568,14 +1568,14 @@ public class SysUserController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('system:user:remove')")
-    public R<Void> remove(@PathVariable Long id) {
+    public R<Void> remove(@PathVariable("id") Long id) {
         manageService.remove(id);
         return R.ok();
     }
 
     @PutMapping("/password/{id}")
     @PreAuthorize("hasAuthority('system:user:resetPwd')")
-    public R<Void> resetPassword(@PathVariable Long id, @RequestBody Map<String, String> body) {
+    public R<Void> resetPassword(@PathVariable("id") Long id, @RequestBody Map<String, String> body) {
         manageService.resetPassword(id, body.get("password"));
         return R.ok();
     }
@@ -1589,7 +1589,7 @@ public class SysUserController {
 
     @GetMapping("/{id}/roles")
     @PreAuthorize("hasAuthority('system:user:list')")
-    public R<List<Long>> roleIds(@PathVariable Long id) {
+    public R<List<Long>> roleIds(@PathVariable("id") Long id) {
         return R.ok(manageService.roleIdsOf(id));
     }
 }
@@ -1991,7 +1991,7 @@ public class SysRoleController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('system:role:remove')")
-    public R<Void> remove(@PathVariable Long id) {
+    public R<Void> remove(@PathVariable("id") Long id) {
         manageService.remove(id);
         return R.ok();
     }
@@ -2005,7 +2005,7 @@ public class SysRoleController {
 
     @GetMapping("/{id}/menus")
     @PreAuthorize("hasAuthority('system:role:list')")
-    public R<List<Long>> menuIds(@PathVariable Long id) {
+    public R<List<Long>> menuIds(@PathVariable("id") Long id) {
         return R.ok(manageService.menuIdsOf(id));
     }
 }
@@ -2062,7 +2062,7 @@ public class SysMenuController {
 
     @DeleteMapping("/{id}")
     @PreAuthorize("hasAuthority('system:menu:remove')")
-    public R<Void> remove(@PathVariable Long id) {
+    public R<Void> remove(@PathVariable("id") Long id) {
         manageService.remove(id);
         return R.ok();
     }
@@ -2676,7 +2676,7 @@ public class AuthController {
 
     @DeleteMapping("/online/{tokenId}")
     @PreAuthorize("hasAuthority('sso:online:kick')")
-    public R<Void> kick(@PathVariable String tokenId) {
+    public R<Void> kick(@PathVariable("tokenId") String tokenId) {
         tokenService.kick(tokenId);
         return R.ok();
     }
