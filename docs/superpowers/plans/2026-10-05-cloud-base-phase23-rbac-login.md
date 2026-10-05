@@ -2812,9 +2812,12 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-common-security-starter</artifactId>
         </dependency>
+        <!-- 直接依赖 data-redis（不用 redis-starter）：网关用 StringRedisTemplate 读原始 JSON。
+             Redis 值带 @class 类型头（sso 的 OnlineSession），网关类路径无此类，
+             必须按字符串读出后用忽略未知字段的 ObjectMapper 解析 -->
         <dependency>
-            <groupId>com.cloudai</groupId>
-            <artifactId>cloud-common-redis-starter</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 ```
 
@@ -2860,9 +2863,10 @@ routes 段**最前**（三条路由之前）追加 /inner 屏蔽路由：
 package com.cloudai.gateway.filter;
 
 import com.cloudai.common.core.domain.R;
-import com.cloudai.common.redis.util.RedisUtil;
 import com.cloudai.common.security.constant.SecurityConstants;
 import com.cloudai.common.security.util.JwtUtil;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
@@ -2872,6 +2876,7 @@ import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
 import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -2880,7 +2885,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -2902,8 +2906,11 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/sso/demo", "/system/demo", "/bpmn/demo",
             "/actuator", "/v3/api-docs", "/swagger-ui", "/webjars", "/doc");
 
-    private final RedisUtil redisUtil;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final StringRedisTemplate stringRedisTemplate;
+
+    /** 忽略未知字段（Redis 值带 @class 类型头指向 sso 的 OnlineSession，网关类路径无此类） */
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     @Value("${cloud.jwt.secret}")
     private String secret;
@@ -2926,13 +2933,20 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         } catch (JwtException e) {
             return unauthorized(exchange);
         }
-        String tokenId = claims.getId();
-        if (!Boolean.TRUE.equals(redisUtil.hasKey(SecurityConstants.ONLINE_KEY_PREFIX + tokenId))) {
+        // 读在线会话原始 JSON（StringRedisTemplate 规避 @class 反序列化；null=注销/强退/过期 → 401）
+        String json = stringRedisTemplate.opsForValue().get(SecurityConstants.ONLINE_KEY_PREFIX + claims.getId());
+        if (json == null) {
             return unauthorized(exchange);
         }
-        OnlineHolder session = redisUtil.get(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
-        List<String> perms = (session == null || session.getPermissions() == null)
-                ? List.of() : session.getPermissions();
+        List<String> perms = List.of();
+        try {
+            OnlineSessionView session = objectMapper.readValue(json, OnlineSessionView.class);
+            if (session != null && session.getPermissions() != null) {
+                perms = session.getPermissions();
+            }
+        } catch (JsonProcessingException e) {
+            // 会话值损坏按无权限处理（下游 @PreAuthorize 会拒绝）
+        }
         ServerWebExchange authed = withUserHeaders(safeExchange,
                 claims.getSubject(), claims.get("account", String.class), String.join(",", perms));
         return chain.filter(authed);
@@ -2976,15 +2990,13 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         return -100;
     }
 
-    /** 网关侧在线会话投影（只取权限字段，字段名与 sso 的 OnlineSession 对齐） */
+    /** 网关侧在线会话投影（只取权限字段；@class 头与其余字段被 ObjectMapper 忽略） */
     @lombok.Data
-    public static class OnlineHolder {
+    public static class OnlineSessionView {
         private List<String> permissions;
     }
 }
 ```
-
-（若 Jackson 反序列化 OnlineHolder 因 @class 类型头失败——GenericJackson2JsonRedisSerializer 存的是 sso.OnlineSession 类型——则改为以 `Object` 读取后 objectMapper.convertValue，或网关不读会话值、仅校验 hasKey、X-User-Perms 留空由下游 @PreAuthorize 拒绝。以实测为准，把最终采用方案写进提交说明。）
 
 - [ ] **Step 4: 构建**
 
