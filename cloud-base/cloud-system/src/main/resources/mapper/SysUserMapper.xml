@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.SysUserMapper">
+
+    <!-- 手写 SQL 后 @TableLogic 与 MetaObjectHandler 自动机制不再生效：
+         查询显式 deleted = 0，删除为 UPDATE deleted=1（留更新审计）；
+         INSERT/UPDATE 的审计列（create_by/create_time/update_by/update_time）由 Service 显式传参（操作人 SecurityUtils.currentAccount()）。
+         update_by 采用 <if> 判空：匿名场景与原自动填充语义一致——保留原 update_by 不清空。 -->
+    <sql id="allColumns">
+        id, account, nickname, password, status,
+        create_by, create_time, update_by, update_time, deleted
+    </sql>
+
+    <select id="selectByAccount" resultType="com.cloudai.system.entity.SysUser">
+        SELECT <include refid="allColumns"/>
+          FROM sys_user
+         WHERE account = #{account} AND deleted = 0
+         LIMIT 1
+    </select>
+
+    <select id="selectUserById" resultType="com.cloudai.system.entity.SysUser">
+        SELECT <include refid="allColumns"/>
+          FROM sys_user
+         WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT -->
+    <select id="selectUserPage" resultType="com.cloudai.system.entity.SysUser">
+        SELECT <include refid="allColumns"/>
+          FROM sys_user
+         WHERE deleted = 0
+         ORDER BY id DESC
+    </select>
+
+    <select id="countByAccount" resultType="long">
+        SELECT COUNT(*)
+          FROM sys_user
+         WHERE account = #{account} AND deleted = 0
+    </select>
+
+    <!-- 登录权限聚合（替代原 5 连查）：账号 → 用户-角色 → 启用角色 → 角色-菜单 → 启用菜单 → 非空 perms -->
+    <select id="selectPermsByAccount" resultType="string">
+        SELECT DISTINCT m.perms
+          FROM sys_user u
+          JOIN sys_user_role ur ON ur.user_id = u.id
+          JOIN sys_role r ON r.id = ur.role_id AND r.status = 0 AND r.deleted = 0
+          JOIN sys_role_menu rm ON rm.role_id = r.id
+          JOIN sys_menu m ON m.id = rm.menu_id AND m.status = 0 AND m.deleted = 0
+         WHERE u.account = #{account} AND u.deleted = 0 AND m.perms != ''
+    </select>
+
+    <insert id="insertUser" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_user (account, nickname, password, status,
+                              create_by, create_time, update_by, update_time)
+        VALUES (#{account}, #{nickname}, #{password}, #{status},
+                #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+    </insert>
+
+    <!-- 动态列等价原 updateById 的 NOT_NULL 字段策略：null 列不改库值 -->
+    <update id="updateUser">
+        UPDATE sys_user
+        <set>
+            <if test="nickname != null">nickname = #{nickname},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="updateBy != null">update_by = #{updateBy},</if>
+            update_time = #{updateTime},
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="updateUserPassword">
+        UPDATE sys_user
+           SET password = #{password},
+               update_time = #{updateTime}
+               <if test="updateBy != null">, update_by = #{updateBy}</if>
+         WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteUserById">
+        UPDATE sys_user
+           SET deleted = 1,
+               update_time = #{updateTime}
+               <if test="updateBy != null">, update_by = #{updateBy}</if>
+         WHERE id = #{id} AND deleted = 0
+    </update>
+</mapper>

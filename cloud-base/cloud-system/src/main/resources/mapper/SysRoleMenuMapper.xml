@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.SysRoleMenuMapper">
+
+    <!-- 纯关系表：无 deleted 列，物理 DELETE；create_time 由 Service 显式传值 -->
+
+    <select id="selectMenuIdsByRoleId" resultType="long">
+        SELECT menu_id
+          FROM sys_role_menu
+         WHERE role_id = #{roleId}
+    </select>
+
+    <insert id="insertBatch">
+        INSERT INTO sys_role_menu (role_id, menu_id, create_time) VALUES
+        <foreach collection="list" item="item" separator=",">
+            (#{item.roleId}, #{item.menuId}, #{item.createTime})
+        </foreach>
+    </insert>
+
+    <delete id="deleteByRoleId">
+        DELETE FROM sys_role_menu
+         WHERE role_id = #{roleId}
+    </delete>
+
+    <delete id="deleteByMenuId">
+        DELETE FROM sys_role_menu
+         WHERE menu_id = #{menuId}
+    </delete>
+</mapper>

@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.SysMenuMapper">
+
+    <!-- 逻辑删除/审计显式维护，语义说明见 SysUserMapper.xml -->
+    <sql id="allColumns">
+        id, parent_id, name, perms, type, sort, status,
+        create_by, create_time, update_by, update_time, deleted
+    </sql>
+
+    <select id="selectAllMenus" resultType="com.cloudai.system.entity.SysMenu">
+        SELECT <include refid="allColumns"/>
+          FROM sys_menu
+         WHERE deleted = 0
+         ORDER BY sort, id
+    </select>
+
+    <select id="selectMenuById" resultType="com.cloudai.system.entity.SysMenu">
+        SELECT <include refid="allColumns"/>
+          FROM sys_menu
+         WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="countByParentId" resultType="long">
+        SELECT COUNT(*)
+          FROM sys_menu
+         WHERE parent_id = #{parentId} AND deleted = 0
+    </select>
+
+    <!-- 动态列等价原 insert 的 NOT_NULL 字段策略：业务列 null 时省略、交由列默认值 -->
+    <insert id="insertMenu" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_menu
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="parentId != null">parent_id,</if>
+            <if test="name != null">name,</if>
+            <if test="perms != null">perms,</if>
+            <if test="type != null">type,</if>
+            <if test="sort != null">sort,</if>
+            <if test="status != null">status,</if>
+            create_by, create_time, update_by, update_time,
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="parentId != null">#{parentId},</if>
+            <if test="name != null">#{name},</if>
+            <if test="perms != null">#{perms},</if>
+            <if test="type != null">#{type},</if>
+            <if test="sort != null">#{sort},</if>
+            <if test="status != null">#{status},</if>
+            #{createBy}, #{createTime}, #{updateBy}, #{updateTime},
+        </trim>
+    </insert>
+
+    <!-- 动态列等价原 updateById 的 NOT_NULL 字段策略：null 列不改库值 -->
+    <update id="updateMenu">
+        UPDATE sys_menu
+        <set>
+            <if test="parentId != null">parent_id = #{parentId},</if>
+            <if test="name != null">name = #{name},</if>
+            <if test="perms != null">perms = #{perms},</if>
+            <if test="type != null">type = #{type},</if>
+            <if test="sort != null">sort = #{sort},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="updateBy != null">update_by = #{updateBy},</if>
+            update_time = #{updateTime},
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteMenuById">
+        UPDATE sys_menu
+           SET deleted = 1,
+               update_time = #{updateTime}
+               <if test="updateBy != null">, update_by = #{updateBy}</if>
+         WHERE id = #{id} AND deleted = 0
+    </update>
+</mapper>

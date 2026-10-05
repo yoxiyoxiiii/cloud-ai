@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.SysRoleMapper">
+
+    <!-- 逻辑删除/审计显式维护，语义说明见 SysUserMapper.xml -->
+    <sql id="allColumns">
+        id, name, role_key, status,
+        create_by, create_time, update_by, update_time, deleted
+    </sql>
+
+    <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT -->
+    <select id="selectRolePage" resultType="com.cloudai.system.entity.SysRole">
+        SELECT <include refid="allColumns"/>
+          FROM sys_role
+         WHERE deleted = 0
+         ORDER BY id DESC
+    </select>
+
+    <select id="selectEnabledRoles" resultType="com.cloudai.system.entity.SysRole">
+        SELECT <include refid="allColumns"/>
+          FROM sys_role
+         WHERE status = 0 AND deleted = 0
+         ORDER BY id
+    </select>
+
+    <select id="selectRoleById" resultType="com.cloudai.system.entity.SysRole">
+        SELECT <include refid="allColumns"/>
+          FROM sys_role
+         WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <select id="countByRoleKey" resultType="long">
+        SELECT COUNT(*)
+          FROM sys_role
+         WHERE role_key = #{roleKey} AND deleted = 0
+        <if test="excludeId != null">AND id != #{excludeId}</if>
+    </select>
+
+    <!-- 动态列等价原 insert 的 NOT_NULL 字段策略：业务列 null 时省略、交由列默认值 -->
+    <insert id="insertRole" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_role
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="name != null">name,</if>
+            <if test="roleKey != null">role_key,</if>
+            <if test="status != null">status,</if>
+            create_by, create_time, update_by, update_time,
+        </trim>
+        <trim prefix="VALUES (" suffix=")" suffixOverrides=",">
+            <if test="name != null">#{name},</if>
+            <if test="roleKey != null">#{roleKey},</if>
+            <if test="status != null">#{status},</if>
+            #{createBy}, #{createTime}, #{updateBy}, #{updateTime},
+        </trim>
+    </insert>
+
+    <!-- 动态列等价原 updateById 的 NOT_NULL 字段策略：null 列不改库值 -->
+    <update id="updateRole">
+        UPDATE sys_role
+        <set>
+            <if test="name != null">name = #{name},</if>
+            <if test="roleKey != null">role_key = #{roleKey},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="updateBy != null">update_by = #{updateBy},</if>
+            update_time = #{updateTime},
+        </set>
+        WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <update id="deleteRoleById">
+        UPDATE sys_role
+           SET deleted = 1,
+               update_time = #{updateTime}
+               <if test="updateBy != null">, update_by = #{updateBy}</if>
+         WHERE id = #{id} AND deleted = 0
+    </update>
+</mapper>
