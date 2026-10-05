@@ -323,6 +323,46 @@ public class XxxYyyController {
 
 **属性注入**：同前缀多值配置（如 cloud.jwt.*）用 `@ConfigurationProperties` 对象注入（参考 security-starter 的 JwtProperties），不散装 @Value；**Service 层 catch 后必须 `log.error` 记录根因再转业务异常**；方法 ≤50 行（100 硬上限）、入参 >3 封装对象。
 
+**方法命名**（Service/Mapper）：`findXxx` 单查 / `saveXxx` 新增 / `updateXxx` 修改 / `pageListXxx` 分页 / `listXxx` 列表 / `deleteXxx` 删除 / `countXxx` 计数。
+
+**状态枚举**：status 类字段在实体内建嵌套枚举（字段类型保持 Integer）：
+```java
+public class XxxYyy extends BaseEntity {
+    ...
+    /** 0正常 1停用 */
+    private Integer status;
+
+    public enum Status {
+        NORMAL(0), DISABLED(1);
+
+        private final int code;
+        Status(int code) { this.code = code; }
+        public int getCode() { return code; }
+        public static Status of(int code) {
+            for (Status s : values()) { if (s.code == code) { return s; } }
+            throw new IllegalArgumentException("未知状态: " + code);
+        }
+    }
+}
+```
+Java 侧引用 `XxxYyy.Status.NORMAL.getCode()`，禁魔法数。
+
+**VO 隔离**：Controller 返回一律 vo/XxxYyyVo（含需要的实体字段子集，不含 password/deleted），Service 层转换后返回；转换集中 convert 包：
+```java
+public class XxxYyyConvert {
+    public static XxxYyyVo toVo(XxxYyy xxx) {
+        XxxYyyVo vo = new XxxYyyVo();
+        vo.setId(xxx.getId());
+        vo.setName(xxx.getName());
+        vo.setStatus(xxx.getStatus());
+        vo.setCreateBy(xxx.getCreateBy());
+        vo.setCreateTime(xxx.getCreateTime());
+        return vo;
+    }
+}
+```
+原生 setter 逐字段设置，禁 BeanUtils/mapstruct 等三方拷贝。
+
 ## 完成后检查清单
 
 - [ ] 主表每条 SQL 都有 `deleted`（查询=0 / 删除置 1 带 update 两值）？
