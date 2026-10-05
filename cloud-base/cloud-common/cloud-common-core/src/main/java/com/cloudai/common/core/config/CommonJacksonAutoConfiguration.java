@@ -18,6 +18,10 @@ public class CommonJacksonAutoConfiguration {
 
     private static final String DATE_TIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
 
+    /**
+     * 运行在 Boot 属性 customizer（order 0）之后，刻意覆盖 spring.jackson.* 配置以锁定全局统一格式；
+     * 个别字段如需特殊格式用 @JsonFormat 局部覆盖。
+     */
     @Bean
     public Jackson2ObjectMapperBuilderCustomizer jacksonCustomizer() {
         return builder -> {
@@ -26,6 +30,7 @@ public class CommonJacksonAutoConfiguration {
             builder.serializers(new LocalDateTimeSerializer(formatter));
             builder.deserializers(new LocalDateTimeDeserializer(formatter));
             builder.serializerByType(Long.class, ToStringSerializer.instance);
+            builder.serializerByType(Long.TYPE, ToStringSerializer.instance);
             builder.timeZone(TimeZone.getTimeZone("GMT+8"));
         };
     }
