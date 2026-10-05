@@ -1,5 +1,7 @@
-# Vue 3 + TypeScript + Vite
+# cloud-web
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+企业应用基座平台前端（Vue 3.5 + TypeScript + Vite 6 + Element Plus 2 全量引入 + Pinia + Vue Router + Axios）。
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+- 开发：`npm install && npm run dev`（5173，`/api` 经 Vite 代理转发网关 `http://localhost:18080`，见 `vite.config.ts`）
+- 构建：`npm run build`（vue-tsc 类型检查 + 产物 `dist/`）；`.env.production` 部署形态实现时验证
+- 接口契约（唯一对齐物）：`../docs/superpowers/contracts/2026-10-05-pilot-auth-user-api.md`
