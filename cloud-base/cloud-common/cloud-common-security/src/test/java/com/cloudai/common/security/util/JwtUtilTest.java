@@ -45,4 +45,25 @@ class JwtUtilTest {
         assertThatThrownBy(() -> JwtUtil.parseToken(SECRET, tampered))
                 .isInstanceOf(JwtException.class);
     }
+
+    @Test
+    void createToken_nullUserIdThrows() {
+        assertThatThrownBy(() -> JwtUtil.createToken(SECRET, null, "admin", "token-uuid-5", 7200))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("userId");
+    }
+
+    @Test
+    void createToken_shortSecretThrows() {
+        assertThatThrownBy(() -> JwtUtil.createToken("short-secret", 1L, "admin", "token-uuid-6", 7200))
+                .isInstanceOf(io.jsonwebtoken.security.WeakKeyException.class);
+    }
+
+    @Test
+    void createToken_expEqualsIatPlusTtl() {
+        long ttl = 7200;
+        String token = JwtUtil.createToken(SECRET, 1L, "admin", "token-uuid-7", ttl);
+        Claims claims = JwtUtil.parseToken(SECRET, token);
+        assertThat(claims.getExpiration().getTime() - claims.getIssuedAt().getTime()).isEqualTo(ttl * 1000);
+    }
 }
