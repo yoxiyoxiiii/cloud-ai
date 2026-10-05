@@ -1216,7 +1216,9 @@ import lombok.Data;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.converter.json.Jackson2ObjectMapperBuilder;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.Date;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -1232,6 +1234,7 @@ class CommonJacksonAutoConfigurationTest {
     static class Dto {
         private LocalDateTime time;
         private Long id;
+        private long total;
     }
 
     @Test
@@ -1248,6 +1251,19 @@ class CommonJacksonAutoConfigurationTest {
     void deserialize_dateFormat() throws Exception {
         Dto dto = mapper().readValue("{\"time\":\"2026-10-04 12:00:00\"}", Dto.class);
         assertThat(dto.getTime()).isEqualTo(LocalDateTime.of(2026, 10, 4, 12, 0, 0));
+    }
+
+    @Test
+    void serialize_primitiveLongAsString() throws Exception {
+        Dto dto = new Dto();
+        dto.setTotal(123456789012345L);
+        assertThat(mapper().writeValueAsString(dto)).contains("\"total\":\"123456789012345\"");
+    }
+
+    @Test
+    void serialize_dateUsesGmt8() throws Exception {
+        String json = mapper().writeValueAsString(Date.from(Instant.parse("2026-10-04T04:00:00Z")));
+        assertThat(json).contains("2026-10-04 12:00:00");
     }
 }
 ```
@@ -1280,6 +1296,10 @@ public class CommonJacksonAutoConfiguration {
 
     private static final String DATE_TIME_PATTERN = "yyyy-MM-dd HH:mm:ss";
 
+    /**
+     * 运行在 Boot 属性 customizer（order 0）之后，刻意覆盖 spring.jackson.* 配置以锁定全局统一格式；
+     * 个别字段如需特殊格式用 @JsonFormat 局部覆盖。
+     */
     @Bean
     public Jackson2ObjectMapperBuilderCustomizer jacksonCustomizer() {
         return builder -> {
@@ -1288,6 +1308,7 @@ public class CommonJacksonAutoConfiguration {
             builder.serializers(new LocalDateTimeSerializer(formatter));
             builder.deserializers(new LocalDateTimeDeserializer(formatter));
             builder.serializerByType(Long.class, ToStringSerializer.instance);
+            builder.serializerByType(Long.TYPE, ToStringSerializer.instance);
             builder.timeZone(TimeZone.getTimeZone("GMT+8"));
         };
     }
@@ -1308,7 +1329,7 @@ com.cloudai.common.core.config.CommonJacksonAutoConfiguration
 - [ ] **Step 5: 运行测试确认通过**
 
 Run: `mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core`
-Expected: `Tests run: 15`（含此前 13 个 + 本任务 2 个），全部 PASS，BUILD SUCCESS。
+Expected: `Tests run: 17`（含此前 13 个 + 本任务 4 个），全部 PASS，BUILD SUCCESS。
 
 - [ ] **Step 6: Commit**
 
