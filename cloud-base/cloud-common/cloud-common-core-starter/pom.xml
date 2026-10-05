@@ -10,8 +10,8 @@
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>cloud-common-core</artifactId>
-    <name>cloud-common-core</name>
+    <artifactId>cloud-common-core-starter</artifactId>
+    <name>cloud-common-core-starter</name>
     <description>统一返回体、异常、错误码、Jackson 配置</description>
 
     <dependencies>

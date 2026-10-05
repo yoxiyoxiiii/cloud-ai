@@ -2453,6 +2453,8 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 阶段 1 验收通过后：编写阶段 2（cloud-system RBAC）实施计划 `docs/superpowers/plans/<日期>-cloud-base-phase2-system.md`。
 
+> **2026-10-05 更名记录**：阶段 1 合并后，cloud-common 下四个模块统一更名为 `-starter` 后缀（cloud-common-core-starter / cloud-common-security-starter / cloud-common-mybatis-starter / cloud-common-redis-starter），目录、artifactId、依赖引用同步更新；Java 包名与自动装配机制不变。本计划文档中的历史任务文本仍用旧名，执行时以仓库当前名称为准。
+
 ### 移交后续阶段的备忘（来自阶段 1 质量审查）
 
 - **阶段 2**：真实端点上线时补 `HttpMessageNotReadableException`（脏 JSON → 1001/400）等框架协议异常 handler；明确"HTTP 状态恒 200、错误看 body.code"是否有意并写进文档（否则监控按 HTTP status 统计会失真）。**建表 DDL：`deleted TINYINT NOT NULL DEFAULT 0`**——@TableLogic 逻辑删除下，NULL 行会被 MP 的 `deleted = 0` 过滤条件隐身且 removeById 匹配不到；后续若加乐观锁/防全表攻击等 InnerInterceptor，保持 PaginationInnerInterceptor 在拦截器链最后。cloud-system 引入 common-mybatis/redis 后需在 Application 类加 `@MapperScan("com.cloudai.system.mapper")`（common-mybatis 未内置扫描，漏掉会报 Invalid bound statement）；数据源配置放 Nacos `cloud-system.yaml` 还是本地 yml 需在阶段 2 计划时定夺。

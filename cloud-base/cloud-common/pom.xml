@@ -15,9 +15,9 @@
     <name>cloud-common</name>
 
     <modules>
-        <module>cloud-common-core</module>
-        <module>cloud-common-security</module>
-        <module>cloud-common-mybatis</module>
-        <module>cloud-common-redis</module>
+        <module>cloud-common-core-starter</module>
+        <module>cloud-common-security-starter</module>
+        <module>cloud-common-mybatis-starter</module>
+        <module>cloud-common-redis-starter</module>
     </modules>
 </project>

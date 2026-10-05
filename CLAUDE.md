@@ -17,8 +17,8 @@ MVN=D:/software/apache-maven-3.8.4/bin/mvn
 $MVN -f cloud-base/pom.xml clean install
 
 # 单模块测试
-$MVN -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core
-$MVN -f cloud-base/pom.xml test -pl cloud-common/cloud-common-security
+$MVN -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core-starter
+$MVN -f cloud-base/pom.xml test -pl cloud-common/cloud-common-security-starter
 
 # 构建单个服务（含上游 common 模块）
 $MVN -f cloud-base/pom.xml clean install -pl cloud-system -am
@@ -52,12 +52,12 @@ JDK 17 / Spring Boot 3.3.4 / Spring Cloud 2023.0.3 / Spring Cloud Alibaba 2023.0
 ```
 cloud-base/
 ├── cloud-common/                  # 公共库，Spring Boot 3 自动装配（META-INF/spring/...AutoConfiguration.imports）
-│   ├── cloud-common-core          # R<T> 统一返回、ErrorCode（1xxx通用/2xxx认证/3xxx system/4xxx bpmn）、
+│   ├── cloud-common-core-starter      # R<T> 统一返回、ErrorCode（1xxx通用/2xxx认证/3xxx system/4xxx bpmn）、
 │   │                              #   BusinessException + GlobalExceptionHandler（@RestControllerAdvice）、
 │   │                              #   Jackson 统一格式（GMT+8、yyyy-MM-dd HH:mm:ss、Long→String 防前端精度丢失）
-│   ├── cloud-common-security     # JwtUtil（HS512 静态工具，密钥由调用方传入；阶段3包装为配置 bean）
-│   ├── cloud-common-mybatis      # BaseEntity（审计填充+@TableLogic）、分页插件（maxLimit 200）
-│   └── cloud-common-redis        # RedisTemplate（String key + JSON value，@AutoConfigureBefore Boot 的 RedisAutoConfiguration）
+│   ├── cloud-common-security-starter # JwtUtil（HS512 静态工具，密钥由调用方传入；阶段3包装为配置 bean）
+│   ├── cloud-common-mybatis-starter  # BaseEntity（审计填充+@TableLogic）、分页插件（maxLimit 200）
+│   └── cloud-common-redis-starter    # RedisTemplate（String key + JSON value，@AutoConfigureBefore Boot 的 RedisAutoConfiguration）
 ├── cloud-gateway/  :18080         # WebFlux。lb:// 路由 + StripPrefix=1（/sso/x → sso 服务 /x）+ globalcors + maxAge
 ├── cloud-sso/      :9201          # 认证中心（阶段3实现 JWT 双 token + Redis 在线状态）
 ├── cloud-system/   :9202          # RBAC 系统管理（阶段2实现，含 /inner/** 内部接口）

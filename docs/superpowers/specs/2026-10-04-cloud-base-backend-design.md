@@ -36,10 +36,10 @@
 cloud-base/
 ├── pom.xml                  # 父POM：统一依赖版本管理
 ├── cloud-common/
-│   ├── cloud-common-core        # 统一返回体/全局异常/错误码/工具
-│   ├── cloud-common-security    # JWT工具 + 资源端Spring Security自动配置
-│   ├── cloud-common-mybatis     # MyBatis-Plus配置/分页/审计填充/逻辑删除
-│   └── cloud-common-redis       # Redis配置/RedisUtil
+│   ├── cloud-common-core-starter    # 统一返回体/全局异常/错误码/工具
+│   ├── cloud-common-security-starter    # JWT工具 + 资源端Spring Security自动配置
+│   ├── cloud-common-mybatis-starter     # MyBatis-Plus配置/分页/审计填充/逻辑删除
+│   └── cloud-common-redis-starter       # Redis配置/RedisUtil
 ├── cloud-gateway/           # 网关 :18080
 ├── cloud-sso/               # 认证中心 :9201
 ├── cloud-system/            # 系统管理 :9202
@@ -143,10 +143,12 @@ Flowable 自动建 `ACT_*` 表 + 业务扩展表：
 
 | 模块 | 内容 |
 |---|---|
-| cloud-common-core | `R<T>` 统一返回体、BusinessException + 全局异常处理器、错误码、分页对象、常量、Jackson 统一格式（GMT+8，`yyyy-MM-dd HH:mm:ss`）、Hutool |
-| cloud-common-security | JWT 签发/验签、资源端 SecurityFilterChain 自动配置、LoginUser 上下文 |
-| cloud-common-mybatis | 分页插件、审计字段自动填充（create_by/create_time/update_by/update_time）、逻辑删除 |
-| cloud-common-redis | RedisTemplate 序列化配置、RedisUtil 封装 |
+| cloud-common-core-starter | `R<T>` 统一返回体、BusinessException + 全局异常处理器、错误码、分页对象、常量、Jackson 统一格式（GMT+8，`yyyy-MM-dd HH:mm:ss`）、Hutool |
+| cloud-common-security-starter | JWT 签发/验签、资源端 SecurityFilterChain 自动配置、LoginUser 上下文 |
+| cloud-common-mybatis-starter | 分页插件、审计字段自动填充（create_by/create_time/update_by/update_time）、逻辑删除 |
+| cloud-common-redis-starter | RedisTemplate 序列化配置、RedisUtil 封装 |
+
+（2026-10-05 更名：四个公共模块由 cloud-common-xxx 更名为 cloud-common-xxx-starter，凸显其自动装配 starter 语义；Java 包名 com.cloudai.common.* 不变。）
 
 ## 8. 服务间调用
 

@@ -10,18 +10,14 @@
         <version>1.0.0-SNAPSHOT</version>
     </parent>
 
-    <artifactId>cloud-common-redis</artifactId>
-    <name>cloud-common-redis</name>
-    <description>Redis 配置与工具封装</description>
+    <artifactId>cloud-common-mybatis-starter</artifactId>
+    <name>cloud-common-mybatis-starter</name>
+    <description>MyBatis-Plus 配置、审计填充、基础实体</description>
 
     <dependencies>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-redis</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>jackson-databind</artifactId>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
         </dependency>
     </dependencies>
 </project>

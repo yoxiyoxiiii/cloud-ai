@@ -15,7 +15,7 @@ MyBatis-Plus 3.5.7 / MySQL 8 / Redis / Flowable 7.2.0（阶段4引入）
 | cloud-sso | 9201 | 认证中心（阶段3实现） |
 | cloud-system | 9202 | 系统管理 RBAC（阶段2实现） |
 | cloud-bpmn | 9203 | 工作流 Flowable（阶段4实现） |
-| cloud-common-* | - | core/security/mybatis/redis 公共模块 |
+| cloud-common-*-starter | - | core/security/mybatis/redis 公共模块（自动装配 starter） |
 
 ## 构建与启动
 
