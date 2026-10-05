@@ -21,4 +21,10 @@ class PageResultTest {
         PageResult<String> r = PageResult.of(0, null);
         assertThat(r.isEmpty()).isTrue();
     }
+
+    @Test
+    void isEmpty_whenRowsEmpty() {
+        PageResult<String> r = PageResult.of(0, List.of());
+        assertThat(r.isEmpty()).isTrue();
+    }
 }

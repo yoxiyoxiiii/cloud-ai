@@ -3,6 +3,7 @@ package com.cloudai.common.core.domain;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -22,7 +23,7 @@ public class PageResult<T> implements Serializable {
     public static <T> PageResult<T> of(long total, List<T> rows) {
         PageResult<T> r = new PageResult<>();
         r.setTotal(total);
-        r.setRows(rows);
+        r.setRows(rows == null ? new ArrayList<>() : rows);
         return r;
     }
 

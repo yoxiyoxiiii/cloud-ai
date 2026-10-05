@@ -17,9 +17,4 @@ public class PageQuery implements Serializable {
 
     /** 每页条数 */
     private Integer pageSize = 10;
-
-    /** MyBatis-Plus 分页偏移量 */
-    public int offset() {
-        return (pageNum - 1) * pageSize;
-    }
 }
