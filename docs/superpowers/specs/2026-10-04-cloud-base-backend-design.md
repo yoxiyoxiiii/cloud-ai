@@ -22,7 +22,7 @@
 | 认证 | Spring Security（自研 JWT，双 token） | 随 Boot |
 | 工作流 | Flowable（BPMN 引擎） | 7.2.0 |
 | ORM | MyBatis-Plus（boot3 starter） | 3.5.x |
-| 数据库 | MySQL | 8.x |
+| 数据库 | MySQL | 5.7+（开发机实测 5.7.24） |
 | 缓存 | Redis（token 状态、在线用户、验证码） | 6.x+ |
 | 服务间调用 | OpenFeign + Spring Cloud LoadBalancer | 随 Spring Cloud |
 | API 文档 | SpringDoc OpenAPI | 2.x |

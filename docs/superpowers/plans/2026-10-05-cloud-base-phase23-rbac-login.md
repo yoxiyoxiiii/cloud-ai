@@ -119,6 +119,8 @@ Expected: 输出 `$2a$10$...` 60 字符 BCrypt 散列（$2a$ 开头）。记下�
 
 ```sql
 -- cloud-system 库初始化（最小闭环：RBAC 5 表 + 初始数据）
+-- ⚠️ 开发环境初始化脚本：DROP 并重建 cloud_system 全部表，生产环境禁止执行
+-- 引用完整性由服务层维护（微服务惯例，不建外键）；实测 MySQL 5.7.24+
 CREATE DATABASE IF NOT EXISTS cloud_system DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
 USE cloud_system;
 
@@ -173,7 +175,8 @@ CREATE TABLE sys_menu (
     update_by   VARCHAR(30)  DEFAULT NULL,
     update_time DATETIME    DEFAULT NULL,
     deleted     TINYINT     NOT NULL DEFAULT 0,
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
+    KEY idx_parent_id (parent_id)
 ) ENGINE = InnoDB COMMENT = '菜单权限表';
 
 CREATE TABLE sys_user_role (
@@ -181,20 +184,20 @@ CREATE TABLE sys_user_role (
     user_id     BIGINT   NOT NULL,
     role_id     BIGINT   NOT NULL,
     create_time DATETIME DEFAULT NULL,
-    deleted     TINYINT  NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_user_role (user_id, role_id)
-) ENGINE = InnoDB COMMENT = '用户角色关联';
+    UNIQUE KEY uk_user_role (user_id, role_id),
+    KEY idx_role_id (role_id)
+) ENGINE = InnoDB COMMENT = '用户角色关联（纯关系表：物理删除，无逻辑删除列）';
 
 CREATE TABLE sys_role_menu (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
     role_id     BIGINT   NOT NULL,
     menu_id     BIGINT   NOT NULL,
     create_time DATETIME DEFAULT NULL,
-    deleted     TINYINT  NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_role_menu (role_id, menu_id)
-) ENGINE = InnoDB COMMENT = '角色菜单关联';
+    UNIQUE KEY uk_role_menu (role_id, menu_id),
+    KEY idx_menu_id (menu_id)
+) ENGINE = InnoDB COMMENT = '角色菜单关联（纯关系表：物理删除，无逻辑删除列）';
 
 -- ---------- 初始数据 ----------
 INSERT INTO sys_role (id, name, role_key, create_time) VALUES (1, '管理员', 'admin', NOW());
@@ -948,49 +951,69 @@ public class SysMenu extends BaseEntity {
 }
 ```
 
-`SysUserRole.java`：
+`SysUserRole.java`（**纯关系表实体：不继承 BaseEntity**——无逻辑删除列避免与联合唯一键冲突，mapper.delete 为物理删除）：
 
 ```java
 package com.cloudai.system.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.cloudai.common.mybatis.domain.BaseEntity;
 import lombok.Data;
-import lombok.EqualsAndHashCode;
+
+import java.io.Serializable;
+import java.time.LocalDateTime;
 
 @Data
-@EqualsAndHashCode(callSuper = true)
 @TableName("sys_user_role")
-public class SysUserRole extends BaseEntity {
+public class SysUserRole implements Serializable {
 
     private static final long serialVersionUID = 1L;
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
 
     private Long userId;
 
     private Long roleId;
+
+    @TableField(fill = FieldFill.INSERT)
+    private LocalDateTime createTime;
 }
 ```
 
-`SysRoleMenu.java`：
+`SysRoleMenu.java`（同上，纯关系表实体）：
 
 ```java
 package com.cloudai.system.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.cloudai.common.mybatis.domain.BaseEntity;
 import lombok.Data;
-import lombok.EqualsAndHashCode;
+
+import java.io.Serializable;
+import java.time.LocalDateTime;
 
 @Data
-@EqualsAndHashCode(callSuper = true)
 @TableName("sys_role_menu")
-public class SysRoleMenu extends BaseEntity {
+public class SysRoleMenu implements Serializable {
 
     private static final long serialVersionUID = 1L;
+
+    @TableId(type = IdType.AUTO)
+    private Long id;
 
     private Long roleId;
 
     private Long menuId;
+
+    @TableField(fill = FieldFill.INSERT)
+    private LocalDateTime createTime;
 }
 ```
 
@@ -1340,7 +1363,12 @@ public class SysUserManageService {
         user.setNickname(req.getNickname() == null ? req.getAccount() : req.getNickname());
         user.setPassword(passwordEncoder.encode(req.getPassword()));
         user.setStatus(req.getStatus() == null ? 0 : req.getStatus());
-        userMapper.insert(user);
+        try {
+            userMapper.insert(user);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            // 逻辑删除行仍占用 uk_account，selectCount 查重看不到——捕获兜底转业务异常
+            throw new BusinessException(3002, "账号已存在: " + req.getAccount());
+        }
         return user.getId();
     }
 
@@ -1707,7 +1735,11 @@ public class SysRoleManageService {
         if (exists > 0) {
             throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
         }
-        roleMapper.insert(role);
+        try {
+            roleMapper.insert(role);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            throw new BusinessException(3003, "角色标识已存在: " + role.getRoleKey());
+        }
         return role.getId();
     }
 
@@ -2922,7 +2954,7 @@ Expected: create_by='admin'、create_time 非空（网关透传→HeaderAuthFilt
 - Modify: `CLAUDE.md`
 - Modify: `docs/superpowers/specs/2026-10-04-cloud-base-backend-design.md`（§9 范围精简记录）
 
-- [ ] **Step 1: README 更新**：模块表 sso/system 说明去掉"（阶段N实现）"；阶段状态勾选阶段 2/3；新增"登录与鉴权"小节（curl 登录示例 + token 用法 + 白名单清单 + /inner 屏蔽说明）。
+- [ ] **Step 1: README 更新**：模块表 sso/system 说明去掉"（阶段N实现）"；阶段状态勾选阶段 2/3；新增"登录与鉴权"小节（curl 登录示例 + token 用法 + 白名单清单 + /inner 屏蔽说明）；技术栈行更正 MySQL 为 5.7+（本机 5.7.24）。
 
 - [ ] **Step 2: CLAUDE.md 更新**：架构拓扑标注 security-starter 的资源端装配（servlet-only）、sso→system Feign 链路、Redis 键（sso:online:/sso:refresh:）；关键约定补：网关层 401 用真实 HTTP 状态、服务层 403 走 HTTP200+body、@PreAuthorize 权限标识清单来源 sys_menu.perms；环境补：MySQL root/空密码 127.0.0.1:3306、jshell 执行 SQL 方法。
 
