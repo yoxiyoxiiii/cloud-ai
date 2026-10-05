@@ -871,15 +871,6 @@ class PageQueryTest {
         PageQuery q = new PageQuery();
         assertThat(q.getPageNum()).isEqualTo(1);
         assertThat(q.getPageSize()).isEqualTo(10);
-        assertThat(q.offset()).isEqualTo(0);
-    }
-
-    @Test
-    void offset_calculatesFromPageNumAndSize() {
-        PageQuery q = new PageQuery();
-        q.setPageNum(3);
-        q.setPageSize(20);
-        assertThat(q.offset()).isEqualTo(40);
     }
 }
 ```
@@ -908,6 +899,12 @@ class PageResultTest {
     @Test
     void isEmpty_whenRowsNull() {
         PageResult<String> r = PageResult.of(0, null);
+        assertThat(r.isEmpty()).isTrue();
+    }
+
+    @Test
+    void isEmpty_whenRowsEmpty() {
+        PageResult<String> r = PageResult.of(0, List.of());
         assertThat(r.isEmpty()).isTrue();
     }
 }
@@ -940,11 +937,6 @@ public class PageQuery implements Serializable {
 
     /** 每页条数 */
     private Integer pageSize = 10;
-
-    /** MyBatis-Plus 分页偏移量 */
-    public int offset() {
-        return (pageNum - 1) * pageSize;
-    }
 }
 ```
 
@@ -956,6 +948,7 @@ package com.cloudai.common.core.domain;
 import lombok.Data;
 
 import java.io.Serializable;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -975,7 +968,7 @@ public class PageResult<T> implements Serializable {
     public static <T> PageResult<T> of(long total, List<T> rows) {
         PageResult<T> r = new PageResult<>();
         r.setTotal(total);
-        r.setRows(rows);
+        r.setRows(rows == null ? new ArrayList<>() : rows);
         return r;
     }
 
@@ -988,7 +981,7 @@ public class PageResult<T> implements Serializable {
 - [ ] **Step 6: 运行测试确认通过**
 
 Run: `mvn -f cloud-base/pom.xml test -pl cloud-common/cloud-common-core`
-Expected: `Tests run: 9`（含 Task 2 的 5 个 + 本任务 4 个），全部 PASS，BUILD SUCCESS。
+Expected: `Tests run: 9`（含 Task 2 的 5 个 + 本任务 4 个：PageQuery 1 + PageResult 3），全部 PASS，BUILD SUCCESS。
 
 - [ ] **Step 7: Commit**
 
@@ -1579,7 +1572,10 @@ public class CommonMybatisAutoConfiguration {
     @ConditionalOnMissingBean(MybatisPlusInterceptor.class)
     public MybatisPlusInterceptor mybatisPlusInterceptor() {
         MybatisPlusInterceptor interceptor = new MybatisPlusInterceptor();
-        interceptor.addInnerInterceptor(new PaginationInnerInterceptor(DbType.MYSQL));
+        PaginationInnerInterceptor pagination = new PaginationInnerInterceptor(DbType.MYSQL);
+        // 单页上限，服务端兜底防止大页拉取
+        pagination.setMaxLimit(200L);
+        interceptor.addInnerInterceptor(pagination);
         return interceptor;
     }
 
