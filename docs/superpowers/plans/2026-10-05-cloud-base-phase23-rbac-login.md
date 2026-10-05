@@ -433,7 +433,8 @@ public final class SecurityConstants {
     public static final String HEADER_USER_PERMS = "X-User-Perms";
     public static final String PERMS_SEPARATOR = ",";
 
-    /** Redis 在线会话键前缀，jti 为 JWT 的 jti 声明 */
+    /** Redis 在线会话键前缀，jti 为 JWT 的 jti 声明。
+     * 值 = OnlineSession 的纯 JSON 字符串（无 @class 类型头），网关以 OnlineSessionView 投影解析 permissions */
     public static final String ONLINE_KEY_PREFIX = "sso:online:";
 
     private SecurityConstants() {
@@ -2942,12 +2943,13 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    /** 前缀白名单：登录/刷新、demo、inner 屏蔽（SetStatus 路由接管）、文档、监控 */
+    /** 前缀白名单：登录/刷新、demo、inner 屏蔽（SetStatus 路由接管）、网关自身监控。
+     * 服务的 API 文档（/sso/v3/api-docs 等）不在白名单——经网关要求 token，开发直连服务端口查看 */
     private static final List<String> WHITELIST = List.of(
             "/sso/auth/login", "/sso/auth/refresh",
             "/sso/demo", "/system/demo", "/bpmn/demo",
             "/sso/inner", "/system/inner", "/bpmn/inner",
-            "/actuator", "/v3/api-docs", "/swagger-ui", "/webjars", "/doc");
+            "/actuator");
 
     private final StringRedisTemplate stringRedisTemplate;
 
@@ -2973,7 +2975,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         Claims claims;
         try {
             claims = JwtUtil.parseToken(secret, authorization.substring(BEARER_PREFIX.length()));
-        } catch (JwtException e) {
+        } catch (JwtException | IllegalArgumentException e) {
+            // IllegalArgumentException：空/空白 token（jjwt 抛 IAE 而非 JwtException）
             return unauthorized(exchange);
         }
         // 读在线会话原始 JSON（StringRedisTemplate 规避 @class 反序列化；null=注销/强退/过期 → 401）
@@ -2991,7 +2994,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             // 会话值损坏按无权限处理（下游 @PreAuthorize 会拒绝）
         }
         ServerWebExchange authed = withUserHeaders(safeExchange,
-                claims.getSubject(), claims.get("account", String.class), String.join(",", perms));
+                claims.getSubject(), claims.get("account", String.class),
+                String.join(SecurityConstants.PERMS_SEPARATOR, perms));
         return chain.filter(authed);
     }
 
