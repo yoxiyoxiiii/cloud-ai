@@ -443,6 +443,10 @@ logs/
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
     </dependencies>
 </project>
 ```
@@ -1720,12 +1724,13 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 ## Task 8: common-redis 配置与工具封装
 
-说明：RedisTemplate 序列化配置与 RedisUtil 为纯装配/薄封装，真实行为依赖运行中的 Redis，**本任务只做编译验证**，行为验证在阶段 3（sso 存取 token 状态）完成。
+说明：RedisTemplate 序列化配置与 RedisUtil 为纯装配/薄封装，真实读写行为依赖运行中的 Redis，**本任务验证 = 编译 + ApplicationContextRunner 装配冒烟（mock 连接工厂，无真实 Redis）**，行为验证在阶段 3（sso 存取 token 状态）完成。
 
 **Files:**
 - Create: `cloud-base/cloud-common/cloud-common-redis/src/main/java/com/cloudai/common/redis/config/CommonRedisAutoConfiguration.java`
 - Create: `cloud-base/cloud-common/cloud-common-redis/src/main/java/com/cloudai/common/redis/util/RedisUtil.java`
 - Create: `cloud-base/cloud-common/cloud-common-redis/src/main/resources/META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`
+- Test: `cloud-base/cloud-common/cloud-common-redis/src/test/java/com/cloudai/common/redis/config/CommonRedisAutoConfigurationTest.java`（装配冒烟：mock 连接工厂，能抓住依赖缺失/装配破坏）
 
 - [ ] **Step 1: 实现 `RedisUtil.java`**
 
@@ -1779,7 +1784,9 @@ package com.cloudai.common.redis.config;
 
 import com.cloudai.common.redis.util.RedisUtil;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.AutoConfigureBefore;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -1790,6 +1797,7 @@ import org.springframework.data.redis.serializer.StringRedisSerializer;
  * Redis 模板配置：key 用 String 序列化，value 用 JSON 序列化
  */
 @AutoConfiguration
+@AutoConfigureBefore(RedisAutoConfiguration.class)
 public class CommonRedisAutoConfiguration {
 
     @Bean
@@ -1803,7 +1811,6 @@ public class CommonRedisAutoConfiguration {
         template.setHashKeySerializer(keySerializer);
         template.setValueSerializer(valueSerializer);
         template.setHashValueSerializer(valueSerializer);
-        template.afterPropertiesSet();
         return template;
     }
 
@@ -1823,12 +1830,42 @@ public class CommonRedisAutoConfiguration {
 com.cloudai.common.redis.config.CommonRedisAutoConfiguration
 ```
 
-- [ ] **Step 4: 编译验证**
+- [ ] **Step 4: 装配冒烟测试 `CommonRedisAutoConfigurationTest.java`**
+
+```java
+package com.cloudai.common.redis.config;
+
+import com.cloudai.common.redis.util.RedisUtil;
+import org.junit.jupiter.api.Test;
+import org.springframework.boot.autoconfigure.AutoConfigurations;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+
+class CommonRedisAutoConfigurationTest {
+
+    private final ApplicationContextRunner runner = new ApplicationContextRunner()
+            .withBean("redisConnectionFactory", RedisConnectionFactory.class, () -> mock(RedisConnectionFactory.class))
+            .withConfiguration(AutoConfigurations.of(CommonRedisAutoConfiguration.class));
+
+    @Test
+    void registersRedisTemplateAndUtil() {
+        runner.run(ctx -> {
+            assertThat(ctx).hasSingleBean("redisTemplate");
+            assertThat(ctx).hasSingleBean(RedisUtil.class);
+        });
+    }
+}
+```
+
+- [ ] **Step 5: 编译与测试验证**
 
 Run: `mvn -f cloud-base/pom.xml clean install -pl cloud-common/cloud-common-redis`
-Expected: BUILD SUCCESS。
+Expected: BUILD SUCCESS，`Tests run: 1, Failures: 0, Errors: 0`。
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add cloud-base/cloud-common/cloud-common-redis/
@@ -2420,5 +2457,13 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 
 - **阶段 2**：真实端点上线时补 `HttpMessageNotReadableException`（脏 JSON → 1001/400）等框架协议异常 handler；明确"HTTP 状态恒 200、错误看 body.code"是否有意并写进文档（否则监控按 HTTP status 统计会失真）。**建表 DDL：`deleted TINYINT NOT NULL DEFAULT 0`**——@TableLogic 逻辑删除下，NULL 行会被 MP 的 `deleted = 0` 过滤条件隐身且 removeById 匹配不到；后续若加乐观锁/防全表攻击等 InnerInterceptor，保持 PaginationInnerInterceptor 在拦截器链最后。
 - **阶段 3**：网关统一 401/403/503 JSON 走 `ErrorWebExceptionHandler`（WebFlux），不是 GlobalExceptionHandler advice；网关引入 common-core 前先确认 WebFlux 异常类型（WebExchangeBindException 与 MethodArgumentNotValidException 继承链不相交）。JwtUtil 应包装为配置 bean：启动时校验密钥长度（>=64 字节）fail-fast 并持有 Nacos 属性；若升级 RS256，先约定"字符串编码密钥材料（PEM）"——sso 持私钥、网关持公钥时同一参数语义不同。createBy/updateBy 审计填充：扩展 AuditMetaObjectHandler（或子类替换），不要并行注册第二个 MetaObjectHandler bean——@ConditionalOnMissingBean 会让时间填充被静默禁用。
+
+### 阶段 3 Redis 序列化备忘（来自 Task 8 质量审查，均有实证）
+
+- **LocalDateTime 不可直接序列化**：GenericJackson2JsonRedisSerializer 默认构造不注册 jsr310 模块，会话对象含 LocalDateTime 首次写入即抛异常。会话 DTO 时间字段用 `long epochMillis`（最简）或自定义 ObjectMapper 注册 JavaTimeModule（jsr310 也是 optional 依赖需显式声明）。
+- **@class 类型头跨服务契约**：JSON 带 `{"@class":"x.y.Session"}` 头，`sso:online` 的会话 DTO 必须放在 sso 与 gateway 共同依赖的模块且 FQN 两端一致；类改名/移动会使旧条目在 TTL 内不可读。
+- **DTO 演进坑**：默认 ObjectMapper `FAIL_ON_UNKNOWN_PROPERTIES=true`，删/改字段后旧缓存条目读取抛异常直到 TTL 过期（online 2h 可忍，refresh 是纯 String 无此问题）。
+- **反序列化信任边界**：default typing 仅靠 Jackson 黑名单防护（非白名单）。Redis 不得公网可达、必须 AUTH（凭据走 Nacos）；不要往 Redis 塞 GrantedAuthority/UserDetails 等安全类型，会话 DTO 保持纯 POJO。
+- **计划自检补充维度**：装配类模块保留最小 ApplicationContextRunner 冒烟测试（能抓住 optional 依赖缺失与装配破坏）。
 - **计划自检补充维度**：涉及 WebFlux 的断言需核对 WebFlux 实际异常类型。
 
