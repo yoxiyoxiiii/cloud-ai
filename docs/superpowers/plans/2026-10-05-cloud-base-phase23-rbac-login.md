@@ -2441,7 +2441,8 @@ class TokenServiceTest {
     @Mock
     private SystemUserClient userClient;
     @Mock
-    private RedisUtil redisUtil;
+    private org.springframework.data.redis.core.StringRedisTemplate stringRedisTemplate;
+    private org.springframework.data.redis.core.ValueOperations<String, String> valueOps;  // @BeforeEach stub opsForValue
     @Spy
     private PasswordEncoder passwordEncoder = new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder();
     @InjectMocks
@@ -2464,8 +2465,8 @@ class TokenServiceTest {
         assertThat(result.getAccessToken()).isNotBlank();
         assertThat(result.getRefreshToken()).isNotBlank();
         assertThat(result.getExpiresIn()).isEqualTo(7200L);
-        verify(redisUtil).set(startsWith(SecurityConstants.ONLINE_KEY_PREFIX), any(OnlineSession.class), anyLong(), any());
-        verify(redisUtil).set(startsWith("sso:refresh:"), anyString(), anyLong(), any());
+        verify(valueOps).set(startsWith(SecurityConstants.ONLINE_KEY_PREFIX), anyString(), anyLong(), any(TimeUnit.class));
+        verify(valueOps).set(startsWith("sso:refresh:"), anyString(), anyLong(), any(TimeUnit.class));
     }
 
     @Test
@@ -2501,8 +2502,8 @@ class TokenServiceTest {
         secretField.set(tokenService, TEST_SECRET);
         String token = com.cloudai.common.security.util.JwtUtil.createToken(TEST_SECRET, 1L, "admin", "jti-1", 7200);
         tokenService.logout(token);
-        verify(redisUtil).delete("sso:online:jti-1");
-        verify(redisUtil).delete("sso:refresh:1");
+        verify(stringRedisTemplate).delete("sso:online:jti-1");
+        verify(stringRedisTemplate).delete("sso:refresh:1");
     }
 
     private static final String TEST_SECRET =
@@ -2549,7 +2550,8 @@ public class TokenService {
     private static final String DUMMY_HASH = "<BCrypt(\"dummy-not-a-real-password\")>";
 
     private final SystemUserClient userClient;
-    private final RedisUtil redisUtil;
+    /** 在线会话/refresh 用 StringRedisTemplate 存纯字符串（会话为纯 JSON——网关按字符串读，规避序列化器 default typing 的集合包裹） */
+    private final org.springframework.data.redis.core.StringRedisTemplate stringRedisTemplate;
     private final PasswordEncoder passwordEncoder;
 
     @Value("${cloud.jwt.secret}")
@@ -2594,8 +2596,8 @@ public class TokenService {
         }
         Long userId = null;
         String stored = null;
-        for (String key : redisUtil.keys(REFRESH_KEY_PREFIX + "*")) {
-            String value = redisUtil.get(key);
+        for (String key : stringRedisTemplate.keys(REFRESH_KEY_PREFIX + "*")) {
+            String value = stringRedisTemplate.opsForValue().get(key);
             if (refreshToken.equals(value)) {
                 userId = Long.valueOf(key.substring(REFRESH_KEY_PREFIX.length()));
                 stored = value;
@@ -2610,7 +2612,7 @@ public class TokenService {
         if (session == null) {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }
-        redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + session.getTokenId());
+        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + session.getTokenId());
         // 回查 system：校验账号未停用并取最新权限快照（防停用/降权用户经 refresh 保活旧权限）
         LoginUserDTO latest;
         try {
@@ -2636,16 +2638,16 @@ public class TokenService {
         }
         String tokenId = claims.getId();
         Long userId = Long.valueOf(claims.getSubject());
-        redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
-        redisUtil.delete(REFRESH_KEY_PREFIX + userId);
+        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
+        stringRedisTemplate.delete(REFRESH_KEY_PREFIX + userId);
     }
 
     public List<OnlineSession> onlineList() {
         List<OnlineSession> list = new ArrayList<>();
-        Set<String> keys = redisUtil.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
+        Set<String> keys = stringRedisTemplate.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
         if (keys != null) {
             keys.forEach(key -> {
-                OnlineSession session = redisUtil.get(key);
+                OnlineSession session = stringRedisTemplate.opsForValue().get(key);
                 if (session != null) {
                     list.add(session);
                 }
@@ -2655,7 +2657,7 @@ public class TokenService {
     }
 
     public void kick(String tokenId) {
-        redisUtil.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
+        stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
     }
 
     private LoginResult issueTokens(LoginUserDTO dto, String ip) {
@@ -2670,8 +2672,16 @@ public class TokenService {
         session.setPermissions(dto.getPermissions());
         session.setLoginTime(System.currentTimeMillis());
         session.setIp(ip);
-        redisUtil.set(SecurityConstants.ONLINE_KEY_PREFIX + tokenId, session, accessTtlSeconds, TimeUnit.SECONDS);
-        redisUtil.set(REFRESH_KEY_PREFIX + dto.getUserId(), refreshToken, refreshTtlSeconds, TimeUnit.SECONDS);
+        String sessionJson;
+        try {
+            sessionJson = JSON.writeValueAsString(session);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("在线会话序列化失败", e);
+        }
+        stringRedisTemplate.opsForValue().set(SecurityConstants.ONLINE_KEY_PREFIX + tokenId,
+                sessionJson, accessTtlSeconds, TimeUnit.SECONDS);
+        stringRedisTemplate.opsForValue().set(REFRESH_KEY_PREFIX + dto.getUserId(),
+                refreshToken, refreshTtlSeconds, TimeUnit.SECONDS);
 
         LoginResult result = new LoginResult();
         result.setAccessToken(accessToken);
@@ -2681,12 +2691,12 @@ public class TokenService {
     }
 
     private OnlineSession findOnlineSessionByUserId(Long userId) {
-        Set<String> keys = redisUtil.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
+        Set<String> keys = stringRedisTemplate.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
         if (keys == null) {
             return null;
         }
         for (String key : keys) {
-            OnlineSession session = redisUtil.get(key);
+            OnlineSession session = stringRedisTemplate.opsForValue().get(key);
             if (session != null && userId.equals(session.getUserId())) {
                 return session;
             }
@@ -2932,10 +2942,11 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    /** 前缀白名单：登录/刷新、demo、文档、监控 */
+    /** 前缀白名单：登录/刷新、demo、inner 屏蔽（SetStatus 路由接管）、文档、监控 */
     private static final List<String> WHITELIST = List.of(
             "/sso/auth/login", "/sso/auth/refresh",
             "/sso/demo", "/system/demo", "/bpmn/demo",
+            "/sso/inner", "/system/inner", "/bpmn/inner",
             "/actuator", "/v3/api-docs", "/swagger-ui", "/webjars", "/doc");
 
     private final StringRedisTemplate stringRedisTemplate;
