@@ -12,6 +12,7 @@ import java.time.LocalDateTime;
 /**
  * 实体基类：审计时间字段自动填充 + 逻辑删除。
  * createBy/updateBy 由登录上下文（LoginUser.account）自动填充，匿名场景留空。
+ * 适用范围：仅对 MP BaseMapper CRUD 自动生效；system 模块手写 SQL（mapper XML）显式维护 deleted 与审计字段，约定见 SysUserMapper.xml 头注。
  */
 @Getter
 @Setter

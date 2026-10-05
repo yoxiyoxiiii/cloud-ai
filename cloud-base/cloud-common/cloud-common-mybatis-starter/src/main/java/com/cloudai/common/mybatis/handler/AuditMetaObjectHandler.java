@@ -13,6 +13,7 @@ import java.time.LocalDateTime;
  * 审计字段自动填充：无对应属性的实体自动跳过；时间语义为服务器时间总是生效（覆盖调用方已设值）；
  * 操作人取登录上下文（LoginUser.account），匿名场景留空。
  * 匿名/异步上下文的 UPDATE 保留原 updateBy（不清空、不归因错误的人）；update(null, wrapper) 纯条件更新无实体可填充，不维护审计字段。
+ * 仅对 MP BaseMapper CRUD 生效；手写 SQL 的 Service 用 SecurityUtils 显式传参。
  */
 public class AuditMetaObjectHandler implements MetaObjectHandler {
 

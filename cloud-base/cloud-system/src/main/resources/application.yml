@@ -20,3 +20,8 @@ management:
     web:
       exposure:
         include: health,info
+
+mybatis-plus:
+  configuration:
+    # XML resultType 实体映射依赖驼峰映射；MP 默认开启，此处显式声明防将来配置漂移静默断列
+    map-underscore-to-camel-case: true
