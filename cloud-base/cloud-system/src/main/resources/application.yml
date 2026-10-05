@@ -1,0 +1,17 @@
+server:
+  port: 9202
+
+spring:
+  application:
+    name: cloud-system
+  config:
+    import: optional:nacos:${spring.application.name}.yaml
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
