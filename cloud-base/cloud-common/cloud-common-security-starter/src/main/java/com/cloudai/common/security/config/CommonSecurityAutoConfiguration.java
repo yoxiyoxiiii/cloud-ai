@@ -7,6 +7,8 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.core.Ordered;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -55,15 +57,18 @@ public class CommonSecurityAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(name = "securityExceptionAdvice")
-    public Object securityExceptionAdvice() {
+    public SecurityExceptionAdvice securityExceptionAdvice() {
         return new SecurityExceptionAdvice();
     }
 
     /**
-     * 方法级权限拒绝 → 统一 R 格式（HTTP 200 + code 403）
+     * 方法级权限拒绝 → 统一 R 格式（HTTP 200 + code 403）。
+     * 必须最高优先级：core-starter 的 GlobalExceptionHandler 有 Exception.class 兜底，
+     * 无序时按 advice 字母序抢先，会把 AccessDeniedException 吞成 500。
      */
+    @Order(Ordered.HIGHEST_PRECEDENCE)
     @RestControllerAdvice
-    static class SecurityExceptionAdvice {
+    public static class SecurityExceptionAdvice {
 
         @ExceptionHandler(AccessDeniedException.class)
         public R<Void> handleAccessDenied(AccessDeniedException e) {

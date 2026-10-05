@@ -2,6 +2,7 @@ package com.cloudai.common.security.constant;
 
 /**
  * 网关与资源端共享的内部透传 header 常量（网关剥离外部同名 header 后注入）
+ * 信任前提：仅限网关下游信任链使用——直连服务端口可伪造任意 X-User-* 身份（服务端口不对公网暴露是部署约束）。
  */
 public final class SecurityConstants {
 
