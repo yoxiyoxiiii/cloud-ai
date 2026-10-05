@@ -1,5 +1,7 @@
 -- cloud-system 库初始化（最小闭环：RBAC 5 表 + 初始数据）
+-- ⚠️ 开发环境初始化脚本：DROP 并重建 cloud_system 全部表，生产环境禁止执行
 CREATE DATABASE IF NOT EXISTS cloud_system DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
+-- 引用完整性由服务层维护（微服务惯例，不建外键）；实测 MySQL 5.7.24+
 USE cloud_system;
 
 DROP TABLE IF EXISTS sys_user_role;
@@ -53,7 +55,8 @@ CREATE TABLE sys_menu (
     update_by   VARCHAR(30)  DEFAULT NULL,
     update_time DATETIME    DEFAULT NULL,
     deleted     TINYINT     NOT NULL DEFAULT 0,
-    PRIMARY KEY (id)
+    PRIMARY KEY (id),
+    KEY idx_parent_id (parent_id)
 ) ENGINE = InnoDB COMMENT = '菜单权限表';
 
 CREATE TABLE sys_user_role (
@@ -61,20 +64,20 @@ CREATE TABLE sys_user_role (
     user_id     BIGINT   NOT NULL,
     role_id     BIGINT   NOT NULL,
     create_time DATETIME DEFAULT NULL,
-    deleted     TINYINT  NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_user_role (user_id, role_id)
-) ENGINE = InnoDB COMMENT = '用户角色关联';
+    UNIQUE KEY uk_user_role (user_id, role_id),
+    KEY idx_role_id (role_id)
+) ENGINE = InnoDB COMMENT = '用户角色关联（纯关系表：物理删除，无逻辑删除列）';
 
 CREATE TABLE sys_role_menu (
     id          BIGINT   NOT NULL AUTO_INCREMENT,
     role_id     BIGINT   NOT NULL,
     menu_id     BIGINT   NOT NULL,
     create_time DATETIME DEFAULT NULL,
-    deleted     TINYINT  NOT NULL DEFAULT 0,
     PRIMARY KEY (id),
-    UNIQUE KEY uk_role_menu (role_id, menu_id)
-) ENGINE = InnoDB COMMENT = '角色菜单关联';
+    UNIQUE KEY uk_role_menu (role_id, menu_id),
+    KEY idx_menu_id (menu_id)
+) ENGINE = InnoDB COMMENT = '角色菜单关联（纯关系表：物理删除，无逻辑删除列）';
 
 -- ---------- 初始数据 ----------
 INSERT INTO sys_role (id, name, role_key, create_time) VALUES (1, '管理员', 'admin', NOW());
