@@ -2,6 +2,8 @@
 
 三角色协作：**架构-agent →（后端-agent ∥ 前端-agent）→ 集成与浏览器自动化测试**。角色定义见 `.claude/agents/`（主控在任何会话中用 Agent 工具按名调用）。
 
+**日常开发入口（自定义命令，`.claude/commands/`）**：`/dev-backend <需求>` 纯后端轨道 · `/dev-frontend <需求>` 纯前端轨道 · `/dev-fullstack <需求>` 全栈轨道 · `/dev-regression` 起全栈跑 e2e 回归。命令是薄编排层（本 SOP 的阶段清单化），流程细节仍以本文档为唯一来源。
+
 ## 需求轨道（按改动面组装；superpowers 全轨道强制——任何轨道 spec/plan 先行，不得因单端需求跳过）
 
 | 轨道 | 判定 | 阶段组装 | 验收终点 |
