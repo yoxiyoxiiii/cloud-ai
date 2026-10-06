@@ -11,7 +11,9 @@ import DashboardView from '../views/dashboard/index.vue'
 import UserManageView from '../views/system/user/index.vue'
 import RoleManageView from '../views/system/role/index.vue'
 import MenuManageView from '../views/system/menu/index.vue'
+import RedirectView from '../views/redirect/index.vue'
 import { getAuth } from '../utils/storage'
+import { APP_TITLE } from '../constants/app'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -61,6 +63,13 @@ const routes: RouteRecordRaw[] = [
         component: DashboardView,
         meta: { title: '工作台', icon: 'Monitor' },
       },
+      {
+        // 刷新中转路由（升级设计 D6）：挂在 Layout children 下不闪布局骨架；
+        // Layout 的 tag watcher 按 name === 'Redirect' 跳过不建签
+        path: 'redirect/:path(.*)',
+        name: 'Redirect',
+        component: RedirectView,
+      },
     ],
   },
   { path: '/:pathMatch(.*)*', redirect: '/' },
@@ -80,6 +89,11 @@ router.beforeEach((to) => {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
   return true
+})
+
+/** 文档标题随路由联动（升级设计 D1）：有 meta.title 拼 "标题 - 系统名"，否则系统名全称 */
+router.afterEach((to) => {
+  document.title = to.meta.title ? `${to.meta.title} - ${APP_TITLE}` : APP_TITLE
 })
 
 export default router

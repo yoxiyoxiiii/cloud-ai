@@ -11,6 +11,10 @@ import type { MenuTreeNode } from '../../../types/api'
 import MenuFormDialog from './components/MenuFormDialog.vue'
 import type { MenuFormMode } from './components/MenuFormDialog.vue'
 
+/** 组件名必须显式固定 = route.name：script setup 推断名取文件名（全为 index），
+ * keep-alive include 按组件名匹配会失效（升级设计 D5 红字坑） */
+defineOptions({ name: 'SystemMenu' })
+
 /** 类型展示映射（契约 §1：M 目录 / C 菜单 / F 按钮；未知值 fallback info + 原值） */
 const TYPE_MAP: Record<string, { label: string; tagType: 'primary' | 'success' | 'warning' }> = {
   M: { label: '目录', tagType: 'primary' },

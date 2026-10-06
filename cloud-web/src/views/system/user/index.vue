@@ -8,6 +8,10 @@ import type { UserFormMode } from './components/UserFormDialog.vue'
 import ResetPwdDialog from './components/ResetPwdDialog.vue'
 import AssignRoleDialog from './components/AssignRoleDialog.vue'
 
+/** 组件名必须显式固定 = route.name：script setup 推断名取文件名（全为 index），
+ * keep-alive include 按组件名匹配会失效（升级设计 D5 红字坑） */
+defineOptions({ name: 'SystemUser' })
+
 /** 用户状态展示映射（契约 §3：0=正常 1=停用） */
 const STATUS_MAP: Record<number, { label: string; tagType: 'success' | 'danger' }> = {
   0: { label: '正常', tagType: 'success' },

@@ -11,6 +11,10 @@ import RoleFormDialog from './components/RoleFormDialog.vue'
 import type { RoleFormMode } from './components/RoleFormDialog.vue'
 import AssignMenuDialog from './components/AssignMenuDialog.vue'
 
+/** 组件名必须显式固定 = route.name：script setup 推断名取文件名（全为 index），
+ * keep-alive include 按组件名匹配会失效（升级设计 D5 红字坑） */
+defineOptions({ name: 'SystemRole' })
+
 /** 角色状态展示映射（契约 §4：0=正常 1=停用；未知值 fallback info + 原值） */
 const STATUS_MAP: Record<number, { label: string; tagType: 'success' | 'danger' }> = {
   0: { label: '正常', tagType: 'success' },

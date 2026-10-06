@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
+import { useTagsStore } from '../../stores/tags'
+import { APP_TITLE } from '../../constants/app'
+// 登录背景图（升级设计 D11）：Pexels photo 2341830，来源页
+// https://www.pexels.com/photo/2341830/ ，Pexels License（免商用、免署名、可修改）；
+// 171,962 字节 ≤300KB 入库红线
+import loginBg from '../../assets/login-bg.jpg'
 import type { R } from '../../types/api'
 
 interface LoginForm {
@@ -13,6 +19,13 @@ interface LoginForm {
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const tagsStore = useTagsStore()
+
+onMounted(() => {
+  // 会话清理（升级设计 D4）：登录页是"进入新会话"的必经点（手动退出/401 清态跳转/直接访问），
+  // 在此重置页签可统一覆盖三条路径；缓存的列表页组件随 cachedNames 清空被 keep-alive 自动剪枝
+  tagsStore.closeAll()
+})
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
@@ -63,10 +76,10 @@ async function handleSubmit(): Promise<void> {
 </script>
 
 <template>
-  <div class="login-page">
+  <div class="login-page" :style="{ backgroundImage: `url(${loginBg})` }">
     <el-card class="login-card" shadow="always">
       <template #header>
-        <div class="login-title">cloud-web 登录</div>
+        <div class="login-title">{{ APP_TITLE }}</div>
       </template>
       <el-alert
         v-if="errorMsg"
@@ -122,7 +135,11 @@ async function handleSubmit(): Promise<void> {
   align-items: center;
   justify-content: center;
   height: 100vh;
-  background-color: var(--el-fill-color-lighter);
+  /* 底色取背景图主色：图未加载/加载失败时兜底，不至于刺眼白屏（升级设计 D11）。
+     登录页深色底不走 EP 变量：登录页无主题切换入口，卡片内部仍全走 EP 变量 */
+  background-color: #0b1e3f;
+  background-size: cover;
+  background-position: center;
 }
 
 .login-card {
@@ -130,8 +147,8 @@ async function handleSubmit(): Promise<void> {
 }
 
 .login-title {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
   text-align: center;
 }
 

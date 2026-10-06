@@ -6,3 +6,23 @@ body,
   margin: 0;
   padding: 0;
 }
+
+/* 顶栏图标按钮（主题/全屏/搜索等共用，跨 Navbar/MenuSearch 组件故放全局）：
+   样式全部走 EP 变量，深浅主题自动适配（升级设计 D2） */
+.navbar-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background-color: transparent;
+  color: var(--el-text-color-primary);
+  cursor: pointer;
+}
+
+.navbar-icon-btn:hover {
+  background-color: var(--el-fill-color);
+}
