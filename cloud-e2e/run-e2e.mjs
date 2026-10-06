@@ -2,8 +2,9 @@
  * cloud-web 试点 T3/T4/T5 浏览器自动化补测（脚本路径，playwright + 本机 Chrome channel）
  *
  * 运行前提：后端 gateway 18080 / sso 9201 / system 9202 已启动；前端 dev 5173 已启动（/api 代理 18080）
- * 运行：cd cloud-web && node e2e/run-e2e.mjs
- * 截图输出：cloud-web/e2e/artifacts/*.png
+ * 运行：cd cloud-e2e && npm run e2e（默认有头；无头 npm run e2e:headless）
+ * 目标入口：E2E_BASE_URL 环境变量覆盖（默认 http://localhost:5173）
+ * 截图输出：cloud-e2e/artifacts/*.png
  * 测试数据：账号 e2e+时间戳（仅作用于该测试账号，不改 admin；结束时删除该账号）
  */
 import { chromium } from 'playwright'
@@ -11,7 +12,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const BASE = 'http://localhost:5173'
+const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173'
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), 'artifacts')
 fs.mkdirSync(ART, { recursive: true })
 
@@ -176,8 +177,8 @@ async function rowCells(row) {
 }
 
 // ---------- 主流程 ----------
-// 主控要求：默认有头模式（用户可在本机看到 UI 效果）+ slowMo 300；E2E_HEADLESS=1 可切回无头
-const HEADLESS = process.env.E2E_HEADLESS === '1'
+// 主控要求：默认有头模式（用户可在本机看到 UI 效果）+ slowMo 300；--headless 或 E2E_HEADLESS=1 可切回无头
+const HEADLESS = process.env.E2E_HEADLESS === '1' || process.argv.includes('--headless')
 log(`浏览器模式: ${HEADLESS ? 'headless' : 'headed + slowMo(300ms)'}`)
 const browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 300 })
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })

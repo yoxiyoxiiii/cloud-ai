@@ -126,7 +126,7 @@ props：`modelValue: boolean` + `mode: 'add' | 'edit'` + 行数据（编辑回�
 
 工具路径二选一：
 - Playwright MCP（`mcp__playwright__*`）→ browser_navigate / browser_type / browser_click / browser_snapshot / browser_take_screenshot
-- MCP 不可用 → 脚本路径：`npm i --no-save playwright`（不写 package.json）；本机有 Chrome 时 `chromium.launch({ channel: 'chrome', headless: false, slowMo: 300 })` 免下载浏览器；脚本放 `cloud-web/e2e/`，截图 `e2e/artifacts/`
+- MCP 不可用 → 脚本路径：**仓库根级独立包 `cloud-e2e/`**（与前端工程解耦——playwright 是它的声明依赖，`cd cloud-e2e && npm install` 一次即可，cloud-web 依赖变动不再剪掉它）；`npm run e2e` 默认有头 + slowMo 300（本机 Chrome channel 免下载浏览器），无头 `npm run e2e:headless`；目标入口可 `E2E_BASE_URL` 覆盖（默认 5173）；截图 `cloud-e2e/artifacts/`
 
 已知坑：
 - Element Plus 弹窗关闭是 `display:none` 而非移除 DOM——等待弹窗消失用 `waitFor({ state: 'hidden' })`
@@ -144,9 +144,10 @@ props：`modelValue: boolean` + `mode: 'add' | 'edit'` + 行数据（编辑回�
 **测试数据纪律**：测试账号 `e2e` 前缀+时间戳；**绝不改种子账号（admin）的密码/角色，绝不删 admin**；结束清理测试数据（UI 删除或 API 删），报告残留。
 
 **e2e 产物处置**（脚本与截图性质不同，区别对待）：
-- **场景脚本（e2e/*.mjs）保留并进 git**——它是前端目前唯一的自动化回归手段（选择器、EP 弹窗等待、翻页断言等坑都已调通），下次功能改动可整段重跑回归；页面改版时同步维护选择器，随功能演进。MCP 路径跑通的场景也回写为脚本沉淀。
+- **独立包定位**：`cloud-e2e/` 是全栈黑盒验收（SOP 第三阶段的交接物），与 cloud-web 物理隔离以锁死黑盒纪律——**禁止 import 前端内部代码**（类型/组件），只经 URL 与选择器交互；将来前端白盒测试（组件测试等）留在 cloud-web 内，不进此包。
+- **场景脚本（cloud-e2e/*.mjs）保留并进 git**——它是目前唯一的自动化回归手段（选择器、EP 弹窗等待、翻页断言等坑都已调通），每个功能验收后整段重跑回归；**页面改版时同任务维护选择器，场景脚本与功能代码同一 commit**（原子性靠流程保证，不靠目录位置）。MCP 路径跑通的场景也回写为脚本沉淀；共用 harness（login/findRow/waitToast 等）在第二个功能接入时抽 `lib/`。
 - **专项 verify-* 修复验证脚本**：验证通过、缺陷关闭后即删（一次性使命）；其中值得长期保留的断言并入场景脚本。
-- **截图与日志（e2e/artifacts/）不进 git**（.gitignore 已配），**验收报告交付后即可删除**——视觉核对结论以文字记录在报告里，二进制证据不入库。
+- **截图与日志（cloud-e2e/artifacts/）不进 git**（.gitignore 已配），**验收报告交付后即可删除**——视觉核对结论以文字记录在报告里，二进制证据不入库。
 - 测试账号用契约默认种子账号（admin），脚本中不得写入其他真实账号/密码。
 
 ## 已知取舍（沿用，勿擅自"修复"）
