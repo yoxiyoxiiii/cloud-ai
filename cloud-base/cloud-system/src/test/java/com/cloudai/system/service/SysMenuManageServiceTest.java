@@ -60,4 +60,24 @@ class SysMenuManageServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("父菜单不存在");
     }
+
+    @Test
+    void edit_blankNameRejected() {
+        when(menuMapper.findById(10L)).thenReturn(menu(10L, 0L));
+        SysMenu req = menu(10L, 0L);
+        req.setName("");
+        assertThatThrownBy(() -> service.update(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("菜单名称不能为空");
+        verify(menuMapper, never()).update(any(SysMenu.class));
+    }
+
+    @Test
+    void edit_nullNameAllowed() {
+        when(menuMapper.findById(10L)).thenReturn(menu(10L, 0L));
+        SysMenu req = menu(10L, 0L);
+        req.setName(null);
+        service.update(req);
+        verify(menuMapper).update(any(SysMenu.class));
+    }
 }

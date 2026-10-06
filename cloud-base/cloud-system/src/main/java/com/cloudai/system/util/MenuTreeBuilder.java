@@ -50,6 +50,11 @@ public final class MenuTreeBuilder {
         node.setPerms(m.getPerms());
         node.setType(m.getType());
         node.setSort(m.getSort());
+        node.setStatus(m.getStatus());
+        node.setCreateBy(m.getCreateBy());
+        node.setCreateTime(m.getCreateTime());
+        node.setUpdateBy(m.getUpdateBy());
+        node.setUpdateTime(m.getUpdateTime());
         return node;
     }
 }

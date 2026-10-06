@@ -41,6 +41,10 @@ public class SysMenuManageService {
 
     public void update(SysMenu menu) {
         requireMenu(menu.getId());
+        // name 非空但空白 → 拦截（默认码 1002）；null 不拦——部分更新语义，与 role 的 roleKey 口径一致
+        if (menu.getName() != null && menu.getName().isBlank()) {
+            throw new BusinessException("菜单名称不能为空");
+        }
         validateParent(menu.getParentId(), menu.getId());
         menu.setUpdateBy(SecurityUtils.currentAccount());
         menu.setUpdateTime(LocalDateTime.now());

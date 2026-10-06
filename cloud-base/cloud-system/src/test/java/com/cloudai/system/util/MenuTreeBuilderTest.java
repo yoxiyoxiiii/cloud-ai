@@ -4,6 +4,7 @@ import com.cloudai.system.dto.MenuTreeNode;
 import com.cloudai.system.entity.SysMenu;
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -42,5 +43,36 @@ class MenuTreeBuilderTest {
         List<MenuTreeNode> tree = MenuTreeBuilder.build(menus);
         assertThat(tree).hasSize(1);
         assertThat(tree.get(0).getName()).isEqualTo("孤儿");
+    }
+
+    @Test
+    void statusAndAuditFieldsPassedThrough() {
+        SysMenu root = menu(10L, 0L, "系统管理", 1);
+        root.setStatus(SysMenu.StatusEnum.NORMAL.getCode());
+        root.setCreateBy("admin");
+        root.setCreateTime(LocalDateTime.of(2026, 10, 5, 20, 0, 0));
+        SysMenu disabled = menu(101L, 10L, "停用菜单", 2);
+        disabled.setStatus(SysMenu.StatusEnum.DISABLED.getCode());
+        disabled.setCreateBy("admin");
+        disabled.setCreateTime(LocalDateTime.of(2026, 10, 6, 9, 30, 0));
+        disabled.setUpdateBy("admin");
+        disabled.setUpdateTime(LocalDateTime.of(2026, 10, 6, 10, 0, 0));
+
+        List<MenuTreeNode> tree = MenuTreeBuilder.build(List.of(root, disabled));
+
+        assertThat(tree).hasSize(1);
+        MenuTreeNode rootNode = tree.get(0);
+        assertThat(rootNode.getStatus()).isEqualTo(SysMenu.StatusEnum.NORMAL.getCode());
+        assertThat(rootNode.getCreateBy()).isEqualTo("admin");
+        assertThat(rootNode.getCreateTime()).isEqualTo(LocalDateTime.of(2026, 10, 5, 20, 0, 0));
+        assertThat(rootNode.getUpdateBy()).isNull();
+        assertThat(rootNode.getUpdateTime()).isNull();
+        MenuTreeNode disabledNode = rootNode.getChildren().get(0);
+        assertThat(disabledNode.getName()).isEqualTo("停用菜单");
+        assertThat(disabledNode.getStatus()).isEqualTo(SysMenu.StatusEnum.DISABLED.getCode());
+        assertThat(disabledNode.getCreateBy()).isEqualTo("admin");
+        assertThat(disabledNode.getCreateTime()).isEqualTo(LocalDateTime.of(2026, 10, 6, 9, 30, 0));
+        assertThat(disabledNode.getUpdateBy()).isEqualTo("admin");
+        assertThat(disabledNode.getUpdateTime()).isEqualTo(LocalDateTime.of(2026, 10, 6, 10, 0, 0));
     }
 }

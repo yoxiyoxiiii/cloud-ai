@@ -61,8 +61,9 @@ export interface OnlineSessionVo {
 }
 
 /**
- * 菜单树节点（契约 §5.1）：type 枚举 'M' 目录 / 'C' 菜单 / 'F' 按钮；
- * 叶子 children 恒为空数组 []（非 null，契约已核实）；目录节点 perms 为空串
+ * 菜单树节点（契约 v2：2026-10-06-menu-management-api §3，取代 pilot §5.1，additive 扩展）：
+ * type 枚举 'M' 目录 / 'C' 菜单 / 'F' 按钮；叶子 children 恒为空数组 []（非 null，契约已核实）；
+ * 目录节点 perms 为空串；tree 不过滤停用菜单（管理页靠 status 区分，契约 §1）
  */
 export interface MenuTreeNode {
   id: string
@@ -71,5 +72,15 @@ export interface MenuTreeNode {
   perms: string
   type: 'M' | 'C' | 'F'
   sort: number
+  /** 状态（契约 v2 §3 新增）：0=正常 1=停用 */
+  status: number
+  /** 创建人（契约 v2 §3 新增）：种子数据可能为 null */
+  createBy: string | null
+  /** 创建时间（契约 v2 §3 新增）：yyyy-MM-dd HH:mm:ss 或 null */
+  createTime: string | null
+  /** 更新人（契约 v2 §3 新增）：未更新过为 null */
+  updateBy: string | null
+  /** 更新时间（契约 v2 §3 新增）：未更新过为 null */
+  updateTime: string | null
   children: MenuTreeNode[]
 }

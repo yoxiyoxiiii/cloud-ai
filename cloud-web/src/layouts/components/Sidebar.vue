@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import { useRoute } from 'vue-router'
-import { Monitor, User, UserFilled } from '@element-plus/icons-vue'
+import { Menu, Monitor, User, UserFilled } from '@element-plus/icons-vue'
 
 interface MenuItem {
   path: string
@@ -13,6 +13,7 @@ interface MenuItem {
 const menus: MenuItem[] = [
   { path: '/system/user', title: '用户管理', icon: User },
   { path: '/system/role', title: '角色管理', icon: UserFilled },
+  { path: '/system/menu', title: '菜单管理', icon: Menu },
   { path: '/dashboard', title: '工作台', icon: Monitor },
 ]
 
