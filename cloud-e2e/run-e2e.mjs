@@ -6,15 +6,18 @@
  * 目标入口：E2E_BASE_URL 环境变量覆盖（默认 http://localhost:5173）
  * 截图输出：cloud-e2e/artifacts/*.png
  * 测试数据：账号 e2e+时间戳（仅作用于该测试账号，不改 admin；结束时删除该账号）
+ * 公共工具已抽 lib/harness.mjs（设计 D5）——本脚本只保留用户管理场景本体
  */
 import { chromium } from 'playwright'
-import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createHarness } from './lib/harness.mjs'
 
 const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173'
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), 'artifacts')
-fs.mkdirSync(ART, { recursive: true })
+
+const h = createHarness({ base: BASE, artDir: ART })
+const { log, sleep, step, assert, assertEq, shot, waitToast, waitDialogGone, waitTableIdle, breadcrumbTexts, login, logoutViaUi, findRow, rowCells } = h
 
 // ---------- 测试数据（只作用于测试账号） ----------
 const ts = new Date()
@@ -26,156 +29,6 @@ const TEST_NICKNAME_V2 = 'E2E测试用户v2'
 const TEST_PWD = 'e2ePass123'
 const TEST_PWD_NEW = 'e2eNew456'
 
-// ---------- 结果收集 ----------
-const results = []
-const consoleErrors = [] // { scenario, text }
-const pageErrors = [] // 未捕获异常
-const apiCalls = [] // { method, url, status }
-const badResponses = [] // status >= 400
-const requestFailures = [] // 网络层失败
-let currentScenario = 'init'
-
-const log = (...a) => console.log(...a)
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-
-async function step(id, name, fn) {
-  currentScenario = id
-  log(`\n===== [${id}] ${name} =====`)
-  const t0 = Date.now()
-  try {
-    await fn()
-    results.push({ id, name, status: 'PASS', ms: Date.now() - t0 })
-    log(`[${id}] PASS (${Date.now() - t0}ms)`)
-  } catch (e) {
-    results.push({ id, name, status: 'FAIL', detail: e.message, ms: Date.now() - t0 })
-    log(`[${id}] FAIL: ${e.message}`)
-    try {
-      const page = ctx.pages()[0]
-      if (page) await page.screenshot({ path: path.join(ART, `${id}-fail.png`) })
-      log(`[${id}] 失败截图: ${id}-fail.png`)
-    } catch { /* 忽略截图失败 */ }
-  }
-}
-
-function assert(cond, msg) {
-  if (!cond) throw new Error(`断言失败: ${msg}`)
-}
-
-function assertEq(actual, expected, msg) {
-  if (actual !== expected) throw new Error(`断言失败: ${msg}，期望 "${expected}"，实际 "${actual}"`)
-}
-
-async function shot(page, name) {
-  await page.screenshot({ path: path.join(ART, name) })
-  log(`  [shot] ${name}`)
-}
-
-async function waitToast(page, text, type = 'success', timeout = 8000) {
-  const t0 = Date.now()
-  while (Date.now() - t0 < timeout) {
-    const msgs = page.locator('.el-message')
-    const n = await msgs.count()
-    for (let i = 0; i < n; i++) {
-      const t = (await msgs.nth(i).innerText()).trim()
-      if (t.includes(text) && (await msgs.nth(i).getAttribute('class')).includes(`el-message--${type}`)) {
-        return t
-      }
-    }
-    await sleep(150)
-  }
-  throw new Error(`等待 ElMessage(${type}) "${text}" 超时`)
-}
-
-async function waitDialogGone(page, titlePart, timeout = 8000) {
-  // Element Plus 关闭弹窗是 display:none 隐藏而非移除节点，须等 hidden 而非等节点消失
-  const dlg = page.locator('.el-dialog', { hasText: titlePart }).last()
-  if ((await dlg.count()) === 0) return
-  await dlg.waitFor({ state: 'hidden', timeout })
-}
-
-async function waitTableIdle(page, timeout = 10000) {
-  const t0 = Date.now()
-  while (Date.now() - t0 < timeout) {
-    const mask = page.locator('.el-table .el-loading-mask')
-    const visible = (await mask.count()) > 0 && (await mask.first().isVisible())
-    if (!visible) return
-    await sleep(150)
-  }
-  log('  [warn] 表格 loading 未在超时内消失（继续执行）')
-}
-
-async function breadcrumbTexts(page) {
-  const items = page.locator('.el-breadcrumb .el-breadcrumb__item')
-  const n = await items.count()
-  const out = []
-  for (let i = 0; i < n; i++) {
-    const t = (await items.nth(i).innerText()).trim()
-    out.push(t.replace(/\s*\/\s*$/, ''))
-  }
-  return out
-}
-
-async function login(page, account, password) {
-  if (!page.url().includes('/login')) {
-    await page.goto(`${BASE}/login`, { waitUntil: 'domcontentloaded' })
-  }
-  await page.locator('.login-card input[placeholder="请输入账号"]').fill(account)
-  await page.locator('.login-card input[placeholder="请输入密码"]').fill(password)
-  await page.locator('button.login-submit').click()
-  try {
-    await page.waitForURL((u) => !u.pathname.startsWith('/login'), { timeout: 15000 })
-    return { ok: true, url: page.url() }
-  } catch {
-    const alert = page.locator('.login-alert')
-    const msg = (await alert.count()) ? await alert.innerText() : '(无错误提示)'
-    return { ok: false, msg: msg.trim() }
-  }
-}
-
-async function logoutViaUi(page) {
-  // hover 触发的 EP dropdown 在 headed+slowMo 下偶发自动收起（popper 动画/leave 计时竞争），
-  // 重试至多 3 轮：重新 hover → 等菜单可见 → 先移入菜单项维持 hover 链再点
-  const item = page.locator('.el-dropdown-menu__item', { hasText: '退出登录' })
-  for (let attempt = 0; attempt < 3 && !page.url().includes('/login'); attempt++) {
-    await page.locator('.navbar-account').hover()
-    await item.waitFor({ state: 'visible', timeout: 5000 })
-    await item.hover().catch(() => {})
-    await item.click({ timeout: 5000 }).catch(() => {})
-    await sleep(600)
-  }
-  await page.waitForURL('**/login', { timeout: 15000 })
-  await sleep(300)
-}
-
-/** 全表翻页找行：先回第 1 页再向后翻（新行可能在任意页） */
-async function findRow(page, account, { reload = true } = {}) {
-  if (reload) {
-    await page.goto(`${BASE}/system/user`, { waitUntil: 'domcontentloaded' })
-  }
-  await waitTableIdle(page)
-  for (let guard = 0; guard < 30; guard++) {
-    const row = page.locator('.el-table__row', { hasText: account }).first()
-    if ((await row.count()) > 0 && (await row.isVisible())) {
-      await waitTableIdle(page)
-      return row
-    }
-    const next = page.locator('.el-pagination .btn-next')
-    if ((await next.count()) === 0 || !(await next.isEnabled())) return null
-    await next.click()
-    await waitTableIdle(page)
-    await sleep(300)
-  }
-  return null
-}
-
-async function rowCells(row) {
-  const tds = row.locator('td')
-  const n = await tds.count()
-  const out = []
-  for (let i = 0; i < n; i++) out.push(((await tds.nth(i).innerText()) || '').trim())
-  return out
-}
-
 // ---------- 主流程 ----------
 // 主控要求：默认有头模式（用户可在本机看到 UI 效果）+ slowMo 300；--headless 或 E2E_HEADLESS=1 可切回无头
 const HEADLESS = process.env.E2E_HEADLESS === '1' || process.argv.includes('--headless')
@@ -183,24 +36,11 @@ log(`浏览器模式: ${HEADLESS ? 'headless' : 'headed + slowMo(300ms)'}`)
 const browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 300 })
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
 const page = await ctx.newPage()
+h.state.ctx = ctx
+h.state.page = page
+h.attachListeners(page)
 
-page.on('console', (m) => {
-  if (m.type() === 'error') consoleErrors.push({ scenario: currentScenario, text: m.text() })
-})
-page.on('pageerror', (e) => pageErrors.push({ scenario: currentScenario, text: String(e) }))
-page.on('response', (r) => {
-  if (!r.url().includes('/api/')) return
-  const short = r.url().replace(/^https?:\/\/[^/]+\/api/, '/api')
-  apiCalls.push({ method: r.request().method(), url: short, status: r.status() })
-  if (r.status() >= 400) badResponses.push({ scenario: currentScenario, method: r.request().method(), url: short, status: r.status() })
-})
-page.on('requestfailed', (r) => {
-  if (r.url().includes('/api/') || r.url().includes(':5173')) {
-    requestFailures.push({ scenario: currentScenario, url: r.url(), err: r.failure()?.errorText })
-  }
-})
-
-const loginCallCount = () => apiCalls.filter((c) => c.url.includes('/sso/auth/login')).length
+const loginCallCount = () => h.state.apiCalls.filter((c) => c.url.includes('/sso/auth/login')).length
 
 try {
   // ================= S1 无 token 访问受保护页 → 跳登录（带 redirect） =================
@@ -433,7 +273,7 @@ try {
     const searchBtn = await page.getByRole('button', { name: '搜索' }).count()
     const resetBtn = await page.getByRole('button', { name: '重置' }).count()
     log(`[S9] 搜索按钮=${searchBtn}，重置按钮=${resetBtn}`)
-    results.push({
+    h.state.results.push({
       id: 'S9',
       name: '搜索过滤（按账号/昵称）',
       status: 'SKIP',
@@ -707,7 +547,7 @@ try {
     await page.evaluate(() => {
       localStorage.setItem('cloud-web:auth', JSON.stringify({ accessToken: 'garbage.garbage.sig', refreshToken: 'x', account: 'admin' }))
     })
-    const before = badResponses.length
+    const before = h.state.badResponses.length
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.waitForURL('**/login**', { timeout: 15000 })
     const url = new URL(page.url())
@@ -715,30 +555,13 @@ try {
     assert(url.searchParams.get('redirect') === '/system/user', `应带 redirect=/system/user，实际 "${url.searchParams.get('redirect')}"`)
     const stored = await page.evaluate(() => localStorage.getItem('cloud-web:auth'))
     assertEq(stored, null, '401 后本地 token 应被清除')
-    const got401 = badResponses.slice(before).some((b) => b.status === 401)
-    assert(got401, `应捕获到 401 响应，实际 ${JSON.stringify(badResponses.slice(before))}`)
-    log(`  捕获 401: ${JSON.stringify(badResponses.slice(before))}`)
+    const got401 = h.state.badResponses.slice(before).some((b) => b.status === 401)
+    assert(got401, `应捕获到 401 响应，实际 ${JSON.stringify(h.state.badResponses.slice(before))}`)
+    log(`  捕获 401: ${JSON.stringify(h.state.badResponses.slice(before))}`)
     await shot(page, 's15-401-redirect.png')
   })
 } finally {
   // ---------- 汇总 ----------
-  log('\n================= 场景结果 =================')
-  for (const r of results) {
-    log(`[${r.status}] ${r.id} ${r.name}${r.detail ? ' —— ' + r.detail : ''}`)
-  }
-  log('\n================= API 调用（/api/**） =================')
-  for (const c of apiCalls) log(`${c.status} ${c.method} ${c.url}`)
-  log('\n================= >=400 响应 =================')
-  for (const b of badResponses) log(`[${b.scenario}] ${b.status} ${b.method} ${b.url}`)
-  log('\n================= 网络失败 =================')
-  for (const f of requestFailures) log(`[${f.scenario}] ${f.url} ${f.err}`)
-  log('\n================= console error =================')
-  const uniq = [...new Set(consoleErrors.map((e) => e.text))]
-  for (const t of uniq) log(`  ${t}`)
-  if (pageErrors.length) {
-    log('================= pageerror（未捕获异常） =================')
-    for (const e of pageErrors) log(`[${e.scenario}] ${e.text}`)
-  }
-  log(`\n测试账号: ${TEST_ACCOUNT}（应已在 S14 删除）`)
+  h.summary({ extras: [`\n测试账号: ${TEST_ACCOUNT}（应已在 S14 删除）`] })
   await browser.close()
 }

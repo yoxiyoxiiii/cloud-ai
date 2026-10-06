@@ -1,6 +1,6 @@
 # cloud-web 试点：认证 + 用户/角色/菜单 API 契约
 
-- 日期：2026-10-05
+- 日期：2026-10-05（2026-10-06 补录：§4.2-4.7 角色端点 + §5.1 菜单树细化 + §6/§7 更新，为角色管理页对齐用；补录与代码逐字核对——`SysRoleController`、`SysRoleManageService`、`SysRoleMapper.xml`、`SysMenuController`、`MenuTreeBuilder`）
 - 状态：**源自已验收后端**（cloud-base 阶段 1-3，2026-10-05 端到端验收通过），整理成契约为前端对齐用——本契约**忠实记录既有行为，不新增、不修改**后端接口；字段/错误码与代码核对过（`AuthController`、`LoginResult`、`OnlineSession`、全局 Jackson 配置）
 - 消费方：cloud-web 前端（设计文档 `docs/superpowers/specs/2026-10-05-cloud-web-frontend-design.md`，实施计划 `docs/superpowers/plans/2026-10-05-cloud-web-pilot.md`）
 - 约定：前端实现与本文档冲突时，**以本文档（即后端实测行为）为准**；发现文档与实测不符，回报主控修订契约，不自行猜测
@@ -31,7 +31,7 @@
 | 2002 | 认证服务不可用 | sso Feign 调 system 兜底 |
 | 2003 | 账号已停用 | 登录（status=1） |
 | 2005 | refreshToken 无效 | 刷新（不存在/已被覆盖/过期） |
-| 3xxx | system 业务错误段 | 用户/角色/菜单业务校验（如账号已存在）；具体码以实现为准，**实现时验证**，前端按 msg 提示 |
+| 3xxx | system 业务错误段 | 2026-10-06 与代码核对落定：3001 用户不存在 / 3002 账号已存在 / **3003 角色标识已存在** / **3004 角色不存在** / 3005 存在子菜单 / 3006 菜单不存在 / 3007 父菜单非法；前端按 msg 提示 |
 
 ## 2. 认证接口（cloud-sso，网关前缀 /sso）
 
@@ -193,43 +193,130 @@
 - 返回：`R<List<Long>>`——data 为角色 id 字符串数组（如 `["1","2"]`），用于分配弹窗回显
 - 前端消费：**是**
 
-## 4. 角色接口（cloud-system）
+## 4. 角色接口（cloud-system，网关前缀 /system）
 
-### 4.1 角色列表 `GET /system/role/list`
+`SysRoleVo` 全字段见 §6；status 语义 `0=正常 1=停用`。停用角色（status=1）的两层语义：不出现在 §4.1 下拉候选；登录权限聚合 SQL 排除停用角色（`JOIN sys_role ... AND r.status = 0`）——即停用后该角色不再贡献权限，但**已发会话的权限快照不变**（重新登录/refresh 才生效，见 §7.5）。
+
+### 4.1 角色列表（仅启用） `GET /system/role/list`
 
 - 权限：`system:role:list`
-- 入参：无（全量列表，不分页）
-- 返回 `R<List<SysRoleVo>>`，前端消费字段：
+- 入参：无（不分页）
+- 行为：**仅返回启用角色**（`status=0 AND deleted=0`，按 id 升序）——2026-10-06 修正原文"全量列表"表述，以代码 `listEnabled` 为准
+- 返回 `R<List<SysRoleVo>>`，前端消费字段 id / name / roleKey / status
+- 前端消费：**是**（用户分配角色弹窗的候选列表）
 
-| 字段 | 类型 | 说明 | 示例 |
+### 4.2 角色分页 `GET /system/role/page`
+
+- 权限：`system:role:list`
+- 入参（query）：
+
+| 参数 | 类型 | 必填 | 说明 | 示例 |
+|---|---|---|---|---|
+| pageNum | number | 前端始终传（后端默认 1） | 页码（1 起） | `1` |
+| pageSize | number | 前端始终传（后端默认 10，maxLimit 200） | 每页条数 | `10` |
+
+- 行为：**含停用角色**（`deleted=0` 全量，与 §4.1 差异），按 **id 倒序**（新角色在前）；无搜索/过滤参数（契约现状）
+- 返回 `R<PageResult<SysRoleVo>>`：
+
+```json
+{ "code": 200, "msg": "操作成功", "data": {
+  "total": "2",
+  "rows": [
+    { "id": "2", "name": "运营", "roleKey": "ops", "status": 0,
+      "createBy": "admin", "createTime": "2026-10-06 10:00:00",
+      "updateBy": "admin", "updateTime": "2026-10-06 10:30:00" }
+  ] } }
+```
+
+- 前端消费：**是**（角色管理页列表）
+
+### 4.3 新增角色 `POST /system/role`
+
+- 权限：`system:role:add`
+- 入参（JSON body；后端以实体接收写字段，其余字段传入也不落库）：
+
+| 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| id | string | 角色 id | `"1"` |
-| name | string | 角色名 | `"管理员"` |
-| roleKey | string | 权限字符 | `"admin"` |
-| status | number | 0 正常 / 1 停用 | `0` |
+| name | string | 前端必填（后端不校验，缺省会 SQL 500，见 §7.6） | 角色名称（DDL VARCHAR(30)） |
+| roleKey | string | 是（后端校验非空白） | 权限标识，库级唯一（uk_role_key，DDL VARCHAR(30)；逻辑删除墓碑仍占键） |
+| status | number | 否（缺省落库默认 0） | 0 正常 / 1 停用 |
 
-（SysRoleVo 含其余审计字段，与 SysUserVo 同构，以实现为准；前端只消费上述四个）
-- 前端消费：**是**（用户分配角色弹窗的候选列表；**MVP 无角色管理页**）
+- 返回：`R<Long>`——data 为**新角色 id 字符串**（如 `"3"`）
+- 错误码：1002 角色标识不能为空（null/空白）/ 3003 角色标识已存在: {roleKey}（Service 预检 + 唯一键冲突兜底）
+- 前端消费：**是**
 
-## 5. 菜单接口（cloud-system）
+### 4.4 修改角色 `PUT /system/role`
+
+- 权限：`system:role:edit`
+- 入参（JSON body）：`{ id: string, name: string, roleKey: string, status: number }`
+- 行为：**部分更新语义**——null 字段不更新（动态 set）；**roleKey 可修改**（与用户 account 不可改不同），修改时触发唯一性校验（排除自身 id）
+- 返回：`R<Void>`
+- 错误码：3004 角色不存在（含已删）/ 3003 角色标识已存在 / 1002 roleKey 空白（空串非 null 也拦）
+- 前端消费：**是**（编辑弹窗始终全量提交三写字段）
+
+### 4.5 删除角色 `DELETE /system/role/{id}`
+
+- 权限：`system:role:remove`
+- 入参：路径参数 id（string 数字）
+- 返回：`R<Void>`
+- 行为：单事务内——逻辑删除角色（deleted=1）+ **物理删除**该角色的 sys_role_menu 与 sys_user_role 绑定（该角色与用户、菜单的关联即时解除）；**无内置角色保护**（admin 亦可删，见 §7.7）
+- 错误码：3004 角色不存在
+- 前端消费：**是**（确认框文案需含解绑提示）
+
+### 4.6 分配角色菜单 `PUT /system/role/menu`
+
+- 权限：`system:role:assignMenu`
+- 入参（JSON body）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| roleId | string | 角色 id（Long→String） |
+| menuIds | string[] | 菜单 id 字符串数组；**全量覆盖语义**——先清后插，null 或空数组即清空；后端 distinct 去重，不校验 menuId 存在性（前端只从菜单树取 id，不触达脏数据路径） |
+
+- 返回：`R<Void>`
+- 错误码：3004 角色不存在（停用角色可正常分配——只校验存在性）
+- 前端消费：**是**（分配菜单弹窗：勾选与半选父节点合并提交）
+
+### 4.7 查角色已绑菜单 `GET /system/role/{id}/menus`
+
+- 权限：`system:role:list`
+- 入参：路径参数 id
+- 返回：`R<List<Long>>`——data 为菜单 id 字符串数组（如 `["10","11","111"]`），分配弹窗回显用
+- 行为：**无角色存在性校验**——角色不存在/已删除返回空数组
+- 前端消费：**是**（分配弹窗回显；回显须过滤为叶子节点 id，见设计文档）
+
+## 5. 菜单接口（cloud-system，网关前缀 /system）
 
 ### 5.1 菜单树 `GET /system/menu/tree`
 
 - 权限：`system:menu:list`
 - 入参：无
-- 返回 `R<List<MenuTreeNode>>`：
+- 行为：全量未删除菜单（`deleted=0`，**不过滤 status**——停用菜单也在树中，且出参无 status 字段前端无法区分）；同级按 sort 升序（null 靠后）；父节点缺失的孤儿挂根级
+- 返回 `R<List<MenuTreeNode>>`（字段语义 2026-10-06 与代码核对落定）：
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | string | 节点 id |
-| parentId | string | 父节点 id |
-| name | string | 菜单/按钮名 |
-| perms | string | 权限标识（如 `system:user:add`） |
-| type | string/number | 节点类型（目录/菜单/按钮，枚举值**实现时验证**） |
-| sort | number | 排序号 |
-| children | MenuTreeNode[] | 子节点（叶子为空数组或 null，**实现时验证**） |
+| 字段 | 类型 | 说明 | 示例 |
+|---|---|---|---|
+| id | string | 节点 id | `"12"` |
+| parentId | string | 父节点 id（根为 `"0"`） | `"10"` |
+| name | string | 菜单/按钮名 | `"角色管理"` |
+| perms | string | 权限标识（目录节点为空串 `""`） | `"system:role:list"` |
+| type | string | 节点类型枚举：`"M"` 目录 / `"C"` 菜单 / `"F"` 按钮 | `"C"` |
+| sort | number | 排序号（同级升序） | `2` |
+| children | MenuTreeNode[] | 子节点；**叶子为空数组 `[]`，非 null** | `[]` |
 
-- 前端消费：**MVP 否**（侧边菜单为静态配置；动态路由/菜单随后续阶段，契约先行）
+```json
+{ "code": 200, "msg": "操作成功", "data": [
+  { "id": "10", "parentId": "0", "name": "系统管理", "perms": "", "type": "M", "sort": 1,
+    "children": [
+      { "id": "11", "parentId": "10", "name": "用户管理", "perms": "system:user:list", "type": "C", "sort": 1,
+        "children": [
+          { "id": "111", "parentId": "11", "name": "用户新增", "perms": "system:user:add", "type": "F", "sort": 1, "children": [] }
+        ] }
+    ] }
+] }
+```
+
+- 前端消费：**是**（角色管理页"分配权限"弹窗的树数据源；侧边菜单仍为静态配置，动态路由随后续阶段）
 
 ## 6. 数据类型字典（前端 types/api.ts 对齐基线）
 
@@ -239,9 +326,9 @@
 | `PageResult<T>` | `{ total: string; rows: T[] }` |
 | `LoginResult` | `{ accessToken: string; refreshToken: string; expiresIn: string }`（expiresIn 单位秒） |
 | `SysUserVo` | `{ id: string; account: string; nickname: string; status: number; createBy: string \| null; createTime: string \| null; updateBy: string \| null; updateTime: string \| null }` |
-| `SysRoleVo` | `{ id: string; name: string; roleKey: string; status: number }`（消费字段子集） |
+| `SysRoleVo` | `{ id: string; name: string; roleKey: string; status: number; createBy: string \| null; createTime: string \| null; updateBy: string \| null; updateTime: string \| null }`（2026-10-06 扩为全字段，与 SysUserVo 同构） |
 | `OnlineSessionVo` | `{ tokenId: string; userId: string; account: string; permissions: string[]; loginTime: string; ip: string }` |
-| `MenuTreeNode` | `{ id: string; parentId: string; name: string; perms: string; type: string; sort: number; children: MenuTreeNode[] }` |
+| `MenuTreeNode` | `{ id: string; parentId: string; name: string; perms: string; type: 'M' \| 'C' \| 'F'; sort: number; children: MenuTreeNode[] }`（叶子 children 为 `[]`） |
 
 ## 7. 已知缺口与前端约束（如实标注，不因契约掩盖）
 
@@ -249,4 +336,7 @@
 2. **refresh 单活跃模型**：每用户仅一个活跃 refreshToken，后登录覆盖前者（旧端刷新得 2005）；且刷新轮换令牌后旧 accessToken 立即失效——多标签页场景静默刷新会互相踢，故 MVP 不做静默刷新。
 3. **无搜索参数**：用户分页仅 pageNum/pageSize；若后续后端补过滤参数，契约先行更新再上前端搜索框。
 4. **入参校验缺失**（阶段 2+3 已知取舍，Bean Validation 未上）：password 传 null 等脏数据可能得 500——前端表单做必填/长度基础校验兜底（密码 6-32 位为前端约定，后端无强约束，**实现时验证**）。
-5. **权限变更不踢会话**：改角色/停用/删除用户不联动失效其在线会话（快照权限最长存活至 token 过期）——属后端已知取舍，前端无感。
+5. **权限变更不踢会话**：改角色/停用/删除用户不联动失效其在线会话（快照权限最长存活至 token 过期）——属后端已知取舍，前端无感。停用/删除角色同理：绑定即时解除但在线会话快照不回收（重新登录后生效）。
+6. **角色 name/status 无后端校验**（2026-10-06 补录时发现）：新增/修改仅校验 roleKey 非空白与唯一；name 缺省提交会因 DDL `NOT NULL` 无默认值产生 SQL 500——前端表单必填 + 长度（1-30，DDL VARCHAR(30)）兜底（同 §7.4 模式）。
+7. **删除角色无内置保护**：admin 种子超管角色可被删除，且事务内即时解绑其用户关联与全部菜单授权（在线会话快照存活至 token 过期，期间 admin 仍持有旧权限）——前端不做特殊拦截（不做超出契约的发明），是否补后端保护待主控裁定。
+8. **宽松语义如实记录**：`PUT /role` 的 null 字段不更新（§4.4，前端全量提交规避）；`PUT /role/menu` 不校验 menuId 存在性（§4.6，前端只从树取 id）；`GET /role/{id}/menus` 无角色存在性校验（§4.7）。

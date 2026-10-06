@@ -38,12 +38,16 @@ export interface SysUserVo {
   updateTime: string | null
 }
 
-/** 角色 VO（契约 §6，前端消费字段子集） */
+/** 角色 VO（契约 §4/§6）：status 语义 0=正常 1=停用；审计四字段可空 */
 export interface SysRoleVo {
   id: string
   name: string
   roleKey: string
   status: number
+  createBy: string | null
+  createTime: string | null
+  updateBy: string | null
+  updateTime: string | null
 }
 
 /** 在线会话 VO（契约 §2.4）：loginTime 为 epoch 毫秒字符串，展示需自行格式化 */
@@ -56,13 +60,16 @@ export interface OnlineSessionVo {
   ip: string
 }
 
-/** 菜单树节点（契约 §5.1，MVP 未消费，契约先行） */
+/**
+ * 菜单树节点（契约 §5.1）：type 枚举 'M' 目录 / 'C' 菜单 / 'F' 按钮；
+ * 叶子 children 恒为空数组 []（非 null，契约已核实）；目录节点 perms 为空串
+ */
 export interface MenuTreeNode {
   id: string
   parentId: string
   name: string
   perms: string
-  type: string
+  type: 'M' | 'C' | 'F'
   sort: number
   children: MenuTreeNode[]
 }

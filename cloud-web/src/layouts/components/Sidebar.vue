@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import { useRoute } from 'vue-router'
-import { Monitor, User } from '@element-plus/icons-vue'
+import { Monitor, User, UserFilled } from '@element-plus/icons-vue'
 
 interface MenuItem {
   path: string
@@ -12,6 +12,7 @@ interface MenuItem {
 /** 静态菜单（设计 §8）：不读 menu/tree 接口（契约先行、MVP 不消费） */
 const menus: MenuItem[] = [
   { path: '/system/user', title: '用户管理', icon: User },
+  { path: '/system/role', title: '角色管理', icon: UserFilled },
   { path: '/dashboard', title: '工作台', icon: Monitor },
 ]
 

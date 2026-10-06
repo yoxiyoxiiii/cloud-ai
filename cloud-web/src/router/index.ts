@@ -9,6 +9,7 @@ import Layout from '../layouts/Layout.vue'
 import LoginView from '../views/login/index.vue'
 import DashboardView from '../views/dashboard/index.vue'
 import UserManageView from '../views/system/user/index.vue'
+import RoleManageView from '../views/system/role/index.vue'
 import { getAuth } from '../utils/storage'
 
 declare module 'vue-router' {
@@ -40,6 +41,12 @@ const routes: RouteRecordRaw[] = [
         name: 'SystemUser',
         component: UserManageView,
         meta: { title: '用户管理', icon: 'User' },
+      },
+      {
+        path: 'system/role',
+        name: 'SystemRole',
+        component: RoleManageView,
+        meta: { title: '角色管理', icon: 'UserFilled' },
       },
       {
         path: 'dashboard',

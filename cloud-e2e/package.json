@@ -5,8 +5,10 @@
   "type": "module",
   "description": "cloud 全栈黑盒 e2e（浏览器自动化集成验收）：独立于前端工程，经 BASE URL（默认 dev 5173 → 网关 → 各服务）做端到端断言，禁止 import 前端内部代码",
   "scripts": {
-    "e2e": "node run-e2e.mjs",
-    "e2e:headless": "node run-e2e.mjs --headless",
+    "e2e": "node run-e2e.mjs && node run-role-e2e.mjs",
+    "e2e:headless": "node run-e2e.mjs --headless && node run-role-e2e.mjs --headless",
+    "e2e:user": "node run-e2e.mjs",
+    "e2e:role": "node run-role-e2e.mjs",
     "serve-artifacts": "node serve-artifacts.mjs"
   },
   "engines": {
