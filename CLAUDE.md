@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **多 Agent 协作开发**：本项目采用三角色流程（架构-agent 设计 → 后端-agent ∥ 前端-agent 并行实现 → 浏览器自动化集成测试）。角色定义见 `.claude/agents/`，流程见 `docs/multi-agent-dev-sop.md`，API 契约（前后端唯一对齐物）在 `docs/superpowers/contracts/`。前端工程 `cloud-web/`（Vue3+TS+Vite+Element Plus+Pinia，规范与 UI 测试规范见 `/frontend-page` 技能）。
+> **多 Agent 协作开发**：本项目采用三角色流程（架构-agent 设计 → 后端-agent ∥ 前端-agent 并行实现 → 浏览器自动化集成测试）。角色定义见 `.claude/agents/`，流程见 `docs/multi-agent-dev-sop.md`，API 契约（前后端唯一对齐物）在 `docs/superpowers/contracts/`。前端工程 `cloud-web/`（Vue3+TS+Vite+Element Plus+Pinia，规范与 UI 测试规范见 `/frontend-page` 技能）。**前端组件一律按需引入**（unplugin-vue-components + ElementPlusResolver）：严禁 `app.use(ElementPlus)` 全量注册、严禁 `element-plus/dist/index.css` 全量样式 import——实测全量比按需 JS 大 95%/CSS 大 152%。
 
 ## Repository Purpose
 

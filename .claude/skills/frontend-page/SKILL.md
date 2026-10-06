@@ -13,7 +13,7 @@ description: 在 cloud-web（Vue3+TS+Vite+Element Plus+Pinia）新增页面/业�
 |---|---|---|
 | Vue 3.5 + TS 5.8 strict | 组合式 API，`<script setup lang="ts">` | 禁 any / 裸 `as` 断言（类型问题用正确的 interface 收敛） |
 | Vite 6 | dev 端口 5173；proxy `/api` → `http://localhost:18080`，rewrite 去掉 `/api` 前缀 | 直连后端一律走 `/api` 前缀，不写绝对地址 |
-| Element Plus 2.x 全量引入 | `main.ts`：`app.use(ElementPlus, { locale: zhCn })` + `import 'element-plus/dist/index.css'` | **必须配 zhCn**（否则分页 Total、MessageBox OK/Cancel 是英文）；全量引入是 spec 决策（YAGNI，不按需） |
+| Element Plus 2.x **按需引入** | `vite.config.ts`：`Components({ resolvers: [ElementPlusResolver()], dts: 'src/components.d.ts' })`，模板 `<el-xxx>` 构建期自动转组件级 import + 样式。**严禁 `app.use(ElementPlus)` 全量注册与 `dist/index.css` 全量样式**（CLAUDE.md 红线；全量→按需实测 JS -49% / CSS -60%） | ① 函数式 API（ElMessage/ElMessageBox）模板解析器捕不到——使用处显式 `import { ElMessage } from 'element-plus'`，且 `main.ts` 需单独引其样式 `element-plus/es/components/message(-box)/style/css`；② locale 全局配置改在 `App.vue`：`<el-config-provider :locale="zhCn">` 包裹 `<router-view/>`（zhCn 从 `element-plus/es/locale/lang/zh-cn` 引入）；③ `src/components.d.ts` 是构建生成物不进 git，首次 build 前不存在、二次起类型更严——验收以**连续两次 `npm run build` 全绿**为准 |
 | vue-router | **必须定版 4.x** | latest(5.x) 与 vite 7/8 peer 冲突 |
 | Pinia 3 | `stores/` 目录 | |
 | Axios | 仅经 `utils/request.ts` 统一封装 | 页面禁止裸 import axios |
@@ -94,6 +94,14 @@ export function createXxx(payload: CreateXxxPayload): Promise<string> {
 - 数据加载函数 `load()`：调 pageXxx → 落 rows/total；onMounted 与弹窗 `success` 后刷新
 - 提交类操作一律走弹窗组件，弹窗 `emit('success')` → 父组件 `load()`
 - 时间列直接展示字符串；状态列 tag（正常绿/停用红）；操作列删除为红色文字按钮 + `ElMessageBox.confirm` 确认（文案含目标名称）
+- **el-table-column 插槽 row 固定为 `DefaultRow`（EP 的泛型不流入列插槽）**：模板解构处禁类型标注（`{ row }: { row: XxxVo }` 会 TS2322）；页面内集中一个收窄函数（唯一断言点，模板/处理器禁散落裸 `as`）：
+  ```ts
+  /** EP 列插槽 row 固定 DefaultRow，全页断言集中此一处 */
+  function rowOf(row: unknown): SysUserVo {
+    return row as SysUserVo
+  }
+  ```
+  模板中 `rowOf(row).status` / `openEdit(rowOf(row))`
 - 中文 UI 文案
 
 ## 表单弹窗模板（views/.../components/XxxFormDialog.vue，样板 UserFormDialog.vue）

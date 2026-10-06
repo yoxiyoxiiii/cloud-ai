@@ -14,6 +14,15 @@ const STATUS_MAP: Record<number, { label: string; tagType: 'success' | 'danger' 
   1: { label: '停用', tagType: 'danger' },
 }
 
+/**
+ * EP el-table-column 插槽 row 类型固定为 DefaultRow（Record<string, any>），
+ * el-table 的泛型不会流入列插槽，无法在模板内类型收窄；
+ * 全页断言集中此一处，模板/处理函数禁止再散落裸 as
+ */
+function rowOf(row: unknown): SysUserVo {
+  return row as SysUserVo
+}
+
 const loading = ref(false)
 const rows = ref<SysUserVo[]>([])
 const total = ref(0)
@@ -106,29 +115,29 @@ onMounted(() => {
       <el-table-column prop="nickname" label="昵称" min-width="120" />
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
-          <el-tag :type="STATUS_MAP[row.status]?.tagType ?? 'info'">
-            {{ STATUS_MAP[row.status]?.label ?? row.status }}
+          <el-tag :type="STATUS_MAP[rowOf(row).status]?.tagType ?? 'info'">
+            {{ STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="创建人" min-width="100">
-        <template #default="{ row }">{{ row.createBy ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).createBy ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="创建时间" min-width="160">
-        <template #default="{ row }">{{ row.createTime ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).createTime ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="更新人" min-width="100">
-        <template #default="{ row }">{{ row.updateBy ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).updateBy ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="更新时间" min-width="160">
-        <template #default="{ row }">{{ row.updateTime ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).updateTime ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="primary" @click="openResetPwd(row)">重置密码</el-button>
-          <el-button link type="primary" @click="openAssignRole(row)">分配角色</el-button>
-          <el-button link type="danger" @click="handleDelete(row)">删除</el-button>
+          <el-button link type="primary" @click="openEdit(rowOf(row))">编辑</el-button>
+          <el-button link type="primary" @click="openResetPwd(rowOf(row))">重置密码</el-button>
+          <el-button link type="primary" @click="openAssignRole(rowOf(row))">分配角色</el-button>
+          <el-button link type="danger" @click="handleDelete(rowOf(row))">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

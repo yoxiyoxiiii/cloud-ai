@@ -1,17 +1,18 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import './style.css'
-import 'element-plus/dist/index.css'
 import App from './App.vue'
 import router from './router'
+
+// Element Plus 按需引入（前端规范）：模板组件由 unplugin-vue-components 自动解析，
+// 不在此全量 app.use(ElementPlus)；函数式 API（ElMessage/ElMessageBox）在使用处显式 import，
+// 其样式无法被模板解析器捕获，需在此单独引入（仅 message 与 message-box 两处）：
+import 'element-plus/es/components/message/style/css'
+import 'element-plus/es/components/message-box/style/css'
 
 const app = createApp(App)
 
 app.use(createPinia())
 app.use(router)
-// Element Plus 默认 locale 为英文（分页 Total、MessageBox OK/Cancel 等），中文管理台需显式配置
-app.use(ElementPlus, { locale: zhCn })
 
 app.mount('#app')

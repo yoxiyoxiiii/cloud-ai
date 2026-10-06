@@ -132,10 +132,16 @@ async function login(page, account, password) {
 }
 
 async function logoutViaUi(page) {
-  await page.locator('.navbar-account').hover()
+  // hover 触发的 EP dropdown 在 headed+slowMo 下偶发自动收起（popper 动画/leave 计时竞争），
+  // 重试至多 3 轮：重新 hover → 等菜单可见 → 先移入菜单项维持 hover 链再点
   const item = page.locator('.el-dropdown-menu__item', { hasText: '退出登录' })
-  await item.waitFor({ state: 'visible', timeout: 5000 })
-  await item.click()
+  for (let attempt = 0; attempt < 3 && !page.url().includes('/login'); attempt++) {
+    await page.locator('.navbar-account').hover()
+    await item.waitFor({ state: 'visible', timeout: 5000 })
+    await item.hover().catch(() => {})
+    await item.click({ timeout: 5000 }).catch(() => {})
+    await sleep(600)
+  }
   await page.waitForURL('**/login', { timeout: 15000 })
   await sleep(300)
 }
