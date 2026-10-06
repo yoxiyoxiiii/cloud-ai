@@ -222,27 +222,29 @@ async function handleSubmit(): Promise<void> {
             {{ m.name }}
           </el-checkbox>
         </div>
-        <div v-for="c in m.children" :key="c.id" class="perm-menu-row">
-          <el-checkbox
-            class="perm-menu-check"
-            :model-value="triStateOf(c).checked"
-            :indeterminate="triStateOf(c).indeterminate"
-            @change="toggleC(c)"
-          >
-            {{ c.name }}
-          </el-checkbox>
-          <div class="perm-func-list">
+        <div class="perm-group-body">
+          <div v-for="c in m.children" :key="c.id" class="perm-menu-row">
             <el-checkbox
-              v-for="f in funcChildren(c)"
-              :key="f.id"
-              class="perm-func"
-              :model-value="checkedIds.has(f.id)"
-              @change="toggleF(f)"
+              class="perm-menu-check"
+              :model-value="triStateOf(c).checked"
+              :indeterminate="triStateOf(c).indeterminate"
+              @change="toggleC(c)"
             >
-              {{ f.name }}
-              <!-- 按钮节点追加权限标识灰字（分配对象的核心信息） -->
-              <span class="perm-func-perms">{{ f.perms }}</span>
+              {{ c.name }}
             </el-checkbox>
+            <div class="perm-func-list">
+              <el-checkbox
+                v-for="f in funcChildren(c)"
+                :key="f.id"
+                class="perm-func"
+                :model-value="checkedIds.has(f.id)"
+                @change="toggleF(f)"
+              >
+                {{ f.name }}
+                <!-- 按钮节点追加权限标识灰字（分配对象的核心信息） -->
+                <span class="perm-func-perms">{{ f.perms }}</span>
+              </el-checkbox>
+            </div>
           </div>
         </div>
       </div>
@@ -285,6 +287,15 @@ async function handleSubmit(): Promise<void> {
   font-weight: 600;
 }
 
+/* C 菜单行缩进于 M 组头之下，竖向虚线引导体现层级（最后一级 F 保持平铺）
+   总缩进 = margin 9 + padding 15 + border 1 = 25px，树形引导语义；
+   C 行间横向分隔（extra-light）比竖引导线（el-border-color）更淡，主次分明不显杂乱 */
+.perm-group-body {
+  margin-left: 9px;
+  padding-left: 15px;
+  border-left: 1px dashed var(--el-border-color);
+}
+
 /* C 菜单 = 行：行首三态 checkbox + 菜单名（定宽对齐），右侧横排其 F 按钮 */
 .perm-menu-row {
   display: flex;
@@ -298,15 +309,33 @@ async function handleSubmit(): Promise<void> {
   border-top: 1px dashed var(--el-border-color-extra-light);
 }
 
+/* C 菜单三态 checkbox：定宽列锚点；relative 供 ::before 肘形连接线定位 */
 .perm-menu-check {
+  position: relative;
   flex: 0 0 auto;
   width: 112px;
 }
 
-/* F 按钮 = 行内横排，超出换行 */
+/* 肘形连接线（树形 ├── 视觉）：从 R2 竖虚线接到本行 checkbox 左缘
+   width 必须与 .perm-group-body 的 padding-left（15px）一致——连接线左端恰落在竖线上；
+   top: 50% 挂在 checkbox 元素垂直中心（F 换行导致行高变化时对齐依然稳健）；
+   F 按钮区不加连接线（保持平铺） */
+.perm-menu-check::before {
+  content: '';
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  width: 15px;
+  border-top: 1px dashed var(--el-border-color);
+}
+
+/* F 按钮 = 行内横排，超出换行
+   basis 必须 0（不可 auto）：auto 取内容宽（5 个 F ≈1000px 超出 C 列右侧剩余空间），
+   .perm-menu-row 的 flex-wrap 会把整块 F 区换行到 C 的下一行并与 C 左对齐（丢失层次）；
+   0 让 F 区从 C 列（112px 定宽）右侧起排，仅在区内自行换行且行间对齐 */
 .perm-func-list {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   flex-wrap: wrap;
   gap: 6px 16px;
 }
