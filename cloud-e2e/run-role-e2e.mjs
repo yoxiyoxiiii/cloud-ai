@@ -64,11 +64,11 @@ async function findRoleRowByKey(page, roleKey) {
   return null
 }
 
-/** 等分配权限弹窗内树渲染并回显落定（勾选设置发生在 loading 遮罩撤下前） */
+/** 等分配权限弹窗内分组布局渲染并回显落定（勾选设置发生在 loading 遮罩撤下前） */
 async function waitTreeReady(dlg) {
   const t0 = Date.now()
   while (Date.now() - t0 < 10000) {
-    if ((await dlg.locator('.el-tree-node').count()) > 0) break
+    if ((await dlg.locator('.perm-menu-row').count()) > 0) break
     await sleep(150)
   }
   const mask = dlg.locator('.el-loading-mask')
@@ -81,15 +81,42 @@ async function waitTreeReady(dlg) {
 }
 
 /**
- * 树节点行勾选态——EP 2.14 checkbox 的 DOM 约定（实测 dump 落定）：
- * 全选 = class is-checked；半选 = aria-checked="mixed"（无 is-indeterminate class）；未选 = 两者皆无
+ * 按文本定位弹窗内权限 checkbox（F 的 label 内含 perms 灰字，故取前缀匹配；
+ * 前缀在种子内无歧义：M=系统/认证管理，C=用户/角色/菜单管理·在线用户，F=各操作名）
+ */
+async function findPermCheckBox(dlg, nodeText) {
+  const boxes = dlg.locator('.perm-panel .el-checkbox')
+  const n = await boxes.count()
+  for (let i = 0; i < n; i++) {
+    const box = boxes.nth(i)
+    const label = ((await box.innerText()) || '').trim()
+    if (label === nodeText || label.startsWith(nodeText)) return box
+  }
+  throw new Error(`未找到文本为 "${nodeText}" 的权限 checkbox`)
+}
+
+/**
+ * 权限 checkbox 三态——走原生 input DOM 属性断言（布局重构约定）：
+ * EP el-checkbox 的 input 绑定 v-model(checked) 与 :indeterminate，两者均为真实 DOM 属性
  */
 async function checkBoxState(dlg, nodeText) {
-  const row = dlg.locator('.el-tree-node__content', { hasText: nodeText }).first()
-  const cb = row.locator('.el-checkbox').first()
-  const cls = (await cb.getAttribute('class')) || ''
-  const aria = await cb.getAttribute('aria-checked')
-  return { checked: cls.includes('is-checked'), half: aria === 'mixed' }
+  const box = await findPermCheckBox(dlg, nodeText)
+  return await box.locator('input.el-checkbox__original').evaluate((el) => ({ checked: el.checked, half: el.indeterminate }))
+}
+
+/** 点击权限 checkbox（点 label 根元素整体，任意位置均触发原生 input 切换） */
+async function clickPermCheckBox(dlg, nodeText) {
+  const box = await findPermCheckBox(dlg, nodeText)
+  await box.click()
+}
+
+/** 弹窗内全部权限 checkbox 原生 input 的勾选/半选计数 */
+async function permInputStats(dlg) {
+  return await dlg.locator('.perm-panel input.el-checkbox__original').evaluateAll((els) => ({
+    total: els.length,
+    checked: els.filter((el) => el.checked).length,
+    active: els.filter((el) => el.checked || el.indeterminate).length,
+  }))
 }
 
 try {
@@ -250,23 +277,35 @@ try {
     await dlg.waitFor({ state: 'visible', timeout: 8000 })
     assert((await dlg.locator('.el-dialog__title').innerText()).includes('管理员'), '弹窗标题应含角色名称（管理员）')
     await waitTreeReady(dlg)
-    // 树渲染：根"系统管理"存在；F 节点显示 perms 灰字
-    assert((await dlg.locator('.el-tree-node__content', { hasText: '系统管理' }).count()) > 0, '树应含根节点 系统管理')
-    const permsShown = await dlg.locator('.menu-tree-perms').count()
+    // 分组布局渲染：M 目录组头 / C 菜单行；F 按钮显示 perms 灰字
+    const groupCount = await dlg.locator('.perm-group').count()
+    const rowCount = await dlg.locator('.perm-menu-row').count()
+    const headerTexts = (await dlg.locator('.perm-group-header').allInnerTexts()).map((t) => t.trim())
+    log(`  分组布局: 目录组 ${groupCount} 个（${headerTexts.join('/')}），菜单行 ${rowCount} 行`)
+    assert(groupCount >= 2, `应渲染目录分组（系统管理/认证管理），实际 ${groupCount} 组`)
+    assert(rowCount >= 4, `应渲染菜单行（用户/角色/菜单管理·在线用户），实际 ${rowCount} 行`)
+    assert(headerTexts.includes('系统管理'), `组头应含 系统管理，实际 ${JSON.stringify(headerTexts)}`)
+    const funcCount = await dlg.locator('.perm-func').count()
+    log(`  F 按钮 checkbox 个数: ${funcCount}`)
+    assert(funcCount > 0, 'F 按钮应渲染为独立 checkbox')
+    const permsShown = await dlg.locator('.perm-func-perms').count()
     log(`  F 节点 perms 灰字段数: ${permsShown}`)
     assert(permsShown > 0, '按钮（F）节点应显示权限标识灰字')
-    const permsText = (await dlg.locator('.menu-tree-perms').first().innerText()).trim()
+    const permsText = (await dlg.locator('.perm-func-perms').first().innerText()).trim()
     log(`  首个 perms 文本: "${permsText}"`)
     assert(/^[\w:]+:[\w:]+:[\w]+$/.test(permsText), `perms 文本应为权限标识格式，实际 "${permsText}"`)
-    // admin 绑定全部叶子 → 全部节点应为勾选或半选（存量父目录绑定经叶子过滤正确呈现）
-    // 全选=is-checked class；半选=aria-checked="mixed"（EP 2.14 实测 DOM 约定）
-    const stats = await dlg.locator('.el-tree-node .el-checkbox').evaluateAll((els) => ({
-      total: els.length,
-      active: els.filter((el) => el.classList.contains('is-checked') || el.getAttribute('aria-checked') === 'mixed').length,
-    }))
-    log(`  admin 回显: 节点 ${stats.total} 个，勾选/半选 ${stats.active} 个`)
-    assert(stats.total > 0, '树节点数应大于 0')
-    assertEq(stats.active, stats.total, 'admin 绑定全部菜单：所有节点应为勾选或半选（叶子过滤回显）')
+    // admin 绑定全部叶子 → 全部 checkbox 全选（存量父目录绑定经叶子域过滤后由子孙推导，无半选残留）
+    // 三态走原生 input DOM 属性：checked / indeterminate（EP el-checkbox 实测绑定）
+    const stats = await permInputStats(dlg)
+    log(`  admin 回显: checkbox ${stats.total} 个，勾选 ${stats.checked} 个，勾选/半选 ${stats.active} 个`)
+    assert(stats.total > 0, '权限 checkbox 数应大于 0')
+    assertEq(stats.active, stats.total, 'admin 绑定全部菜单：所有 checkbox 应为勾选或半选（叶子过滤回显）')
+    assertEq(stats.checked, stats.total, 'admin 全量绑定应全部全选（无半选）')
+    const adminRoot = await checkBoxState(dlg, '系统管理')
+    const adminMenu = await checkBoxState(dlg, '用户管理')
+    log(`  admin 三态抽检: 系统管理(M)=${JSON.stringify(adminRoot)} 用户管理(C)=${JSON.stringify(adminMenu)}`)
+    assert(adminRoot.checked && !adminRoot.half, 'admin 回显：系统管理（M 目录）应全选（input.checked=true）')
+    assert(adminMenu.checked && !adminMenu.half, 'admin 回显：用户管理（C 菜单）应全选（input.checked=true）')
     await shot(page, 'r5-admin-echo.png')
     await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
     await waitDialogGone(page, '分配权限')
@@ -279,12 +318,18 @@ try {
     await dlg.waitFor({ state: 'visible', timeout: 8000 })
     await waitTreeReady(dlg)
     // 初始无勾选
-    let initChecked = await dlg.locator('.el-tree-node .el-checkbox.is-checked').count()
-    assertEq(initChecked, 0, '新角色初始应无勾选')
+    const initStats = await permInputStats(dlg)
+    assertEq(initStats.checked, 0, '新角色初始应无勾选')
+    assertEq(initStats.active, 0, '新角色初始应无勾选/半选')
     await shot(page, 'r5-tree-initial.png')
-    // 勾选"用户新增"与"用户删除"（用户管理 5 个按钮中的 2 个 → 父呈半选）
-    await dlg.locator('.el-tree-node__content', { hasText: '用户新增' }).first().locator('.el-checkbox').click()
-    await dlg.locator('.el-tree-node__content', { hasText: '用户删除' }).first().locator('.el-checkbox').click()
+    // 勾选"用户新增"与"用户删除"（用户管理 5 个按钮中的 2 个 → C/M 呈半选，input.indeterminate）
+    await clickPermCheckBox(dlg, '用户新增')
+    await clickPermCheckBox(dlg, '用户删除')
+    const preC = await checkBoxState(dlg, '用户管理')
+    const preM = await checkBoxState(dlg, '系统管理')
+    log(`  勾 2/5 按钮后三态: 用户管理(C)=${JSON.stringify(preC)} 系统管理(M)=${JSON.stringify(preM)}`)
+    assert(!preC.checked && preC.half, '勾 2/5 按钮：用户管理（C）应半选（input.indeterminate=true）')
+    assert(!preM.checked && preM.half, '勾 2/5 按钮：系统管理（M）应半选（input.indeterminate=true）')
     await shot(page, 'r5-tree-checked.png')
     // 保存：抓 PUT /role/menu 请求体，断言提交 = 勾选叶子 ∪ 半选父（D2 语义）
     const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/role/menu') && r.request().method() === 'PUT', { timeout: 15000 })
@@ -314,18 +359,18 @@ try {
     const rootM = await checkBoxState(dlg, '系统管理')
     log(`  回显态: 用户新增=${JSON.stringify(add)} 用户删除=${JSON.stringify(del)} 用户修改=${JSON.stringify(edit)}`)
     log(`  回显态: 用户管理(父)=${JSON.stringify(menuC)} 系统管理(根)=${JSON.stringify(rootM)}`)
-    assert(add.checked && !add.half, '用户新增应勾选')
-    assert(del.checked && !del.half, '用户删除应勾选')
+    assert(add.checked && !add.half, '用户新增应勾选（input.checked=true）')
+    assert(del.checked && !del.half, '用户删除应勾选（input.checked=true）')
     assert(!edit.checked && !edit.half, '用户修改不应被勾选（未提交的不误勾）')
-    assert(!menuC.checked && menuC.half, '用户管理（父）应呈半选（aria-checked=mixed）')
-    assert(!rootM.checked && rootM.half, '系统管理（根）应呈半选（aria-checked=mixed）')
-    const checkedTotal = await dlg.locator('.el-tree-node .el-checkbox.is-checked').count()
-    assertEq(checkedTotal, 2, `勾选节点应恰为 2 个叶子，实际 ${checkedTotal}`)
+    assert(!menuC.checked && menuC.half, '用户管理（C）应呈半选（input.indeterminate=true）')
+    assert(!rootM.checked && rootM.half, '系统管理（M）应呈半选（input.indeterminate=true）')
+    const echoStats = await permInputStats(dlg)
+    assertEq(echoStats.checked, 2, `勾选 checkbox 应恰为 2 个按钮叶子，实际 ${echoStats.checked}`)
     await shot(page, 'r5-echo.png')
 
     // ---- 5c. 清空勾选保存 → 重开回显空（契约 §4.6 全量覆盖：空数组即清空） ----
-    await dlg.locator('.el-tree-node .el-checkbox.is-checked').first().click()
-    await dlg.locator('.el-tree-node .el-checkbox.is-checked').first().click()
+    await clickPermCheckBox(dlg, '用户新增')
+    await clickPermCheckBox(dlg, '用户删除')
     await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
     await waitToast(page, '分配成功')
     await waitDialogGone(page, '分配权限')
@@ -334,8 +379,8 @@ try {
     dlg = page.locator('.el-dialog', { hasText: '分配权限' }).last()
     await dlg.waitFor({ state: 'visible', timeout: 8000 })
     await waitTreeReady(dlg)
-    const afterClear = await dlg.locator('.el-tree-node .el-checkbox').evaluateAll((els) => els.filter((el) => el.classList.contains('is-checked') || el.getAttribute('aria-checked') === 'mixed').length)
-    assertEq(afterClear, 0, '清空保存后重开应无任何勾选/半选')
+    const clearStats = await permInputStats(dlg)
+    assertEq(clearStats.active, 0, '清空保存后重开应无任何勾选/半选')
     log('  清空分配保存 → 回显空 ✔')
     await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
     await waitDialogGone(page, '分配权限')
