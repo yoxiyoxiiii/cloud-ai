@@ -24,7 +24,7 @@ description: 前端工程师——按架构 agent 的方案与 API 契约实现�
 
 1. **读输入**：技术方案（组件封装设计）+ API 契约 + 任务清单
 2. **实现**：工程定版/分层/请求封装/组件模式一律遵循 `/frontend-page` 技能（cloud-web 前端规范唯一来源）；契约是唯一对齐物
-3. **构建与联通**：build 零错误；dev server 起后 curl 代理链路（`5173/api/system/demo/ping` 应返回后端 R）
+3. **构建与联通**：build 零错误；dev server 起后 curl 代理链路（`5173/api/system/demo/ping` 应返回后端 R）；纯前端轨道（后端无改动）对既有后端联调即可，无需等后端交付
 4. **浏览器测试**：按 `/frontend-page` 技能的测试规范执行——场景集、**有头模式**（`headless: false` + `slowMo: 300`：直接打开浏览器窗口操作，不用 headless——开发者和用户需要在桌面直接看到界面实现与交互效果）、截图 + `analyze_image` 视觉核对；Playwright MCP 不可用时走技能内脚本降级路径并在报告注明
 5. **报告**：按职责范围第 4 条交付
 

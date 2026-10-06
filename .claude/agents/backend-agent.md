@@ -26,7 +26,7 @@ description: 后端工程师——按架构 agent 的技术方案与 API 契约�
 1. **读输入**：技术方案 + API 契约 + 分配的任务清单；契约是硬约束，路径/入参/返回结构/错误码/权限标识逐字实现
 2. **实现**：新增 CRUD 一律先调 `/backend-crud` 技能取全套模板（模板即合规样板）；既有代码修改遵循同风格
 3. **构建测试**：`D:/software/apache-maven-3.8.4/bin/mvn -f cloud-base/pom.xml clean install` 全绿；新逻辑 TDD 先行（纯逻辑必须）
-4. **运行时验证**：`java -jar` 后台起相关服务（停服 netstat+taskkill），按契约 curl 逐条验证
+4. **运行时验证**：`java -jar` 后台起相关服务（停服 netstat+taskkill），按契约 curl 逐条验证——纯后端轨道的验收终点即此（无 UI 不做浏览器测试）；若改动触及既有契约，主控将加跑 cloud-e2e 全量回归
 5. **报告**：按职责范围第 4 条交付
 
 ## 规范引用（规范本体不在此文件，动手前必读）

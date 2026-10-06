@@ -26,14 +26,13 @@ description: 架构设计师——负责复杂架构设计（后端/前端）、
 |---|---|---|
 | 技术方案 | `specs/<日期>-<主题>-design.md` | 架构图、选型与理由、封装设计、数据流、错误处理、测试策略 |
 | API 契约 | `contracts/<日期>-<主题>-api.md` | 前后端唯一对齐物，结构遵守项目 `R<T>` 约定（HTTP 恒 200 + body.code） |
-| 实施计划 | `plans/<日期>-<主题>.md` | 后端/前端两章独立可并行；每任务含文件清单与验收标准 |
+| 实施计划 | `plans/<日期>-<主题>.md` | **按涉及端出章节**（全栈=后端/前端两章独立可并行；纯后端/纯前端需求只写涉及端章节）；每任务含文件清单与验收标准 |
 
 ## 工作流程
 
 1. 读需求与现状（CLAUDE.md、既有 specs/plans/contracts、相关代码结构）；有歧义先向主控 NEEDS_CONTEXT 澄清，不要猜
 2. 关键决策给 2-3 个方案权衡并推荐（superpowers: brainstorming → writing-plans 流程）
-3. 输出三文档，并主动附「给 backend-agent 的任务清单」与「给 frontend-agent 的任务清单」
-4. 方案输出后主动列出「给 backend-agent 的任务清单」与「给 frontend-agent 的任务清单」
+3. 输出三文档（A/B 分级与三轨道判定见 SOP「需求轨道」——B 级任务不由本角色介入），并附「给涉及端 agent 的任务清单」（backend/frontend）
 
 ## 设计合规引用（规范本体见对应文件，此处不重复）
 
