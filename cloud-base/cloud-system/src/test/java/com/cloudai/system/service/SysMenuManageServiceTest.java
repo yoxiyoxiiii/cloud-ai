@@ -20,7 +20,9 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -127,5 +129,47 @@ class SysMenuManageServiceTest {
         assertThat(nav).hasSize(1);
         assertThat(nav.get(0).getChildren()).hasSize(1);
         assertThat(nav.get(0).getChildren().get(0).getPath()).isEqualTo("/system/user");
+    }
+
+    // ---- 内置保护（契约 2026-10-07-builtin-protection-api §2：内置菜单一刀切全禁，3014）----
+
+    private SysMenu builtinMenu(Long id) {
+        SysMenu m = menu(id, 0L);
+        m.setIsBuiltin(SysMenu.BuiltinEnum.BUILT_IN.getCode());
+        return m;
+    }
+
+    @Test
+    void edit_builtinMenuRejected() {
+        when(menuMapper.findById(10L)).thenReturn(builtinMenu(10L));
+        assertThatThrownBy(() -> service.update(menu(10L, 0L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内置菜单禁止修改")
+                .extracting("code")
+                .isEqualTo(3014);
+        verify(menuMapper, never()).update(any(SysMenu.class));
+    }
+
+    @Test
+    void delete_builtinMenuRejected() {
+        when(menuMapper.findById(10L)).thenReturn(builtinMenu(10L));
+        assertThatThrownBy(() -> service.delete(10L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内置菜单禁止删除")
+                .extracting("code")
+                .isEqualTo(3014);
+        verify(menuMapper, never()).deleteById(any(), any(), any());
+        verify(roleMenuMapper, never()).deleteByMenuId(anyLong());
+    }
+
+    /** 放行路径：非内置（is_builtin=null，用户创建行默认 0）照旧走删除链 */
+    @Test
+    void delete_nonBuiltinMenuDeleted() {
+        loginAs("admin");
+        when(menuMapper.findById(50L)).thenReturn(menu(50L, 10L));
+        when(menuMapper.countByParentId(50L)).thenReturn(0L);
+        service.delete(50L);
+        verify(menuMapper).deleteById(eq(50L), eq("admin"), any());
+        verify(roleMenuMapper).deleteByMenuId(50L);
     }
 }

@@ -6,8 +6,9 @@
          查询显式 deleted = 0，删除为 UPDATE deleted=1（留更新审计）；
          INSERT/UPDATE 的审计列（create_by/create_time/update_by/update_time）由 Service 显式传参（操作人 SecurityUtils.currentAccount()）。
          update_by 采用 <if> 判空：匿名场景与原自动填充语义一致——保留原 update_by 不清空。 -->
+    <!-- is_builtin 只读列：仅查询加载供保护校验，INSERT/UPDATE 列枚举不含（结构性防篡改，新增行落 DEFAULT 0） -->
     <sql id="allColumns">
-        id, account, nickname, password, status,
+        id, account, nickname, password, status, is_builtin,
         create_by, create_time, update_by, update_time, deleted
     </sql>
 

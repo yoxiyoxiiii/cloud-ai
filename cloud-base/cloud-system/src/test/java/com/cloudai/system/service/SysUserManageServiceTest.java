@@ -1,6 +1,7 @@
 package com.cloudai.system.service;
 
 import com.cloudai.common.core.domain.LoginUser;
+import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.dto.UserSaveRequest;
 import com.cloudai.system.entity.SysUser;
@@ -17,6 +18,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -109,5 +111,83 @@ class SysUserManageServiceTest {
         assertThatCode(() -> service.save(saveRequest())).doesNotThrowAnyException();
         verify(userMapper).save(any(SysUser.class));
         verify(userRoleMapper, never()).deleteByUserId(anyLong());
+    }
+
+    // ---- 内置保护（契约 2026-10-07-builtin-protection-api §2：用户域例外——仅禁删/禁停/禁改角色，
+    //      nickname 与 resetPassword 放行；3017）----
+
+    private SysUser builtinUser() {
+        SysUser user = new SysUser();
+        user.setId(1L);
+        user.setAccount("admin");
+        user.setIsBuiltin(SysUser.BuiltinEnum.BUILT_IN.getCode());
+        return user;
+    }
+
+    @Test
+    void delete_builtinUserRejected() {
+        when(userMapper.findById(1L)).thenReturn(builtinUser());
+        assertThatThrownBy(() -> service.delete(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内置用户禁止删除")
+                .extracting("code")
+                .isEqualTo(3017);
+        verify(userMapper, never()).deleteById(any(), any(), any());
+    }
+
+    @Test
+    void update_builtinUserDisableRejected() {
+        when(userMapper.findById(1L)).thenReturn(builtinUser());
+        UserSaveRequest req = saveRequest();
+        req.setStatus(1);
+        assertThatThrownBy(() -> service.update(1L, req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内置用户禁止停用")
+                .extracting("code")
+                .isEqualTo(3017);
+        verify(userMapper, never()).update(any(SysUser.class));
+    }
+
+    /** 放行路径：内置用户改昵称（status=0）正常走 mapper——合法运维（契约 §2 用户域例外） */
+    @Test
+    void update_builtinUserNicknameChangeAllowed() {
+        when(userMapper.findById(1L)).thenReturn(builtinUser());
+        UserSaveRequest req = saveRequest();
+        req.setNickname("新昵称");
+        req.setStatus(0);
+        service.update(1L, req);
+        verify(userMapper).update(any(SysUser.class));
+    }
+
+    /** 放行路径：status 未传（null）视为不改状态——部分更新语义，放行 */
+    @Test
+    void update_builtinUserStatusNullAllowed() {
+        when(userMapper.findById(1L)).thenReturn(builtinUser());
+        UserSaveRequest req = saveRequest();
+        req.setStatus(null);
+        service.update(1L, req);
+        verify(userMapper).update(any(SysUser.class));
+    }
+
+    /** 拍板延伸（设计 D6/契约 §5.2）：assignRoles 整体拒绝——独立校验点便于剔除 */
+    @Test
+    void assignRoles_builtinUserRejected() {
+        when(userMapper.findById(1L)).thenReturn(builtinUser());
+        assertThatThrownBy(() -> service.assignRoles(1L, java.util.List.of(1L)))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内置用户禁止修改角色")
+                .extracting("code")
+                .isEqualTo(3017);
+        verify(userRoleMapper, never()).deleteByUserId(anyLong());
+    }
+
+    /** 放行路径：内置用户重置密码放行（admin 忘密码是合法运维） */
+    @Test
+    void resetPassword_builtinUserAllowed() {
+        loginAs("admin");
+        when(userMapper.findById(1L)).thenReturn(builtinUser());
+        when(passwordEncoder.encode("newpass123")).thenReturn("hashed");
+        service.resetPassword(1L, "newpass123");
+        verify(userMapper).updatePassword(eq(1L), eq("hashed"), eq("admin"), any());
     }
 }

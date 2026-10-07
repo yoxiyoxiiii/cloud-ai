@@ -3,8 +3,9 @@
 <mapper namespace="com.cloudai.system.mapper.SysDictTypeMapper">
 
     <!-- 逻辑删除/审计显式维护，语义说明见 SysUserMapper.xml -->
+    <!-- is_builtin 只读列：仅查询加载供保护校验，INSERT/UPDATE 列枚举不含（结构性防篡改，新增行落 DEFAULT 0） -->
     <sql id="allColumns">
-        id, dict_name, dict_key, status,
+        id, dict_name, dict_key, status, is_builtin,
         create_by, create_time, update_by, update_time, deleted
     </sql>
 

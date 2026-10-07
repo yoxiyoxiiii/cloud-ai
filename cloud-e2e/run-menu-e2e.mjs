@@ -4,7 +4,8 @@
  * 运行前提：后端 gateway 18080 / sso 9201 / system 9202（v2 契约版）已启动；前端 dev 5173 已启动（/api 代理 18080）
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 node run-menu-e2e.mjs）
  * 测试数据（删净纪律最高优先，设计 D8）：
- * - 菜单名 E2E 前缀+时间戳；绝不编辑/删除种子菜单（10/11/12/13/111… 与 20/21/211）
+ * - 菜单名 E2E 前缀+时间戳；绝不编辑/删除种子菜单（10/11/12/13/111… 与 20/21/211）；
+ *   M5b 内置保护对种子"用户管理"仅做"尝试后验证拒"（3014，契约 2026-10-07-builtin-protection §2，种子零变更）
  * - 结束按 F → C → M 自底向上删净并断言树中无 E2E 残留——
  *   role e2e R5a 断言 admin 绑定全部菜单全选（active == total），任何残留 E2E 行都会让下一轮回归必红
  * - 不断言"权限改完立即可用"（权限快照时效，契约 §1：变更需重登/refresh 生效）
@@ -107,8 +108,22 @@ async function formErrors(dlg) {
   return texts
 }
 
-/** 删除行（确认框文案断言后确认），返回 toast 文本 */
-async function deleteMenuViaUi(name) {
+/** 期望错误 toast（超时兜底抓页上实际 toast 文案进失败信息——内置保护断言专用，M5b） */
+async function expectErrToast(expected) {
+  try {
+    const t = await waitToast(page, expected, 'error')
+    log(`  toast: "${t}"`)
+    return t
+  } catch {
+    const present = []
+    const msgs = page.locator('.el-message')
+    const n = await msgs.count()
+    for (let i = 0; i < n; i++) present.push((await msgs.nth(i).innerText()).trim())
+    throw new Error(`期望错误 toast "${expected}" 未出现，页上实际 toast: ${JSON.stringify(present)}`)
+  }
+}
+
+/** 删除行（确认框文案断言后确认），返回 toast 文本 */async function deleteMenuViaUi(name) {
   const row = await findMenuRow(name)
   assert(row, `应能定位菜单行 ${name}`)
   await row.getByRole('button', { name: '删除' }).click()
@@ -435,6 +450,52 @@ try {
     await shot(page, 'm5-after-delete.png')
   })
 
+  // ================= M5b 内置菜单保护（契约 2026-10-07-builtin-protection §2：种子"用户管理""尝试后验证拒"） =================
+  await step('M5b', '内置菜单保护：用户管理 删除/编辑均被 3014 拒（toast 文案）→ 行原样', async () => {
+    const SEED_NAME = '用户管理'
+    // ---- a. 删除确认 → 3014 拒 ----
+    let row = await findMenuRow(SEED_NAME)
+    assert(row, `应能定位种子菜单行 ${SEED_NAME}`)
+    const cellsBefore = await rowCells(row)
+    log(`  种子行（保护前）: ${JSON.stringify(cellsBefore.slice(0, 5))}`)
+    await row.getByRole('button', { name: '删除' }).click()
+    const box = page.locator('.el-message-box')
+    await box.waitFor({ state: 'visible', timeout: 8000 })
+    await shot(page, 'm5b-delete-confirm.png')
+    const delP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/menu/'), { timeout: 15000 })
+    await box.locator('.el-message-box__btns .el-button--primary').click()
+    const del = await delP
+    const delBody = await del.json()
+    log(`  删除接口: HTTP ${del.status()} code=${delBody.code} msg="${delBody.msg}"`)
+    assertEq(del.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(delBody.code, 3014, `内置菜单删除应 body 3014，实际 ${delBody.code}`)
+    await expectErrToast('内置菜单禁止删除')
+    row = await findMenuRow(SEED_NAME)
+    assert(row, '3014 拒绝后种子菜单行应仍在')
+    // ---- b. 编辑提交（回显值原样，零改动）→ 3014 拒 ----
+    await row.getByRole('button', { name: '编辑' }).click()
+    const dlg = page.locator('.el-dialog', { hasText: '编辑菜单' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    const putP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/menu') && r.request().method() === 'PUT', { timeout: 15000 })
+    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const put = await putP
+    const putBody = await put.json()
+    log(`  编辑提交接口: HTTP ${put.status()} code=${putBody.code} msg="${putBody.msg}"`)
+    assertEq(putBody.code, 3014, `内置菜单修改应 body 3014，实际 ${putBody.code}`)
+    await expectErrToast('内置菜单禁止修改')
+    if (await dlg.isVisible()) {
+      await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
+    }
+    await waitDialogGone(page, '编辑菜单')
+    // ---- c. 种子终态：名称/状态与保护前一致 ----
+    row = await findMenuRow(SEED_NAME)
+    assert(row, '保护场景后种子菜单行应仍在（种子终态）')
+    const cellsAfter = await rowCells(row)
+    log(`  种子行（保护后）: ${JSON.stringify(cellsAfter.slice(0, 5))}`)
+    assertEq(cellsAfter[0], SEED_NAME, `种子菜单名应保持 ${SEED_NAME}`)
+    assertEq(cellsAfter[4], cellsBefore[4], `种子菜单状态应保持原值 "${cellsBefore[4]}"`)
+  })
+
   // ================= CLEANUP 删净核验：无 E2E 残留 + 种子菜单仍在 =================
   await step('CLEANUP', '删净核验：树中无 E2E 前缀残留（保护 role e2e R5a 全选断言）；种子菜单仍在', async () => {
     await loadTreePage()
@@ -447,6 +508,7 @@ try {
     }
     const rowCount = await page.locator('.el-table__row').count()
     log(`  清理后总行数: ${rowCount}`)
+    assertEq(rowCount, 23, `清理后菜单树应恰 23 行（内置种子全量，M5b 保护后零变更），实际 ${rowCount}`)
     await shot(page, 'cleanup-final.png')
   })
 

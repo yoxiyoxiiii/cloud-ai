@@ -26,6 +26,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SysRoleManageService {
 
+    /** 错误码分段：3xxx system，保护域 3013-3017（契约 2026-10-07-builtin-protection-api §4） */
+    private static final int ERR_BUILTIN = 3013;
+
     private final SysRoleMapper roleMapper;
     private final SysRoleMenuMapper roleMenuMapper;
     private final SysUserRoleMapper userRoleMapper;
@@ -61,7 +64,11 @@ public class SysRoleManageService {
     }
 
     public void update(SysRole role) {
-        requireRole(role.getId());
+        SysRole current = requireRole(role.getId());
+        // 内置保护（契约 §2 矩阵）：内置角色修改一刀切全禁（null-safe 比对，兼容 is_builtin 未加载的 null）
+        if (Integer.valueOf(SysRole.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置角色禁止修改");
+        }
         if (role.getRoleKey() != null) {
             assertRoleKeyValid(role.getRoleKey());
             assertRoleKeyFree(role.getRoleKey(), role.getId());
@@ -92,7 +99,11 @@ public class SysRoleManageService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requireRole(id);
+        SysRole current = requireRole(id);
+        // 内置保护：admin 角色是权限体系锚点，删除即全员无权限
+        if (Integer.valueOf(SysRole.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置角色禁止删除");
+        }
         roleMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
         roleMenuMapper.deleteByRoleId(id);
         userRoleMapper.deleteByRoleId(id);
@@ -100,7 +111,11 @@ public class SysRoleManageService {
 
     @Transactional(rollbackFor = Exception.class)
     public void assignMenus(Long roleId, List<Long> menuIds) {
-        requireRole(roleId);
+        SysRole current = requireRole(roleId);
+        // 内置保护：绑定操作整体拒绝——清空/摘除绑定等同删除（无权限锁死）；种子绑新菜单走 SQL 惯例
+        if (Integer.valueOf(SysRole.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置角色禁止修改权限");
+        }
         roleMenuMapper.deleteByRoleId(roleId);
         if (menuIds != null) {
             List<SysRoleMenu> list = menuIds.stream().distinct()

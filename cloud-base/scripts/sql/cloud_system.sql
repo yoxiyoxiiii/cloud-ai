@@ -19,6 +19,7 @@ CREATE TABLE sys_user (
     nickname    VARCHAR(30)  NOT NULL DEFAULT '' COMMENT '昵称',
     password    VARCHAR(100) NOT NULL COMMENT 'BCrypt 密码散列',
     status      TINYINT      NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
+    is_builtin  TINYINT      NOT NULL DEFAULT 0 COMMENT '内置标记：1=系统内置（禁删禁停用，昵称可改），0=用户创建',
     create_by   VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
     create_time DATETIME     DEFAULT NULL COMMENT '创建时间',
     update_by   VARCHAR(30)  DEFAULT NULL COMMENT '更新人',
@@ -34,6 +35,7 @@ CREATE TABLE sys_role (
     name        VARCHAR(30) NOT NULL COMMENT '角色名称',
     role_key    VARCHAR(30) NOT NULL COMMENT '角色标识',
     status      TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
+    is_builtin  TINYINT     NOT NULL DEFAULT 0 COMMENT '内置标记：1=系统内置（禁删禁改含停用），0=用户创建',
     create_by   VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
     create_time DATETIME    DEFAULT NULL COMMENT '创建时间',
     update_by   VARCHAR(30)  DEFAULT NULL COMMENT '更新人',
@@ -54,6 +56,7 @@ CREATE TABLE sys_menu (
     icon        VARCHAR(50)  NOT NULL DEFAULT '' COMMENT '菜单图标名（@element-plus/icons-vue 组件名），空串=默认图标',
     sort        INT         NOT NULL DEFAULT 0 COMMENT '排序',
     status      TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
+    is_builtin  TINYINT     NOT NULL DEFAULT 0 COMMENT '内置标记：1=系统内置（禁删禁改含停用），0=用户创建',
     create_by   VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
     create_time DATETIME    DEFAULT NULL COMMENT '创建时间',
     update_by   VARCHAR(30)  DEFAULT NULL COMMENT '更新人',
@@ -69,6 +72,7 @@ CREATE TABLE sys_dict_type (
     dict_name   VARCHAR(30) NOT NULL COMMENT '字典名称，如：用户状态',
     dict_key    VARCHAR(50) NOT NULL COMMENT '字典键，全库唯一，如：user_status',
     status      TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
+    is_builtin  TINYINT     NOT NULL DEFAULT 0 COMMENT '内置标记：1=系统内置（禁删禁改含停用），0=用户创建',
     create_by   VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
     create_time DATETIME     DEFAULT NULL COMMENT '创建时间',
     update_by   VARCHAR(30)  DEFAULT NULL COMMENT '更新人',
@@ -86,6 +90,7 @@ CREATE TABLE sys_dict_data (
     value        VARCHAR(50) NOT NULL COMMENT '存库值，同类型内唯一，如：0',
     sort         INT         NOT NULL DEFAULT 0 COMMENT '排序（同类型内升序）',
     status       TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
+    is_builtin   TINYINT     NOT NULL DEFAULT 0 COMMENT '内置标记：1=系统内置（禁删禁改含停用），0=用户创建',
     create_by    VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
     create_time  DATETIME     DEFAULT NULL COMMENT '创建时间',
     update_by    VARCHAR(30)  DEFAULT NULL COMMENT '更新人',
@@ -116,39 +121,40 @@ CREATE TABLE sys_role_menu (
 ) ENGINE = InnoDB COMMENT = '角色菜单关联（纯关系表：物理删除，无逻辑删除列）';
 
 -- ---------- 初始数据 ----------
-INSERT INTO sys_role (id, name, role_key, create_time) VALUES (1, '管理员', 'admin', NOW());
+-- 内置种子一律显式 is_builtin=1（内置保护契约 §1：后续新增内置种子 SQL 须带 is_builtin=1）
+INSERT INTO sys_role (id, name, role_key, is_builtin, create_time) VALUES (1, '管理员', 'admin', 1, NOW());
 
 -- path/icon 初值与增量脚本 2026-10-07-menu-nav.sql 语义等价（21 在线用户 path/icon 均空串，不进导航）
-INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, create_time) VALUES
-(10, 0, '系统管理',   '',                   'M', '',             'Setting',    1, NOW()),
-(11, 10, '用户管理',  'system:user:list',   'C', '/system/user', 'User',       1, NOW()),
-(12, 10, '角色管理',  'system:role:list',   'C', '/system/role', 'UserFilled', 2, NOW()),
-(13, 10, '菜单管理',  'system:menu:list',   'C', '/system/menu', 'Menu',       3, NOW()),
-(111, 11, '用户新增', 'system:user:add',    'F', '',             '',           1, NOW()),
-(112, 11, '用户修改', 'system:user:edit',   'F', '',             '',           2, NOW()),
-(113, 11, '用户删除', 'system:user:remove', 'F', '',             '',           3, NOW()),
-(114, 11, '重置密码', 'system:user:resetPwd','F', '',            '',           4, NOW()),
-(115, 11, '分配角色', 'system:user:assignRole','F', '',          '',           5, NOW()),
-(121, 12, '角色新增', 'system:role:add',    'F', '',             '',           1, NOW()),
-(122, 12, '角色修改', 'system:role:edit',   'F', '',             '',           2, NOW()),
-(123, 12, '角色删除', 'system:role:remove', 'F', '',             '',           3, NOW()),
-(124, 12, '分配权限', 'system:role:assignMenu','F', '',          '',           4, NOW()),
-(131, 13, '菜单新增', 'system:menu:add',    'F', '',             '',           1, NOW()),
-(132, 13, '菜单修改', 'system:menu:edit',   'F', '',             '',           2, NOW()),
-(133, 13, '菜单删除', 'system:menu:remove', 'F', '',             '',           3, NOW()),
-(20, 0, '认证管理',   '',                   'M', '',             'Lock',       2, NOW()),
-(21, 20, '在线用户',  'sso:online:list',    'C', '',             '',           1, NOW()),
-(211, 21, '强制下线', 'sso:online:kick',    'F', '',             '',           1, NOW()),
+INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_builtin, create_time) VALUES
+(10, 0, '系统管理',   '',                   'M', '',             'Setting',    1, 1, NOW()),
+(11, 10, '用户管理',  'system:user:list',   'C', '/system/user', 'User',       1, 1, NOW()),
+(12, 10, '角色管理',  'system:role:list',   'C', '/system/role', 'UserFilled', 2, 1, NOW()),
+(13, 10, '菜单管理',  'system:menu:list',   'C', '/system/menu', 'Menu',       3, 1, NOW()),
+(111, 11, '用户新增', 'system:user:add',    'F', '',             '',           1, 1, NOW()),
+(112, 11, '用户修改', 'system:user:edit',   'F', '',             '',           2, 1, NOW()),
+(113, 11, '用户删除', 'system:user:remove', 'F', '',             '',           3, 1, NOW()),
+(114, 11, '重置密码', 'system:user:resetPwd','F', '',            '',           4, 1, NOW()),
+(115, 11, '分配角色', 'system:user:assignRole','F', '',          '',           5, 1, NOW()),
+(121, 12, '角色新增', 'system:role:add',    'F', '',             '',           1, 1, NOW()),
+(122, 12, '角色修改', 'system:role:edit',   'F', '',             '',           2, 1, NOW()),
+(123, 12, '角色删除', 'system:role:remove', 'F', '',             '',           3, 1, NOW()),
+(124, 12, '分配权限', 'system:role:assignMenu','F', '',          '',           4, 1, NOW()),
+(131, 13, '菜单新增', 'system:menu:add',    'F', '',             '',           1, 1, NOW()),
+(132, 13, '菜单修改', 'system:menu:edit',   'F', '',             '',           2, 1, NOW()),
+(133, 13, '菜单删除', 'system:menu:remove', 'F', '',             '',           3, 1, NOW()),
+(20, 0, '认证管理',   '',                   'M', '',             'Lock',       2, 1, NOW()),
+(21, 20, '在线用户',  'sso:online:list',    'C', '',             '',           1, 1, NOW()),
+(211, 21, '强制下线', 'sso:online:kick',    'F', '',             '',           1, 1, NOW()),
 -- 字典管理菜单（种子分段 14x；与增量脚本 2026-10-07-dict-mgmt.sql 语义等价，
 -- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定）
-(14, 10, '字典管理',  'system:dict:list',   'C', '/system/dict', 'Files',      4, NOW()),
-(141, 14, '字典新增', 'system:dict:add',    'F', '',             '',           1, NOW()),
-(142, 14, '字典修改', 'system:dict:edit',   'F', '',             '',           2, NOW()),
-(143, 14, '字典删除', 'system:dict:remove', 'F', '',             '',           3, NOW());
+(14, 10, '字典管理',  'system:dict:list',   'C', '/system/dict', 'Files',      4, 1, NOW()),
+(141, 14, '字典新增', 'system:dict:add',    'F', '',             '',           1, 1, NOW()),
+(142, 14, '字典修改', 'system:dict:edit',   'F', '',             '',           2, 1, NOW()),
+(143, 14, '字典删除', 'system:dict:remove', 'F', '',             '',           3, 1, NOW());
 
 -- admin 账号（密码 admin123）
-INSERT INTO sys_user (id, account, nickname, password, create_time) VALUES
-(1, 'admin', '管理员', '$2a$10$.8cM9ZR8tr7HxklhRPzmwORoIi.z8urt0wZ4a3QaGwgFyyGMle4sG', NOW());
+INSERT INTO sys_user (id, account, nickname, password, is_builtin, create_time) VALUES
+(1, 'admin', '管理员', '$2a$10$.8cM9ZR8tr7HxklhRPzmwORoIi.z8urt0wZ4a3QaGwgFyyGMle4sG', 1, NOW());
 
 INSERT INTO sys_user_role (user_id, role_id, create_time) VALUES (1, 1, NOW());
 INSERT INTO sys_role_menu (role_id, menu_id, create_time)
@@ -156,9 +162,9 @@ SELECT 1, id, NOW() FROM sys_menu;
 
 -- 内置字典种子 user_status（与增量脚本 2026-10-07-translation.sql 语义等价；
 -- label 文案锁定契约 2026-10-07-translation-api §0.3，create_by='system' 内置标记）
-INSERT INTO sys_dict_type (id, dict_name, dict_key, status, create_by, create_time, update_by, update_time) VALUES
-(1, '用户状态', 'user_status', 0, 'system', NOW(), 'system', NOW());
+INSERT INTO sys_dict_type (id, dict_name, dict_key, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
+(1, '用户状态', 'user_status', 0, 1, 'system', NOW(), 'system', NOW());
 
-INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, create_by, create_time, update_by, update_time) VALUES
-(1, 1, '正常', '0', 1, 0, 'system', NOW(), 'system', NOW()),
-(2, 1, '停用', '1', 2, 0, 'system', NOW(), 'system', NOW());
+INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
+(1, 1, '正常', '0', 1, 0, 1, 'system', NOW(), 'system', NOW()),
+(2, 1, '停用', '1', 2, 0, 1, 'system', NOW(), 'system', NOW());

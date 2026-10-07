@@ -3,7 +3,8 @@
  *
  * 运行前提：后端 gateway 18080 / sso 9201 / system 9202 已启动；前端 dev 5173 已启动（/api 代理 18080）
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 node run-role-e2e.mjs）
- * 测试数据：角色 roleKey 用 e2e 前缀+时间戳；绝不删 admin 角色、绝不改 admin 绑定（R5 只读 admin 回显）
+ * 测试数据：角色 roleKey 用 e2e 前缀+时间戳；绝不删 admin 角色、绝不改 admin 绑定（R5 只读 admin 回显）；
+ *           R6b 内置保护对 admin 角色仅做"尝试后验证拒"（3013，契约 2026-10-07-builtin-protection §2，种子零变更）
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -46,7 +47,13 @@ const apiPath = (url, pathname) => new URL(url).pathname === pathname
  * 创建人列同为 admin 的其他行，id 倒序时测试行在前）
  */
 async function findRoleRowByKey(page, roleKey) {
+  // 首渲染竞态修复（同 harness findRow 的 S10 修复）：goto 后表格/分页可能尚未首渲染
+  // （waitTableIdle 对"mask 未出现"直接放行），空表 DOM 会让下方"btn-next 不存在"分支提前
+  // return null（R6b 曾误判）——先等本次列表接口（*/page）响应落定，再等首行或分页控件可见
+  const listP = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith('/page'), { timeout: 15000 }).catch(() => null)
   await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
+  await listP
+  await page.locator('.el-table__row, .el-pagination').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {})
   await waitTableIdle(page)
   for (let guard = 0; guard < 30; guard++) {
     const rows = page.locator('.el-table__row')
@@ -62,6 +69,21 @@ async function findRoleRowByKey(page, roleKey) {
     await sleep(300)
   }
   return null
+}
+
+/** 期望错误 toast（超时兜底抓页上实际 toast 文案进失败信息——内置保护断言专用，R6b） */
+async function expectErrToast(expected) {
+  try {
+    const t = await waitToast(page, expected, 'error')
+    log(`  toast: "${t}"`)
+    return t
+  } catch {
+    const present = []
+    const msgs = page.locator('.el-message')
+    const n = await msgs.count()
+    for (let i = 0; i < n; i++) present.push((await msgs.nth(i).innerText()).trim())
+    throw new Error(`期望错误 toast "${expected}" 未出现，页上实际 toast: ${JSON.stringify(present)}`)
+  }
 }
 
 /** 等分配权限弹窗内分组布局渲染并回显落定（勾选设置发生在 loading 遮罩撤下前） */
@@ -407,6 +429,68 @@ try {
     await shot(page, 'r6-after-delete.png')
   })
 
+  // ================= R6b 内置角色保护（契约 2026-10-07-builtin-protection §2：admin 角色"尝试后验证拒"） =================
+  await step('R6b', '内置角色保护：admin 删除/编辑/分配权限均被 3013 拒（toast 文案）→ 行原样', async () => {
+    // ---- a. 删除确认 → 3013 拒 ----
+    let row = await findRoleRowByKey(page, 'admin')
+    assert(row, '应能定位 admin 角色行')
+    const cellsBefore = await rowCells(row)
+    log(`  admin 角色行（保护前）: ${JSON.stringify(cellsBefore.slice(0, 3))}`)
+    await row.getByRole('button', { name: '删除' }).click()
+    const box = page.locator('.el-message-box')
+    await box.waitFor({ state: 'visible', timeout: 8000 })
+    await shot(page, 'r6b-delete-confirm.png')
+    const delP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/role/'), { timeout: 15000 })
+    await box.locator('.el-message-box__btns .el-button--primary').click()
+    const del = await delP
+    const delBody = await del.json()
+    log(`  删除接口: HTTP ${del.status()} code=${delBody.code} msg="${delBody.msg}"`)
+    assertEq(del.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(delBody.code, 3013, `内置角色删除应 body 3013，实际 ${delBody.code}`)
+    await expectErrToast('内置角色禁止删除')
+    row = await findRoleRowByKey(page, 'admin')
+    assert(row, '3013 拒绝后 admin 角色行应仍在')
+    // ---- b. 编辑提交（回显值原样，零改动）→ 3013 拒 ----
+    await row.getByRole('button', { name: '编辑' }).click()
+    let dlg = page.locator('.el-dialog', { hasText: '编辑角色' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    const putP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/role') && r.request().method() === 'PUT', { timeout: 15000 })
+    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const put = await putP
+    const putBody = await put.json()
+    log(`  编辑提交接口: HTTP ${put.status()} code=${putBody.code} msg="${putBody.msg}"`)
+    assertEq(putBody.code, 3013, `内置角色修改应 body 3013，实际 ${putBody.code}`)
+    await expectErrToast('内置角色禁止修改')
+    assert(await dlg.isVisible(), '3013 后弹窗应保持打开（可改后重提，同 R3 语义）')
+    await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
+    await waitDialogGone(page, '编辑角色')
+    // ---- c. 分配权限保存（回显态原样提交，勾选零改动）→ 3013 拒 ----
+    row = await findRoleRowByKey(page, 'admin')
+    await row.getByRole('button', { name: '分配权限' }).click()
+    dlg = page.locator('.el-dialog', { hasText: '分配权限' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    await waitTreeReady(dlg)
+    const assignP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/role/menu') && r.request().method() === 'PUT', { timeout: 15000 })
+    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const assign = await assignP
+    const assignBody = await assign.json()
+    log(`  分配权限接口: HTTP ${assign.status()} code=${assignBody.code} msg="${assignBody.msg}"`)
+    assertEq(assignBody.code, 3013, `内置角色分配权限应 body 3013，实际 ${assignBody.code}`)
+    await expectErrToast('内置角色禁止修改权限')
+    if (await dlg.isVisible()) {
+      await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
+    }
+    await waitDialogGone(page, '分配权限')
+    // ---- d. 种子终态：角色名/roleKey/状态与保护前一致 ----
+    row = await findRoleRowByKey(page, 'admin')
+    assert(row, '保护场景后 admin 角色行应仍在（种子终态）')
+    const cellsAfter = await rowCells(row)
+    log(`  admin 角色行（保护后）: ${JSON.stringify(cellsAfter.slice(0, 3))}`)
+    assertEq(cellsAfter[0], cellsBefore[0], `admin 角色名应保持原值 "${cellsBefore[0]}"`)
+    assertEq(cellsAfter[1], 'admin', 'admin roleKey 应保持 admin')
+    assertEq(cellsAfter[2], cellsBefore[2], `admin 角色状态应保持原值 "${cellsBefore[2]}"`)
+  })
+
   // ---------- 清理核验：角色表无 e2e 前缀残留、admin 角色仍在 ----------
   await step('CLEANUP', '清理核验：无 e2e 前缀角色残留，admin 角色未被改动', async () => {
     await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
@@ -416,6 +500,11 @@ try {
     assertEq(anyE2e, 0, '清理后角色表中不应残留 e2e 前缀 roleKey 行')
     const adminStill = await findRoleRowByKey(page, 'admin')
     assert(adminStill, 'admin 角色应仍在列表（绝不删 admin 纪律核验）')
+    const adminCells = await rowCells(adminStill)
+    log(`  admin 角色终态: ${JSON.stringify(adminCells.slice(0, 3))}`)
+    assertEq(adminCells[0], '管理员', 'admin 角色名称终态应为 管理员（R6b 保护后原样）')
+    assertEq(adminCells[1], 'admin', 'admin roleKey 终态应为 admin')
+    assertEq(adminCells[2], '正常', 'admin 角色状态终态应为 正常')
     const totalText = (await page.locator('.el-pagination__total').innerText()).trim()
     log(`  清理后角色表 total: "${totalText}"`)
     assertEq(parseInt((totalText.match(/\d+/) || ['0'])[0], 10), roleTableTotal, `清理后 total 应回到初始值 ${roleTableTotal}`)

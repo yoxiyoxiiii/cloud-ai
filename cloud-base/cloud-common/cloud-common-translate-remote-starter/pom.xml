@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.cloudai</groupId>
+        <artifactId>cloud-common</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>cloud-common-translate-remote-starter</artifactId>
+    <name>cloud-common-translate-remote-starter</name>
+    <description>翻译 Provider 远程化（程序式 Feign 客户端 + 远程回源 Provider，消费方引依赖即用；system 不引入——本地 Provider 优先）</description>
+
+    <dependencies>
+        <!-- SPI 接口与共享 DTO（DictSourceProvider/UserSourceProvider、DictItemEntry/UserEntry）来自主 starter -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-translate-starter</artifactId>
+        </dependency>
+        <!-- 程序式 Feign 客户端（FeignClientBuilder + FeignAutoConfiguration）与负载均衡寻址（服务名 → 实例）；
+             版本随根 pom dependencyManagement 收敛（sso 无版本号先例），不设 optional——模块存在的意义即引入 -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+        <!-- 仅供测试：ApplicationContextRunner 条件装配脚手架 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

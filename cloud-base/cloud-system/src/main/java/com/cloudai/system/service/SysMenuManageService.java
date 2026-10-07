@@ -18,6 +18,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SysMenuManageService {
 
+    /** 错误码分段：3xxx system，保护域 3013-3017（契约 2026-10-07-builtin-protection-api §4） */
+    private static final int ERR_BUILTIN = 3014;
+
     private final SysMenuMapper menuMapper;
     private final SysRoleMenuMapper roleMenuMapper;
 
@@ -52,7 +55,11 @@ public class SysMenuManageService {
     }
 
     public void update(SysMenu menu) {
-        requireMenu(menu.getId());
+        SysMenu current = requireMenu(menu.getId());
+        // 内置保护（契约 §2 矩阵）：内置菜单修改一刀切全禁——perms/type/path 改动会破坏授权/路由映射
+        if (Integer.valueOf(SysMenu.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置菜单禁止修改");
+        }
         // name 非空但空白 → 拦截（默认码 1002）；null 不拦——部分更新语义，与 role 的 roleKey 口径一致
         if (menu.getName() != null && menu.getName().isBlank()) {
             throw new BusinessException("菜单名称不能为空");
@@ -94,7 +101,11 @@ public class SysMenuManageService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requireMenu(id);
+        SysMenu current = requireMenu(id);
+        // 内置保护：种子菜单是权限体系的权限标识载体，删除即按钮/菜单授权失效
+        if (Integer.valueOf(SysMenu.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置菜单禁止删除");
+        }
         Long childCount = menuMapper.countByParentId(id);
         if (childCount > 0) {
             throw new BusinessException(3005, "存在子菜单，先删除子级");

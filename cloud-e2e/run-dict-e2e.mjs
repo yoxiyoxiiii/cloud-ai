@@ -5,7 +5,8 @@
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 npm run e2e:dict）
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码
  * 测试数据（删净纪律最高优先）：
- * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；user_status 为内置种子（翻译契约 §0.3，当前无防删保护）——零触碰，仍不碰库内非本脚本数据
+ * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；user_status 为内置种子（翻译契约 §0.3）——零放行触碰；
+ *   D5b 内置保护对 user_status/种子项仅做"尝试后验证拒"（3015/3016，契约 2026-10-07-builtin-protection §2，种子零变更）
  * - 结束清扫全部 e2e 前缀类型（含 D5 的 e2econs；先删项后删类型，3011 禁删约束）并断言左表无 e2e 残留、仅剩种子
  * 核心断言（契约 §2 §3 §5；界面重构后字典项管理在弹框内——2026-10-07-dict-ui-list-dialog plan D4）：
  * - D0 侧边 字典管理 位于 菜单管理 之后 + 面包屑 首页/字典管理 + admin 重登快照含 dict 权限（新增类型按钮可见）
@@ -153,6 +154,21 @@ async function confirmDelete(expected) {
   assert(boxText.includes(expected), `确认框文案应含 "${expected}"，实际 "${boxText}"`)
   await box.locator('.el-message-box__btns .el-button--primary').click()
   return boxText
+}
+
+/** 期望错误 toast（超时兜底抓页上实际 toast 文案进失败信息——内置保护断言专用，D5b） */
+async function expectErrToast(expected) {
+  try {
+    const t = await waitToast(page, expected, 'error')
+    log(`  toast: "${t}"`)
+    return t
+  } catch {
+    const present = []
+    const msgs = page.locator('.el-message')
+    const n = await msgs.count()
+    for (let i = 0; i < n; i++) present.push((await msgs.nth(i).innerText()).trim())
+    throw new Error(`期望错误 toast "${expected}" 未出现，页上实际 toast: ${JSON.stringify(present)}`)
+  }
 }
 
 /** 删净弹框内当前类型的全部字典项（逐行首项删，含确认框文案断言；页大小 10 场景足够） */
@@ -606,6 +622,66 @@ try {
     assertEq(seed.data[0].value, '0', '种子首项 value 应为 "0"')
     assertEq(seed.data[1].label, '停用', '种子次项应为 停用（sort 2）')
     assertEq(seed.data[1].value, '1', '种子次项 value 应为 "1"')
+  })
+
+  // ================= D5b 内置字典保护（契约 2026-10-07-builtin-protection §2：user_status"尝试后验证拒"） =================
+  await step('D5b', '内置字典保护：user_status 删除 → 3015（先于 3011 的次序断言点）→ 弹框内种子项删除 → 3016 → 行/项原样', async () => {
+    // ---- a. 种子类型删除被拒：body 3015 + toast 文案必须是内置保护而非 3011"先删除字典项"（user_status 有 2 项，旧路径必 3011） ----
+    await loadDictPage()
+    let row = await findTypeRowByKey('user_status', { reload: false })
+    assert(row, '应能定位 user_status 种子类型行')
+    const cellsBefore = await rowCells(row)
+    log(`  种子类型行（保护前）: ${JSON.stringify(cellsBefore)}`)
+    await row.getByRole('button', { name: '删除' }).click()
+    const box = page.locator('.el-message-box')
+    await box.waitFor({ state: 'visible', timeout: 8000 })
+    const boxText = (await box.innerText()).trim().replace(/\n/g, ' | ')
+    log(`  删除类型确认框: ${boxText}`)
+    assert(boxText.includes('确定删除字典类型 "用户状态"'), `确认框文案应含 确定删除字典类型 "用户状态"，实际 "${boxText}"`)
+    await shot(page, 'd5b-delete-confirm.png')
+    const delP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/dict/type/'), { timeout: 15000 })
+    await box.locator('.el-message-box__btns .el-button--primary').click()
+    const del = await delP
+    const delBody = await del.json()
+    log(`  删除类型接口: HTTP ${del.status()} code=${delBody.code} msg="${delBody.msg}"`)
+    assertEq(del.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(delBody.code, 3015, `内置类型删除应 body 3015（保护校验先于 3011 项检查），实际 ${delBody.code}`)
+    await expectErrToast('内置字典类型禁止删除')
+    row = await findTypeRowByKey('user_status', { reload: false })
+    assert(row, '3015 拒绝后 user_status 类型行应仍在')
+    // ---- b. 弹框内种子项（正常 id=1）删除被拒 → 3016 ----
+    const dlg = await openDataDialog(row)
+    const itemRows = dlg.locator('.el-table__row')
+    assertEq(await itemRows.count(), 2, '种子弹框应恰 2 行（正常/停用）')
+    const firstCells = await rowCells(itemRows.first())
+    log(`  种子首项行: ${JSON.stringify(firstCells)}`)
+    assertEq(firstCells[0], '正常', '种子首项应为 正常（id=1，sort 1）')
+    await itemRows.first().getByRole('button', { name: '删除' }).click()
+    const itemBox = page.locator('.el-message-box')
+    await itemBox.waitFor({ state: 'visible', timeout: 8000 })
+    const itemBoxText = (await itemBox.innerText()).trim().replace(/\n/g, ' | ')
+    log(`  删项确认框: ${itemBoxText}`)
+    assert(itemBoxText.includes('确定删除字典项 "正常"'), `确认框文案应含 确定删除字典项 "正常"，实际 "${itemBoxText}"`)
+    const itemDelP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/dict/data/'), { timeout: 15000 })
+    await itemBox.locator('.el-message-box__btns .el-button--primary').click()
+    const itemDel = await itemDelP
+    const itemDelBody = await itemDel.json()
+    log(`  删除项接口: HTTP ${itemDel.status()} code=${itemDelBody.code} msg="${itemDelBody.msg}"`)
+    assertEq(itemDelBody.code, 3016, `内置字典项删除应 body 3016，实际 ${itemDelBody.code}`)
+    await expectErrToast('内置字典项禁止删除')
+    assertEq(await dlg.locator('.el-table__row').count(), 2, '3016 拒绝后弹框内种子项应仍恰 2 行')
+    const dlgTotal = (await dlg.locator('.el-pagination__total').innerText()).trim()
+    assertEq(dlgTotal, '共 2 条', `弹框分页应仍为 共 2 条，实际 "${dlgTotal}"`)
+    await shot(page, 'd5b-item-3016.png')
+    await closeDataDialog()
+    // ---- c. 种子终态：类型名/键/状态与保护前一致 ----
+    row = await findTypeRowByKey('user_status', { reload: false })
+    assert(row, '保护场景后 user_status 类型行应仍在（种子终态）')
+    const cellsAfter = await rowCells(row)
+    log(`  种子类型行（保护后）: ${JSON.stringify(cellsAfter)}`)
+    assertEq(cellsAfter[0], '用户状态', '种子类型名应保持 用户状态')
+    assertEq(cellsAfter[1], 'user_status', '种子 dictKey 应保持 user_status')
+    assertEq(cellsAfter[2], cellsBefore[2], `种子类型状态应保持原值 "${cellsBefore[2]}"`)
   })
 
   // ================= CLEANUP 删净（兜底清扫全部 e2e 前缀类型：先删项后删类型；D5 的 e2econs 含在内） =================

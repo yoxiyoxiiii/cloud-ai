@@ -29,10 +29,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SysDictTypeManageService {
 
-    /** 错误码分段：3xxx system，字典域占用 3008-3012，3013 起归内置角色/菜单保护另案（契约 §5） */
+    /** 错误码分段：3xxx system，字典域占用 3008-3012；保护域 3013-3017（契约 2026-10-07-builtin-protection-api §4） */
     private static final int ERR_TYPE_NOT_FOUND = 3008;
     private static final int ERR_DICT_KEY_DUP = 3009;
     private static final int ERR_TYPE_HAS_DATA = 3011;
+    private static final int ERR_BUILTIN = 3015;
 
     private final SysDictTypeMapper dictTypeMapper;
     private final SysDictDataMapper dictDataMapper;
@@ -68,6 +69,10 @@ public class SysDictTypeManageService {
 
     public void update(DictTypeSaveRequest req) {
         SysDictType current = requireType(req.getId());
+        // 内置保护（契约 §2 矩阵）：dictKey 改动会打断 @DictTrans 注解引用、停用使翻译静默死亡——一刀切全禁
+        if (Integer.valueOf(SysDictType.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置字典类型禁止修改");
+        }
         // 空白串拦截；null 不拦——部分更新语义，与 role 的 roleKey 口径一致
         if (req.getDictName() != null && req.getDictName().isBlank()) {
             throw new BusinessException("字典名称不能为空");
@@ -101,6 +106,10 @@ public class SysDictTypeManageService {
     /** 单表单语句无 @Transactional；禁删有项类型（3011），不做级联逻辑删（设计 D5），count-then-delete 的 TOCTOU 窗口接受 */
     public void delete(Long id) {
         SysDictType type = requireType(id);
+        // 内置保护先于 3011 项检查（契约 §1 校验顺序：内置行操作一上手即被拒，错误原因准确）
+        if (Integer.valueOf(SysDictType.BuiltinEnum.BUILT_IN.getCode()).equals(type.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置字典类型禁止删除");
+        }
         Long dataCount = dictDataMapper.countByTypeId(id);
         if (dataCount > 0) {
             throw new BusinessException(ERR_TYPE_HAS_DATA, "该字典类型下存在字典项，先删除字典项");

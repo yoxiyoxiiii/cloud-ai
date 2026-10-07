@@ -32,10 +32,11 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SysDictDataManageService {
 
-    /** 错误码分段：3xxx system，字典域占用 3008-3012，3013 起归内置角色/菜单保护另案（契约 §5） */
+    /** 错误码分段：3xxx system，字典域占用 3008-3012；保护域 3013-3017（契约 2026-10-07-builtin-protection-api §4） */
     private static final int ERR_TYPE_NOT_FOUND = 3008;
     private static final int ERR_DATA_NOT_FOUND = 3010;
     private static final int ERR_VALUE_DUP = 3012;
+    private static final int ERR_BUILTIN = 3016;
 
     private final SysDictDataMapper dictDataMapper;
     private final SysDictTypeMapper dictTypeMapper;
@@ -81,6 +82,10 @@ public class SysDictDataManageService {
 
     public void update(DictDataSaveRequest req) {
         SysDictData current = requireData(req.getId());
+        // 内置保护（契约 §2 矩阵）：value 改动打断存量数据对齐——一刀切全禁
+        if (Integer.valueOf(SysDictData.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置字典项禁止修改");
+        }
         // 空白串拦截；null 不拦——部分更新语义
         if (req.getLabel() != null && req.getLabel().isBlank()) {
             throw new BusinessException("标签不能为空");
@@ -120,6 +125,10 @@ public class SysDictDataManageService {
     /** 单表单语句无 @Transactional；不校验所属类型是否存活（契约 §3.4） */
     public void delete(Long id) {
         SysDictData current = requireData(id);
+        // 内置保护：user_status 项是翻译/下拉契约文案锚点（正常/停用）
+        if (Integer.valueOf(SysDictData.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置字典项禁止删除");
+        }
         dictDataMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
         evictDictTransCacheByTypeId(current.getDictTypeId());
     }

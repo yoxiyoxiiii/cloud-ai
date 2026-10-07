@@ -24,6 +24,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -218,5 +219,42 @@ class SysDictTypeManageServiceTest {
         assertThatCode(() -> service.save(request("新状态", "new_status")))
                 .doesNotThrowAnyException();
         verify(dictTypeMapper).save(any(SysDictType.class));
+    }
+
+    // ---- 内置保护（契约 2026-10-07-builtin-protection-api §2：内置字典类型一刀切全禁，3015 且先于 3011）----
+
+    private SysDictType builtinType(Long id) {
+        SysDictType type = new SysDictType();
+        type.setId(id);
+        type.setDictKey("user_status");
+        type.setIsBuiltin(SysDictType.BuiltinEnum.BUILT_IN.getCode());
+        return type;
+    }
+
+    @Test
+    void update_builtinTypeRejected() {
+        when(dictTypeMapper.findById(1L)).thenReturn(builtinType(1L));
+        DictTypeSaveRequest req = request("改", "改键");
+        req.setId(1L);
+        assertThatThrownBy(() -> service.update(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内置字典类型禁止修改")
+                .extracting("code")
+                .isEqualTo(3015);
+        verify(dictTypeMapper, never()).update(any(SysDictType.class));
+    }
+
+    /** 保护先于 3011：user_status 有 2 项（旧路径必 3011），新路径须 3015（契约 §1 校验顺序） */
+    @Test
+    void delete_builtinTypeRejectedPriorToItemCheck() {
+        when(dictTypeMapper.findById(1L)).thenReturn(builtinType(1L));
+        // lenient：保护先抛时 count 不执行；若执行（顺序错误）撞 3011 使 code 断言失败
+        lenient().when(dictDataMapper.countByTypeId(1L)).thenReturn(2L);
+        assertThatThrownBy(() -> service.delete(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内置字典类型禁止删除")
+                .extracting("code")
+                .isEqualTo(3015);
+        verify(dictTypeMapper, never()).deleteById(anyLong(), anyString(), any());
     }
 }

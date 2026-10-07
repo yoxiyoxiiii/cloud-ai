@@ -28,6 +28,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class SysUserManageService {
 
+    /** 错误码分段：3xxx system，保护域 3013-3017（契约 2026-10-07-builtin-protection-api §4） */
+    private static final int ERR_BUILTIN = 3017;
+
     private final SysUserMapper userMapper;
     private final SysUserRoleMapper userRoleMapper;
     private final PasswordEncoder passwordEncoder;
@@ -84,6 +87,11 @@ public class SysUserManageService {
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, UserSaveRequest req) {
         SysUser user = requireUser(id);
+        // 内置保护（契约 §2 矩阵，用户域例外）：仅禁停用——按请求值判定（status=1 拒，0/null 放行），nickname 正常更新
+        if (Integer.valueOf(SysUser.BuiltinEnum.BUILT_IN.getCode()).equals(user.getIsBuiltin())
+                && Integer.valueOf(SysUser.StatusEnum.DISABLED.getCode()).equals(req.getStatus())) {
+            throw new BusinessException(ERR_BUILTIN, "内置用户禁止停用");
+        }
         user.setNickname(req.getNickname());
         user.setStatus(req.getStatus());
         user.setUpdateBy(SecurityUtils.currentAccount());
@@ -94,7 +102,11 @@ public class SysUserManageService {
 
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        requireUser(id);
+        SysUser current = requireUser(id);
+        // 内置保护：admin 是唯一种子账号，删除即登录入口消失
+        if (Integer.valueOf(SysUser.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置用户禁止删除");
+        }
         userMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
         userRoleMapper.deleteByUserId(id);
         evictUserTransCache();
@@ -112,7 +124,11 @@ public class SysUserManageService {
 
     @Transactional(rollbackFor = Exception.class)
     public void assignRoles(Long userId, List<Long> roleIds) {
-        requireUser(userId);
+        SysUser current = requireUser(userId);
+        // 内置保护（拍板延伸，设计 D6/契约 §5.2）：绑定操作整体拒绝——清空绑定 = 无权限锁死（独立三行便于剔除）
+        if (Integer.valueOf(SysUser.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
+            throw new BusinessException(ERR_BUILTIN, "内置用户禁止修改角色");
+        }
         userRoleMapper.deleteByUserId(userId);
         if (roleIds != null) {
             List<SysUserRole> list = roleIds.stream().distinct()

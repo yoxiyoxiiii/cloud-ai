@@ -221,4 +221,39 @@ class SysDictDataManageServiceTest {
         service.listByDictKey("user_status");
         verify(translationCacheService).listDictItems("user_status");
     }
+
+    // ---- 内置保护（契约 2026-10-07-builtin-protection-api §2：内置字典项一刀切全禁，3016）----
+
+    private SysDictData builtinData(Long id) {
+        SysDictData data = new SysDictData();
+        data.setId(id);
+        data.setDictTypeId(1L);
+        data.setValue("0");
+        data.setIsBuiltin(SysDictData.BuiltinEnum.BUILT_IN.getCode());
+        return data;
+    }
+
+    @Test
+    void update_builtinDataRejected() {
+        when(dictDataMapper.findById(1L)).thenReturn(builtinData(1L));
+        DictDataSaveRequest req = request(null, "改", null);
+        req.setId(1L);
+        assertThatThrownBy(() -> service.update(req))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内置字典项禁止修改")
+                .extracting("code")
+                .isEqualTo(3016);
+        verify(dictDataMapper, never()).update(any(SysDictData.class));
+    }
+
+    @Test
+    void delete_builtinDataRejected() {
+        when(dictDataMapper.findById(1L)).thenReturn(builtinData(1L));
+        assertThatThrownBy(() -> service.delete(1L))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("内置字典项禁止删除")
+                .extracting("code")
+                .isEqualTo(3016);
+        verify(dictDataMapper, never()).deleteById(anyLong(), anyString(), any());
+    }
 }

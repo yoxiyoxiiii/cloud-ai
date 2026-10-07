@@ -6,6 +6,7 @@
  * 目标入口：E2E_BASE_URL 环境变量覆盖（默认 http://localhost:5173）
  * 截图输出：cloud-e2e/artifacts/*.png
  * 测试数据：账号 e2e+时间戳（仅作用于该测试账号，不改 admin；结束时删除该账号）
+ *           S14b 内置保护：对 admin 行仅做"尝试后验证拒"（3013-3017 域，种子零变更——契约 2026-10-07-builtin-protection §2）
  * 公共工具已抽 lib/harness.mjs（设计 D5）——本脚本只保留用户管理场景本体
  */
 import { chromium } from 'playwright'
@@ -28,6 +29,21 @@ const TEST_NICKNAME = 'E2E测试用户'
 const TEST_NICKNAME_V2 = 'E2E测试用户v2'
 const TEST_PWD = 'e2ePass123'
 const TEST_PWD_NEW = 'e2eNew456'
+
+/** 期望错误 toast（超时兜底抓页上实际 toast 文案进失败信息——内置保护断言专用，S14b） */
+async function expectErrToast(expected) {
+  try {
+    const t = await waitToast(page, expected, 'error')
+    log(`  toast: "${t}"`)
+    return t
+  } catch {
+    const present = []
+    const msgs = page.locator('.el-message')
+    const n = await msgs.count()
+    for (let i = 0; i < n; i++) present.push((await msgs.nth(i).innerText()).trim())
+    throw new Error(`期望错误 toast "${expected}" 未出现，页上实际 toast: ${JSON.stringify(present)}`)
+  }
+}
 
 // ---------- 主流程 ----------
 // 主控要求：默认有头模式（用户可在本机看到 UI 效果）+ slowMo 300；--headless 或 E2E_HEADLESS=1 可切回无头
@@ -474,7 +490,15 @@ try {
     assertEq(adminVo.statusLabel, '正常', 'admin 译文字段 statusLabel 应为 "正常"（字典命中）')
     assertEq(adminVo.createBy, null, 'admin 原字段 createBy 应为 null（种子原样）')
     assert('createByName' in adminVo && adminVo.createByName === null, 'admin createByName 必返且为 null（翻译未命中降级，不是错误）')
-    assert('updateByName' in adminVo && adminVo.updateByName === null, 'admin updateByName 必返且为 null')
+    // admin.updateBy 现值随管理操作演进（B7 放行冒烟改昵称后 updateBy=admin，API 无法置回 null）——
+    // 断言口径改为状态一致：字段必返 + updateBy=null → updateByName=null（降级链）/updateBy=admin → 管理员（译文）
+    assert('updateByName' in adminVo, 'admin updateByName 必返')
+    if (adminVo.updateBy === null) {
+      assertEq(adminVo.updateByName, null, 'updateBy=null 时 updateByName 应为 null（降级链终点）')
+    } else {
+      assertEq(adminVo.updateBy, 'admin', `admin updateBy 现值应为 admin（B7 后审计演进），实际 "${adminVo.updateBy}"`)
+      assertEq(adminVo.updateByName, '管理员', 'updateBy=admin 时 updateByName 应为 管理员（译文）')
+    }
   })
 
   // ================= S13 分配角色 =================
@@ -596,6 +620,56 @@ try {
     assertEq(parseInt((totalText.match(/\d+/) || ['0'])[0], 10), tableTotal, `清理后 total 应回到初始值 ${tableTotal}`)
     const anyE2e = await page.locator('.el-table__row', { hasText: 'e2e' }).count()
     assertEq(anyE2e, 0, '清理后表中不应残留 e2e 前缀账号')
+  })
+
+  // ================= S14b 内置用户保护（契约 2026-10-07-builtin-protection §2：admin 行"尝试后验证拒"，不做任何放行写） =================
+  await step('S14b', '内置用户保护：admin 删除/停用均被 3017 拒（toast 文案）→ 行/昵称/状态原样', async () => {
+    // ---- a. 删除确认 → 3017 拒 ----
+    let row = await findRow(page, 'admin')
+    assert(row, '应能定位 admin 行')
+    const cellsBefore = await rowCells(row)
+    log(`  admin 行（保护前）: ${JSON.stringify(cellsBefore.slice(0, 3))}`)
+    await row.getByRole('button', { name: '删除' }).click()
+    const box = page.locator('.el-message-box')
+    await box.waitFor({ state: 'visible', timeout: 8000 })
+    const boxText = (await box.innerText()).trim().replace(/\n/g, ' | ')
+    log(`  删除确认框: ${boxText}`)
+    assert(boxText.includes('admin'), `确认框文案应含 admin，实际 "${boxText}"`)
+    const delP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/user/'), { timeout: 15000 })
+    await box.locator('.el-message-box__btns .el-button--primary').click()
+    const del = await delP
+    const delBody = await del.json()
+    log(`  删除接口: HTTP ${del.status()} code=${delBody.code} msg="${delBody.msg}"`)
+    assertEq(del.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(delBody.code, 3017, `内置用户删除应 body 3017，实际 ${delBody.code}`)
+    await expectErrToast('内置用户禁止删除')
+    await shot(page, 's14b-delete-3017.png')
+    row = await findRow(page, 'admin')
+    assert(row, '3017 拒绝后 admin 行应仍在')
+    // ---- b. 编辑停用提交 → 3017 拒（弹窗回显值直接提交，仅触发被拒路径——admin 行零放行写） ----
+    await row.getByRole('button', { name: '编辑' }).click()
+    const dlg = page.locator('.el-dialog', { hasText: '编辑用户' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    await dlg.locator('.el-radio', { hasText: '停用' }).click()
+    const putP = page.waitForResponse((r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === '/api/system/user', { timeout: 15000 })
+    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const put = await putP
+    const putBody = await put.json()
+    log(`  停用提交接口: HTTP ${put.status()} code=${putBody.code} msg="${putBody.msg}"`)
+    assertEq(putBody.code, 3017, `内置用户停用应 body 3017，实际 ${putBody.code}`)
+    await expectErrToast('内置用户禁止停用')
+    if (await dlg.isVisible()) {
+      await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
+    }
+    await waitDialogGone(page, '编辑用户')
+    // ---- c. 种子终态：行在 + 昵称/状态与保护前一致 ----
+    row = await findRow(page, 'admin')
+    assert(row, '保护场景后 admin 行应仍在（种子终态）')
+    const cellsAfter = await rowCells(row)
+    log(`  admin 行（保护后）: ${JSON.stringify(cellsAfter.slice(0, 3))}`)
+    assertEq(cellsAfter[1], cellsBefore[1], `admin 昵称应保持原值 "${cellsBefore[1]}"`)
+    assertEq(cellsAfter[2], cellsBefore[2], `admin 状态应保持原值 "${cellsBefore[2]}"`)
+    assertEq(cellsAfter[2], '正常', 'admin 状态终态应为 正常')
   })
 
   // ================= S15（可选）篡改 token → 401 清态跳登录 =================
