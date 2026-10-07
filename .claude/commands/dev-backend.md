@@ -11,7 +11,7 @@ description: 纯后端轨道开发（SOP 三轨道）：判级→架构/轻量pl
 ## ① 判级与设计
 
 - 按 SOP「架构介入分级」判定 A/B 级（存疑按 A 级），开工简报说明判定理由与涉及面（哪些服务/表/契约）
-- **A 级**：用 Agent 工具派 `architect-agent`，任务书贴需求全文并指向既有 specs/contracts/plans；要求产出三文档（**纯后端无前端章**）+「给 backend-agent 的任务清单」；随后主控做规格审查（契约完整性/规范一致性/错误码与权限标识接续）
+- **A 级**：用 Agent 工具派 `architect-agent`，任务书贴需求全文并指向既有 specs/contracts/plans；先要求回报《需求分析》（领域/边界/关键问题与候选方向/范围建议，不出方案），主控呈用户讨论拍板后经 SendMessage 续跑同一实例产出三文档（**纯后端无前端章**）+「给 backend-agent 的任务清单」；随后主控做规格审查（契约完整性/规范一致性/错误码与权限标识接续）
 - **B 级**：不派架构，主控直接按 superpowers:writing-plans 写轻量 plan（`docs/superpowers/plans/` 下，含文件清单与验证标准），无 contracts
 - 改动若触及**既有契约**（改 API 行为）：在简报中显著标注，③ 阶段须加跑 e2e 回归
 
