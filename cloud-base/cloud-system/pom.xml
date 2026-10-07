@@ -44,6 +44,10 @@
             <artifactId>cloud-common-security-starter</artifactId>
         </dependency>
         <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-translate-starter</artifactId>
+        </dependency>
+        <dependency>
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>

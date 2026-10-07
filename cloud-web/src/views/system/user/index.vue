@@ -12,7 +12,12 @@ import AssignRoleDialog from './components/AssignRoleDialog.vue'
  * keep-alive include 按组件名匹配会失效（升级设计 D5 红字坑） */
 defineOptions({ name: 'SystemUser' })
 
-/** 用户状态展示映射（契约 §3：0=正常 1=停用） */
+/**
+ * 用户状态本地映射（status 语义 0=正常 1=停用，契约 §3）：
+ * - tagType 是颜色映射本体，永远按原字段 status 取值（译文不含颜色语义——契约 §1 红线）
+ * - label 仅作 statusLabel 缺位时的降级文案（契约 2026-10-07-translation-api §3.1 降级链）
+ * 编辑弹窗回填/提交仍用原字段 status，不消费译文
+ */
 const STATUS_MAP: Record<number, { label: string; tagType: 'success' | 'danger' }> = {
   0: { label: '正常', tagType: 'success' },
   1: { label: '停用', tagType: 'danger' },
@@ -120,18 +125,18 @@ onMounted(() => {
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="STATUS_MAP[rowOf(row).status]?.tagType ?? 'info'">
-            {{ STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
+            {{ rowOf(row).statusLabel ?? STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="创建人" min-width="100">
-        <template #default="{ row }">{{ rowOf(row).createBy ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).createByName ?? rowOf(row).createBy ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="创建时间" min-width="160">
         <template #default="{ row }">{{ rowOf(row).createTime ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="更新人" min-width="100">
-        <template #default="{ row }">{{ rowOf(row).updateBy ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).updateByName ?? rowOf(row).updateBy ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="更新时间" min-width="160">
         <template #default="{ row }">{{ rowOf(row).updateTime ?? '-' }}</template>

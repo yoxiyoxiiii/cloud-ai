@@ -28,6 +28,19 @@
          WHERE dict_type_id = #{typeId} AND deleted = 0
     </select>
 
+    <!-- 消费口径（翻译/表单下拉共用，翻译设计 §6）：驱动表 t 走 uk_dict_key，d 走 uk_type_value 最左前缀
+         （EXPLAIN 审查结论零增量索引）；status/deleted 字面量同 listPermsByAccount 先例 -->
+    <select id="listEnabledByDictKey" resultType="com.cloudai.system.entity.SysDictData">
+        SELECT d.id, d.dict_type_id, d.label, d.value, d.sort, d.status,
+               d.create_by, d.create_time, d.update_by, d.update_time, d.deleted
+          FROM sys_dict_type t
+          JOIN sys_dict_data d ON d.dict_type_id = t.id
+         WHERE t.dict_key = #{dictKey}
+           AND t.status = 0 AND t.deleted = 0
+           AND d.status = 0 AND d.deleted = 0
+         ORDER BY d.sort ASC, d.id ASC
+    </select>
+
     <select id="countByTypeValue" resultType="long">
         SELECT COUNT(*)
           FROM sys_dict_data

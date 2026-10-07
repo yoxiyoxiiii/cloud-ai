@@ -153,3 +153,12 @@ INSERT INTO sys_user (id, account, nickname, password, create_time) VALUES
 INSERT INTO sys_user_role (user_id, role_id, create_time) VALUES (1, 1, NOW());
 INSERT INTO sys_role_menu (role_id, menu_id, create_time)
 SELECT 1, id, NOW() FROM sys_menu;
+
+-- 内置字典种子 user_status（与增量脚本 2026-10-07-translation.sql 语义等价；
+-- label 文案锁定契约 2026-10-07-translation-api §0.3，create_by='system' 内置标记）
+INSERT INTO sys_dict_type (id, dict_name, dict_key, status, create_by, create_time, update_by, update_time) VALUES
+(1, '用户状态', 'user_status', 0, 'system', NOW(), 'system', NOW());
+
+INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, create_by, create_time, update_by, update_time) VALUES
+(1, 1, '正常', '0', 1, 0, 'system', NOW(), 'system', NOW()),
+(2, 1, '停用', '1', 2, 0, 'system', NOW(), 'system', NOW());

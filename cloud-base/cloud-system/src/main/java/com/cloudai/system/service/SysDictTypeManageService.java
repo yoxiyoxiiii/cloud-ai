@@ -6,6 +6,7 @@ import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.convert.SysDictTypeConvert;
 import com.cloudai.system.dto.DictTypeSaveRequest;
 import com.cloudai.system.entity.SysDictType;
@@ -35,6 +36,7 @@ public class SysDictTypeManageService {
 
     private final SysDictTypeMapper dictTypeMapper;
     private final SysDictDataMapper dictDataMapper;
+    private final TranslationCacheService translationCacheService;
 
     /** 只读不加事务注解 */
     public PageResult<SysDictTypeVo> pageList(PageQuery query) {
@@ -60,11 +62,12 @@ public class SysDictTypeManageService {
             log.error("字典键唯一冲突：{}", e.getMessage());
             throw new BusinessException(ERR_DICT_KEY_DUP, "字典键已存在: " + req.getDictKey());
         }
+        evictDictTransCache(req.getDictKey());
         return type.getId();
     }
 
     public void update(DictTypeSaveRequest req) {
-        requireType(req.getId());
+        SysDictType current = requireType(req.getId());
         // 空白串拦截；null 不拦——部分更新语义，与 role 的 roleKey 口径一致
         if (req.getDictName() != null && req.getDictName().isBlank()) {
             throw new BusinessException("字典名称不能为空");
@@ -88,16 +91,31 @@ public class SysDictTypeManageService {
             log.error("字典键唯一冲突：{}", e.getMessage());
             throw new BusinessException(ERR_DICT_KEY_DUP, "字典键已存在: " + req.getDictKey());
         }
+        // 改键/改状态都影响消费口径：旧键必失效，改键时新键一并失效（设计 §4.2 两键）
+        evictDictTransCache(current.getDictKey());
+        if (req.getDictKey() != null && !req.getDictKey().equals(current.getDictKey())) {
+            evictDictTransCache(req.getDictKey());
+        }
     }
 
     /** 单表单语句无 @Transactional；禁删有项类型（3011），不做级联逻辑删（设计 D5），count-then-delete 的 TOCTOU 窗口接受 */
     public void delete(Long id) {
-        requireType(id);
+        SysDictType type = requireType(id);
         Long dataCount = dictDataMapper.countByTypeId(id);
         if (dataCount > 0) {
             throw new BusinessException(ERR_TYPE_HAS_DATA, "该字典类型下存在字典项，先删除字典项");
         }
         dictTypeMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        evictDictTransCache(type.getDictKey());
+    }
+
+    /** 翻译缓存失效（防御性 DEL，新键无缓存也可 DEL）：失败仅 log.error 不抛——DB 已提交，TTL 兜底 */
+    private void evictDictTransCache(String dictKey) {
+        try {
+            translationCacheService.deleteDict(dictKey);
+        } catch (Exception e) {
+            log.error("dict trans cache evict failed, dictKey={}", dictKey, e);
+        }
     }
 
     private void assertDictNameValid(String dictName) {

@@ -6,6 +6,8 @@ import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.common.translate.core.TranslationCacheService;
+import com.cloudai.common.translate.domain.DictItemEntry;
 import com.cloudai.system.convert.SysDictDataConvert;
 import com.cloudai.system.dto.DictDataSaveRequest;
 import com.cloudai.system.entity.SysDictData;
@@ -37,6 +39,7 @@ public class SysDictDataManageService {
 
     private final SysDictDataMapper dictDataMapper;
     private final SysDictTypeMapper dictTypeMapper;
+    private final TranslationCacheService translationCacheService;
 
     /** typeId 必填（缺失/空 1002）且类型须存在（从严——页面联动需要明确 3008 而非静默空表，契约 §3.1 设计注） */
     public PageResult<SysDictDataVo> pageList(Long typeId, PageQuery query) {
@@ -72,6 +75,7 @@ public class SysDictDataManageService {
             log.error("字典项值唯一冲突：{}", e.getMessage());
             throw new BusinessException(ERR_VALUE_DUP, "该类型下字典项值已存在: " + req.getValue());
         }
+        evictDictTransCacheByTypeId(req.getTypeId());
         return data.getId();
     }
 
@@ -106,12 +110,36 @@ public class SysDictDataManageService {
             log.error("字典项值唯一冲突：{}", e.getMessage());
             throw new BusinessException(ERR_VALUE_DUP, "该类型下字典项值已存在: " + effectiveValue);
         }
+        // 项迁移（typeId 变更）跨类型：新旧两类型键一并失效
+        evictDictTransCacheByTypeId(current.getDictTypeId());
+        if (!effectiveTypeId.equals(current.getDictTypeId())) {
+            evictDictTransCacheByTypeId(effectiveTypeId);
+        }
     }
 
     /** 单表单语句无 @Transactional；不校验所属类型是否存活（契约 §3.4） */
     public void delete(Long id) {
-        requireData(id);
+        SysDictData current = requireData(id);
         dictDataMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        evictDictTransCacheByTypeId(current.getDictTypeId());
+    }
+
+    /** 经所属类型取 dictKey 失效翻译缓存；失败仅 log.error 不抛——DB 已提交，TTL 兜底（设计 §4.2） */
+    private void evictDictTransCacheByTypeId(Long typeId) {
+        try {
+            SysDictType type = dictTypeMapper.findById(typeId);
+            if (type != null) {
+                translationCacheService.deleteDict(type.getDictKey());
+            }
+        } catch (Exception e) {
+            log.error("dict trans cache evict failed, typeId={}", typeId, e);
+        }
+    }
+
+    /** 字典消费（契约 §2.1：表单下拉/翻译共用缓存口径）：委托翻译缓存服务（Redis → 未命中回源 Provider） */
+    public List<DictItemEntry> listByDictKey(String dictKey) {
+        List<DictItemEntry> items = translationCacheService.listDictItems(dictKey);
+        return items;
     }
 
     private void assertLabelValid(String label) {

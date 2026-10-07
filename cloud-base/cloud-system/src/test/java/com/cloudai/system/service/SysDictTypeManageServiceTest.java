@@ -2,6 +2,7 @@ package com.cloudai.system.service;
 
 import com.cloudai.common.core.domain.LoginUser;
 import com.cloudai.common.core.exception.BusinessException;
+import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.dto.DictTypeSaveRequest;
 import com.cloudai.system.entity.SysDictType;
 import com.cloudai.system.mapper.SysDictDataMapper;
@@ -16,6 +17,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -23,6 +25,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -36,6 +39,8 @@ class SysDictTypeManageServiceTest {
     private SysDictTypeMapper dictTypeMapper;
     @Mock
     private SysDictDataMapper dictDataMapper;
+    @Mock
+    private TranslationCacheService translationCacheService;
     @InjectMocks
     private SysDictTypeManageService service;
 
@@ -154,5 +159,64 @@ class SysDictTypeManageServiceTest {
         when(dictDataMapper.countByTypeId(1L)).thenReturn(0L);
         service.delete(1L);
         verify(dictTypeMapper).deleteById(eq(1L), eq("admin"), any());
+    }
+
+    // ---- 翻译缓存失效挂钩（设计 §4.2）----
+
+    @Test
+    void save_evictsDictCacheOfNewKey() {
+        loginAs("admin");
+        when(dictTypeMapper.countByDictKey("new_status", null)).thenReturn(0L);
+        service.save(request("新状态", "new_status"));
+        verify(translationCacheService).deleteDict("new_status");
+    }
+
+    @Test
+    void update_keyChanged_evictsBothOldAndNewKey() {
+        loginAs("admin");
+        SysDictType current = new SysDictType();
+        current.setId(1L);
+        current.setDictKey("old_status");
+        when(dictTypeMapper.findById(1L)).thenReturn(current);
+        when(dictTypeMapper.countByDictKey("new_status", 1L)).thenReturn(0L);
+        DictTypeSaveRequest req = request("用户状态", "new_status");
+        req.setId(1L);
+        service.update(req);
+        verify(translationCacheService).deleteDict("old_status");
+        verify(translationCacheService).deleteDict("new_status");
+    }
+
+    @Test
+    void update_keyUnchanged_evictsSingleKey() {
+        loginAs("admin");
+        SysDictType current = new SysDictType();
+        current.setId(1L);
+        current.setDictKey("user_status");
+        when(dictTypeMapper.findById(1L)).thenReturn(current);
+        DictTypeSaveRequest req = request("用户状态v2", null);
+        req.setId(1L);
+        service.update(req);
+        verify(translationCacheService, times(1)).deleteDict("user_status");
+    }
+
+    @Test
+    void delete_evictsDictCacheOfDeletedKey() {
+        loginAs("admin");
+        SysDictType type = new SysDictType();
+        type.setDictKey("user_status");
+        when(dictTypeMapper.findById(1L)).thenReturn(type);
+        when(dictDataMapper.countByTypeId(1L)).thenReturn(0L);
+        service.delete(1L);
+        verify(translationCacheService).deleteDict("user_status");
+    }
+
+    @Test
+    void evictFails_mainFlowNotBroken() {
+        loginAs("admin");
+        when(dictTypeMapper.countByDictKey("new_status", null)).thenReturn(0L);
+        doThrow(new RuntimeException("redis down")).when(translationCacheService).deleteDict("new_status");
+        assertThatCode(() -> service.save(request("新状态", "new_status")))
+                .doesNotThrowAnyException();
+        verify(dictTypeMapper).save(any(SysDictType.class));
     }
 }

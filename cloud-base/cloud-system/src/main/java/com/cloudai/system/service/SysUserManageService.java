@@ -6,6 +6,7 @@ import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.convert.SysUserConvert;
 import com.cloudai.system.dto.UserSaveRequest;
 import com.cloudai.system.entity.SysUser;
@@ -30,6 +31,7 @@ public class SysUserManageService {
     private final SysUserMapper userMapper;
     private final SysUserRoleMapper userRoleMapper;
     private final PasswordEncoder passwordEncoder;
+    private final TranslationCacheService translationCacheService;
 
     public PageResult<SysUserVo> pageList(PageQuery query) {
         IPage<SysUser> page = userMapper.pageList(
@@ -75,6 +77,7 @@ public class SysUserManageService {
             log.error("唯一键冲突：{}", e.getMessage());
             throw new BusinessException(3002, "账号已存在: " + req.getAccount());
         }
+        evictUserTransCache();
         return user.getId();
     }
 
@@ -86,6 +89,7 @@ public class SysUserManageService {
         user.setUpdateBy(SecurityUtils.currentAccount());
         user.setUpdateTime(LocalDateTime.now());
         userMapper.update(user);
+        evictUserTransCache();
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -93,6 +97,7 @@ public class SysUserManageService {
         requireUser(id);
         userMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
         userRoleMapper.deleteByUserId(id);
+        evictUserTransCache();
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -126,6 +131,15 @@ public class SysUserManageService {
 
     public List<Long> listRoleIds(Long userId) {
         return userRoleMapper.listRoleIdsByUserId(userId);
+    }
+
+    /** 用户翻译缓存失效（nickname 变更/新增/删除；resetPassword 不动显示名不挂）：失败仅 log.error 不抛，TTL 兜底 */
+    private void evictUserTransCache() {
+        try {
+            translationCacheService.deleteUsers();
+        } catch (Exception e) {
+            log.error("user trans cache evict failed", e);
+        }
     }
 
     private SysUser requireUser(Long id) {

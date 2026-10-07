@@ -423,6 +423,60 @@ try {
     assert(back.ok, `admin 重新登录应成功: ${back.msg || ''}`)
   })
 
+  // ================= S12b 字段翻译链路（契约 2026-10-07-translation-api §3） =================
+  // 计划 E1 的"S13"：现网脚本 S13-S15 已被分配角色/删除/401 占用，本场景插 S12 与 S13 之间，编号 S12b 避让
+  await step('S12b', '翻译列：admin 行状态 tag "正常"（经 statusLabel）+ e2e 行创建人/更新人列 "管理员"；fetch 断言原字段与译文字段并存（红线黑盒）', async () => {
+    // ---- a. UI 列断言 ----
+    // admin 行：状态列 tag 文本（经 statusLabel）+ 颜色仍按原 status 映射（success）
+    // 注：admin 种子 createBy/updateBy 为 null（契约 §3.2 示例为示意），创建人列正确形态是 "-"（降级链），
+    //     翻译文到端证据取本脚本创建的 e2e 行（createBy=admin → 译文 "管理员"）
+    let row = await findRow(page, 'admin')
+    assert(row, '应能定位 admin 行')
+    let cells = await rowCells(row)
+    log(`  admin 行: ${JSON.stringify(cells.slice(0, 7))}`)
+    assertEq(cells[0], 'admin', 'admin 行账号列应为 admin')
+    assertEq(cells[2], '正常', 'admin 行状态 tag 文本应为 正常（statusLabel 译文，与本地降级同文案）')
+    const adminTagClass = (await row.locator('.el-tag').getAttribute('class')) || ''
+    assert(adminTagClass.includes('el-tag--success'), `admin 行状态 tag 颜色应按原 status=0 映射 success，实际 "${adminTagClass}"`)
+    assertEq(cells[3], '-', 'admin 行创建人列应为 -（种子 createBy=null → 降级链终点）')
+    await shot(page, 's12b-admin-translated.png')
+    // TEST_ACCOUNT 行（本脚本 S10 创建，createBy/updateBy=admin）：创建人/更新人列译文端到端
+    row = await findRow(page, TEST_ACCOUNT)
+    assert(row, '应能定位测试账号行')
+    cells = await rowCells(row)
+    log(`  ${TEST_ACCOUNT} 行: ${JSON.stringify(cells.slice(0, 7))}`)
+    assertEq(cells[2], '正常', '测试行状态 tag 文本应为 正常')
+    assertEq(cells[3], '管理员', '测试行创建人列应为 管理员（createBy=admin 译文，改造前显示 admin）')
+    assertEq(cells[5], '管理员', '测试行更新人列应为 管理员（updateBy=admin 译文）')
+    // ---- b. 页内 fetch：原字段与译文字段并存（契约 §1 红线的黑盒锁定） ----
+    const probe = await page.evaluate(async () => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const res = await fetch('/api/system/user/page?pageNum=1&pageSize=50', { headers: { Authorization: `Bearer ${token}` } })
+      return { httpStatus: res.status, body: await res.json() }
+    })
+    assertEq(probe.httpStatus, 200, '契约：HTTP 恒 200')
+    assertEq(probe.body.code, 200, '分页业务码应为 200')
+    const rows = probe.body.data.rows
+    assert(Array.isArray(rows) && rows.length > 0, 'rows 应为非空数组')
+    // rows[0]：id 倒序首行 = 本脚本最新创建的用户（createBy=admin 的正常用户），逐字段锁定并存形态
+    const head = rows[0]
+    log(`  fetch rows[0]: ${JSON.stringify(head)}`)
+    assertEq(head.status, 0, 'rows[0] 原字段 status 应为 0（翻译不覆盖原字段）')
+    assertEq(head.createBy, 'admin', 'rows[0] 原字段 createBy 应为 "admin"')
+    assertEq(head.statusLabel, '正常', 'rows[0] 译文字段 statusLabel 应为 "正常"')
+    assertEq(head.createByName, '管理员', 'rows[0] 译文字段 createByName 应为 "管理员"')
+    assertEq(head.updateByName, '管理员', 'rows[0] 译文字段 updateByName 应为 "管理员"')
+    // admin 种子行：原字段 null + 译文字段 null 并存（降级语义非错误，契约 §1）
+    const adminVo = rows.find((r) => r.account === 'admin')
+    assert(adminVo, 'rows 应含 admin 种子行（pageSize=50 全量页内）')
+    log(`  fetch admin 行: ${JSON.stringify(adminVo)}`)
+    assertEq(adminVo.status, 0, 'admin 原字段 status 应为 0')
+    assertEq(adminVo.statusLabel, '正常', 'admin 译文字段 statusLabel 应为 "正常"（字典命中）')
+    assertEq(adminVo.createBy, null, 'admin 原字段 createBy 应为 null（种子原样）')
+    assert('createByName' in adminVo && adminVo.createByName === null, 'admin createByName 必返且为 null（翻译未命中降级，不是错误）')
+    assert('updateByName' in adminVo && adminVo.updateByName === null, 'admin updateByName 必返且为 null')
+  })
+
   // ================= S13 分配角色 =================
   await step('S13', '分配角色：勾选保存成功 + 重开回显；全不勾 → 回显空', async () => {
     // 动态路由 D5 后 '/' 落 /dashboard：S12 末 admin 重登不再自动落 /system/user，显式进入用户页

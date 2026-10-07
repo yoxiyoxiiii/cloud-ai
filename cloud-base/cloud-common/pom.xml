@@ -19,5 +19,6 @@
         <module>cloud-common-security-starter</module>
         <module>cloud-common-mybatis-starter</module>
         <module>cloud-common-redis-starter</module>
+        <module>cloud-common-translate-starter</module>
     </modules>
 </project>

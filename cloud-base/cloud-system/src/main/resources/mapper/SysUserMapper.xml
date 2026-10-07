@@ -49,6 +49,14 @@
          WHERE u.account = #{account} AND u.deleted = 0 AND m.perms != ''
     </select>
 
+    <!-- 翻译回源全量（翻译设计 §6 小表取舍：无 WHERE 选择列全表扫可接受，量级涨至数万分页/增量再议）；
+         投影列不含 password -->
+    <select id="listTransAll" resultType="com.cloudai.system.entity.SysUser">
+        SELECT id, account, nickname
+          FROM sys_user
+         WHERE deleted = 0
+    </select>
+
     <insert id="save" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_user (account, nickname, password, status,
                               create_by, create_time, update_by, update_time)

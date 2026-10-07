@@ -36,7 +36,12 @@ export interface CurrentUserVo {
   permissions: string[]
 }
 
-/** 用户 VO（契约 §6）：status 语义 0=正常 1=停用 */
+/**
+ * 用户 VO（契约 §6）：status 语义 0=正常 1=停用
+ * 译文字段三项为 additive 追加（契约 2026-10-07-translation-api §3/§6，必返但值可 null）：
+ * null = 翻译未命中降级（字典缺项/用户已删等，契约 §1）——展示走降级链，
+ * 业务处理（编辑回填/颜色映射/行内判断）仍用原字段，原字段永不因翻译被覆盖（契约 §1 红线）
+ */
 export interface SysUserVo {
   id: string
   account: string
@@ -46,6 +51,12 @@ export interface SysUserVo {
   createTime: string | null
   updateBy: string | null
   updateTime: string | null
+  /** 状态译文（契约 2026-10-07-translation-api §3.1）：user_status 字典消费口径 label；null 时降级本地文案 */
+  statusLabel: string | null
+  /** 创建人译文（契约 2026-10-07-translation-api §3.1）：createBy(account) 对应 nickname；null 时降级显示 createBy */
+  createByName: string | null
+  /** 更新人译文（契约 2026-10-07-translation-api §3.1）：updateBy(account) 对应 nickname；null 时降级显示 updateBy */
+  updateByName: string | null
 }
 
 /** 角色 VO（契约 §4/§6）：status 语义 0=正常 1=停用；审计四字段可空 */
@@ -146,6 +157,17 @@ export interface SysDictDataVo {
   createTime: string | null
   updateBy: string | null
   updateTime: string | null
+}
+
+/**
+ * 字典消费项 VO（契约 2026-10-07-translation-api §2.1/§6）：GET /system/dict/data/type/{dictKey} 出参——
+ * 消费口径（类型启用 ∧ 项启用）按 sort 升序；value 为表单提交原值（与契约 §1 红线同源：翻译不覆盖原值）；
+ * 未知 dictKey / 类型停用 / 无启用项一律空数组（表单容错语义，非错误）
+ */
+export interface DictItemVo {
+  value: string
+  label: string
+  sort: number
 }
 
 /** 字典类型分页入参（契约 2026-10-07-dict-api §7）：无搜索参数（契约现状） */

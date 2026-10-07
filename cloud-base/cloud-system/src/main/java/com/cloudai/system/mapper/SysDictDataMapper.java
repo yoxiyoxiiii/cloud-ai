@@ -6,6 +6,7 @@ import com.cloudai.system.entity.SysDictData;
 import org.apache.ibatis.annotations.Param;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 字典项表 SQL（XML：mapper/SysDictDataMapper.xml）。逻辑删除与审计字段显式维护，见 SysUserMapper 说明。
@@ -19,6 +20,9 @@ public interface SysDictDataMapper {
 
     /** 某类型未删项计数（删除类型前的"禁删有项"校验） */
     Long countByTypeId(@Param("typeId") Long typeId);
+
+    /** 消费口径（翻译/表单下拉共用）：按字典键取启用项——类型启用未删 ∧ 项启用未删，sort,id 升序 */
+    List<SysDictData> listEnabledByDictKey(@Param("dictKey") String dictKey);
 
     /** (typeId, value) 查重；excludeId 非空时排除自身（编辑场景） */
     Long countByTypeValue(@Param("typeId") Long typeId,

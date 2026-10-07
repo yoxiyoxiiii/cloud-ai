@@ -2,6 +2,7 @@ package com.cloudai.system.service;
 
 import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.exception.BusinessException;
+import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.dto.DictDataSaveRequest;
 import com.cloudai.system.entity.SysDictData;
 import com.cloudai.system.entity.SysDictType;
@@ -13,11 +14,14 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -31,6 +35,8 @@ class SysDictDataManageServiceTest {
     private SysDictDataMapper dictDataMapper;
     @Mock
     private SysDictTypeMapper dictTypeMapper;
+    @Mock
+    private TranslationCacheService translationCacheService;
     @InjectMocks
     private SysDictDataManageService service;
 
@@ -137,5 +143,82 @@ class SysDictDataManageServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("字典项不存在");
         verify(dictDataMapper, never()).deleteById(anyLong(), anyString(), any());
+    }
+
+    // ---- 翻译缓存失效挂钩（设计 §4.2）----
+
+    private SysDictType typeWithKey(Long id, String dictKey) {
+        SysDictType type = new SysDictType();
+        type.setId(id);
+        type.setDictKey(dictKey);
+        return type;
+    }
+
+    @Test
+    void save_evictsDictCacheOfOwnerType() {
+        when(dictTypeMapper.findById(1L)).thenReturn(typeWithKey(1L, "user_status"));
+        when(dictDataMapper.countByTypeValue(1L, "0", null)).thenReturn(0L);
+        service.save(request(1L, "正常", "0"));
+        verify(translationCacheService).deleteDict("user_status");
+    }
+
+    @Test
+    void update_noMigration_evictsSingleOwnerKey() {
+        SysDictData current = new SysDictData();
+        current.setId(5L);
+        current.setDictTypeId(1L);
+        current.setValue("v0");
+        when(dictDataMapper.findById(5L)).thenReturn(current);
+        when(dictDataMapper.countByTypeValue(1L, "v0", 5L)).thenReturn(0L);
+        when(dictTypeMapper.findById(1L)).thenReturn(typeWithKey(1L, "user_status"));
+        DictDataSaveRequest req = request(null, "启用", null);
+        req.setId(5L);
+        service.update(req);
+        verify(translationCacheService, times(1)).deleteDict("user_status");
+    }
+
+    @Test
+    void update_migrationBetweenTypes_evictsBothTypeKeys() {
+        SysDictData current = new SysDictData();
+        current.setId(5L);
+        current.setDictTypeId(1L);
+        current.setValue("v0");
+        when(dictDataMapper.findById(5L)).thenReturn(current);
+        when(dictDataMapper.countByTypeValue(2L, "v0", 5L)).thenReturn(0L);
+        when(dictTypeMapper.findById(2L)).thenReturn(typeWithKey(2L, "order_status"));
+        when(dictTypeMapper.findById(1L)).thenReturn(typeWithKey(1L, "user_status"));
+        DictDataSaveRequest req = request(2L, "启用", "v0");
+        req.setId(5L);
+        service.update(req);
+        verify(translationCacheService).deleteDict("user_status");
+        verify(translationCacheService).deleteDict("order_status");
+    }
+
+    @Test
+    void delete_evictsDictCacheOfOwnerType() {
+        SysDictData current = new SysDictData();
+        current.setId(5L);
+        current.setDictTypeId(1L);
+        when(dictDataMapper.findById(5L)).thenReturn(current);
+        when(dictTypeMapper.findById(1L)).thenReturn(typeWithKey(1L, "user_status"));
+        service.delete(5L);
+        verify(translationCacheService).deleteDict("user_status");
+    }
+
+    @Test
+    void evictFails_mainFlowNotBroken() {
+        when(dictTypeMapper.findById(1L)).thenReturn(typeWithKey(1L, "user_status"));
+        when(dictDataMapper.countByTypeValue(1L, "0", null)).thenReturn(0L);
+        doThrow(new RuntimeException("redis down")).when(translationCacheService).deleteDict("user_status");
+        assertThatCode(() -> service.save(request(1L, "正常", "0")))
+                .doesNotThrowAnyException();
+        verify(dictDataMapper).save(any(SysDictData.class));
+    }
+
+    @Test
+    void listByDictKey_delegatesToTransCacheService() {
+        when(translationCacheService.listDictItems("user_status")).thenReturn(java.util.List.of());
+        service.listByDictKey("user_status");
+        verify(translationCacheService).listDictItems("user_status");
     }
 }

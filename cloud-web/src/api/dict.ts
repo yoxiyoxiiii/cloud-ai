@@ -6,6 +6,7 @@
 import { request } from '../utils/request'
 import type {
   DictDataPageQuery,
+  DictItemVo,
   DictTypePageQuery,
   PageResult,
   SaveDictDataPayload,
@@ -62,4 +63,13 @@ export function updateDictData(payload: UpdateDictDataPayload): Promise<null> {
 /** 删除字典项（契约 §3.4）：不校验所属类型存活（遗留数据治理入口）；墓碑占 (typeId, value) */
 export function deleteDictData(id: string): Promise<null> {
   return request<null>({ url: `/system/dict/data/${id}`, method: 'delete' })
+}
+
+/**
+ * 按字典键取启用项（契约 2026-10-07-translation-api §2.1）：消费口径（类型启用 ∧ 项启用）sort 升序；
+ * 登录即可（无 @PreAuthorize，表单下拉是登录用户基础能力）；未知 dictKey / 类型停用 / 无启用项
+ * 一律 200 + 空数组（表单容错优先，非错误）。本轮暂无页面调用——契约先行，后续表单下拉统一取数入口
+ */
+export function getDictItems(dictKey: string): Promise<DictItemVo[]> {
+  return request<DictItemVo[]>({ url: `/system/dict/data/type/${dictKey}`, method: 'get' })
 }

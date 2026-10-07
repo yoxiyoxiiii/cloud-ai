@@ -3,6 +3,7 @@ package com.cloudai.system.controller;
 import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;
+import com.cloudai.common.translate.domain.DictItemEntry;
 import com.cloudai.system.dto.DictDataSaveRequest;
 import com.cloudai.system.service.SysDictDataManageService;
 import com.cloudai.system.vo.SysDictDataVo;
@@ -17,6 +18,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 字典项端点（契约 2026-10-07-dict-api §3，网关前缀 /system/dict/data）。
@@ -59,5 +62,16 @@ public class SysDictDataController {
     public R<Void> remove(@PathVariable("id") Long id) {
         manageService.delete(id);
         return R.ok();
+    }
+
+    /**
+     * 按字典键取启用项（消费口径：类型启用未删 ∧ 项启用未删，sort,id 升序；数据经 Redis 缓存回源）。
+     * 无 @PreAuthorize——登录即可（user-nav 先例：表单下拉是登录用户基础能力）；
+     * dictKey 不存在/类型停用/无启用项一律 200 + 空数组（契约 §2.1 容错语义，零业务错误码）。
+     */
+    @GetMapping("/type/{dictKey}")
+    public R<List<DictItemEntry>> listByDictKey(@PathVariable("dictKey") String dictKey) {
+        List<DictItemEntry> items = manageService.listByDictKey(dictKey);
+        return R.ok(items);
     }
 }

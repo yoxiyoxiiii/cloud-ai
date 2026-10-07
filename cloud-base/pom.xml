@@ -90,6 +90,11 @@
                 <artifactId>cloud-common-redis-starter</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.cloudai</groupId>
+                <artifactId>cloud-common-translate-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <!-- 三方 -->
             <dependency>
                 <groupId>com.baomidou</groupId>

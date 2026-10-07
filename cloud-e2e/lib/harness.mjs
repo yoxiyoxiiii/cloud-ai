@@ -157,7 +157,13 @@ export function createHarness({ base, artDir }) {
    */
   async function findRow(page, text, { path = '/system/user', reload = true } = {}) {
     if (reload) {
+      // 首屏竞态修复：goto 后表格/分页可能尚未首渲染（waitTableIdle 对"mask 未出现"直接放行），
+      // 空表 DOM 会让下方"btn-next 不存在"分支提前 return null（S10 偶发误判根因）——
+      // 先等本次列表接口（*/page）响应落定，再等首行或分页控件可见，才进入扫页循环
+      const listP = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith('/page'), { timeout: 15000 }).catch(() => null)
       await page.goto(`${base}${path}`, { waitUntil: 'domcontentloaded' })
+      await listP
+      await page.locator('.el-table__row, .el-pagination').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {})
     }
     await waitTableIdle(page)
     for (let guard = 0; guard < 30; guard++) {

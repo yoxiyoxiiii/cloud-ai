@@ -5,16 +5,20 @@
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 npm run e2e:dict）
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码
  * 测试数据（删净纪律最高优先）：
- * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；字典域无种子数据（契约 §6：无种子保护），仍不碰库内非本脚本数据
- * - 结束清扫全部 e2e 前缀类型（先删项后删类型，D5 禁删约束）并断言左表无 e2e 残留
+ * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；user_status 为内置种子（翻译契约 §0.3，当前无防删保护）——零触碰，仍不碰库内非本脚本数据
+ * - 结束清扫全部 e2e 前缀类型（含 D5 的 e2econs；先删项后删类型，3011 禁删约束）并断言左表无 e2e 残留、仅剩种子
  * 核心断言（契约 §2 §3 §5）：
  * - D0 侧边 字典管理 位于 菜单管理 之后 + 面包屑 首页/字典管理 + admin 重登快照含 dict 权限（新增类型按钮可见）
- * - D1 主从空态：左表 4 列/共 0 条；右表 9 列标题"字典项"/el-empty"请在左侧选择字典类型"/新增字典项 disabled
+ * - D1 主从空态：左表 4 列/恰 1 行（user_status 内置种子，契约 2026-10-07-translation-api §0.3）；
+ *   右表 9 列标题"字典项"/el-empty"请在左侧选择字典类型"/新增字典项 disabled
  * - D2 类型闭环：空提交 0 请求 → 新增（提交恰三字段）→ 行选中高亮 + 右标题 `字典项：{名}（{键}）`
  *   → 编辑改名+停用（全量三字段+id、tag danger、选中保持右标题跟随）→ 同 dictKey 重提 3009 toast 弹窗保持
  * - D3 项闭环：空提交 0 请求 → 新增（提交恰五字段、typeId 对齐选中类型）→ 同 value 重提 3012 toast 弹窗保持
  *   → 编辑改 label/sort（全量五字段+id、行内更新、审计更新人 admin）
  * - D4 删除约束：有项删类型 3011 toast 行保留 → 删净项 → 删类型（确认框含类型名）→ 左行消失右栏回空态
+ * - D5 消费端点（契约 2026-10-07-translation-api §2.1）：造 e2econs 类型+3 项（sort 3/1/2，1 项停用）→
+ *   消费断言停用过滤/长度 2/sort 升序/字段恰 value-label-sort；未知 dictKey → 200 data:[]；
+ *   无 token 直调网关 401；种子 user_status 消费回归恰 2 项（CLEANUP 一并删 e2econs，种子零触碰）
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -23,6 +27,8 @@ import { createHarness } from './lib/harness.mjs'
 
 const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173'
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), 'artifacts')
+/** D5c 无 token 直调网关（绕过 /api 代理与页面事件采集——page.request 不触发 page.on('response')，不污染 D-VERIFY） */
+const GATEWAY = process.env.E2E_GATEWAY || 'http://localhost:18080'
 
 const h = createHarness({ base: BASE, artDir: ART })
 const { log, sleep, step, assert, assertEq, shot, waitToast, waitDialogGone, waitTableIdle, breadcrumbTexts, login, rowCells } = h
@@ -39,6 +45,8 @@ const ITEM_VALUE = `e2e_on_${stamp}`
 const ITEM_LABEL = `E2E启用${stamp}`
 const ITEM_LABEL_V2 = `E2E启用v2${stamp}` // 编辑改 label 后
 const ITEM_LABEL_B = `E2E重复${stamp}` // 3012 探针（正常路径不落库）
+const CONS_KEY = `e2econs${stamp}` // D5 消费端点测试类型 dictKey（CLEANUP 随 e2e 前缀一并清扫）
+const CONS_NAME = `E2E消费${stamp}`
 
 const DICT_PATH = '/system/dict'
 
@@ -182,7 +190,7 @@ try {
   })
 
   // ================= D1 主从空态：左 4 列/共 0 条；右 9 列/空态三件套 =================
-  await step('D1', '主从空态：左表 4 列 + 共 0 条；右表 9 列 + 标题"字典项" + el-empty"请在左侧选择字典类型" + 新增字典项 disabled', async () => {
+  await step('D1', '主从空态：左表 4 列 + 恰 1 行（user_status 种子）；右表 9 列 + 标题"字典项" + el-empty"请在左侧选择字典类型" + 新增字典项 disabled', async () => {
     // 左表 4 列精确序
     const ths = page.locator('.type-pane .el-table__header-wrapper th')
     const tn = await ths.count()
@@ -190,10 +198,18 @@ try {
     for (let i = 0; i < tn; i++) headers.push(((await ths.nth(i).innerText()) || '').trim())
     log(`  左表头(${tn}): ${JSON.stringify(headers)}`)
     assertEq(headers.join(','), '字典名称,字典键,状态,操作', `左表头应为 4 列精确序，实际 ${JSON.stringify(headers)}`)
-    // 左表空 + 分页 total（字典域无种子数据）
+    // 左表：仅剩 user_status 内置种子（契约 2026-10-07-translation-api §0.3 本轮新增，管理页可见可操作）——
+    // 原"共 0 条"断言随种子落地失真，改为锁定种子行内容（名称/键/状态）与总数恰 1
+    const seedRows = page.locator('.type-pane .el-table__row')
+    assertEq(await seedRows.count(), 1, `左表应恰 1 行（user_status 种子），实际 ${await seedRows.count()}`)
+    const seedCells = await rowCells(seedRows.first())
+    log(`  种子行: ${JSON.stringify(seedCells)}`)
+    assertEq(seedCells[0], '用户状态', '种子行字典名称应为 用户状态')
+    assertEq(seedCells[1], 'user_status', '种子行字典键应为 user_status')
+    assertEq(seedCells[2], '正常', '种子行状态应为 正常')
     const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
     log(`  左表分页: ${leftTotal}`)
-    assertEq(leftTotal, '共 0 条', `左表分页应为 共 0 条，实际 "${leftTotal}"`)
+    assertEq(leftTotal, '共 1 条', `左表分页应为 共 1 条（仅种子），实际 "${leftTotal}"`)
     // 右表 9 列精确序
     const dhs = page.locator('.data-pane .el-table__header-wrapper th')
     const dn = await dhs.count()
@@ -486,8 +502,86 @@ try {
     await shot(page, 'd4-after-type-delete.png')
   })
 
-  // ================= CLEANUP 删净（兜底清扫全部 e2e 前缀类型：先删项后删类型） =================
-  await step('CLEANUP', '删净：清扫全部 e2e 前缀字典类型（先删项后删类型）→ 断言左表无 e2e 残留', async () => {
+  // ================= D5 消费端点（契约 2026-10-07-translation-api §2.1，D4 后 CLEANUP 前） =================
+  await step('D5', '消费端点：e2econs 停用过滤 + sort 升序 + 字段恰 value/label/sort；未知键 200 空数组；无 token 直调网关 401；种子 user_status 回归 2 项', async () => {
+    // ---- 5a. 造数（页内 fetch，admin 会话）：类型 + 3 项（sort 3/1/2 乱序，其中 1 项停用）----
+    const made = await page.evaluate(async (args) => {
+      const { dictName, dictKey } = args
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const H = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+      const typeRes = await fetch('/api/system/dict/type', { method: 'POST', headers: H, body: JSON.stringify({ dictName, dictKey, status: 0 }) })
+      const typeBody = await typeRes.json()
+      if (typeBody.code !== 200) return { error: `新增类型 code=${typeBody.code} msg=${typeBody.msg}` }
+      const typeId = typeBody.data
+      const items = [
+        { label: '消费甲', value: 'a', sort: 3, status: 0 },
+        { label: '消费乙', value: 'b', sort: 1, status: 0 },
+        { label: '消费丙', value: 'c', sort: 2, status: 1 }, // 停用项：消费口径应过滤
+      ]
+      const madeItems = []
+      for (const it of items) {
+        const res = await fetch('/api/system/dict/data', { method: 'POST', headers: H, body: JSON.stringify({ typeId, ...it }) })
+        const body = await res.json()
+        madeItems.push({ value: it.value, sort: it.sort, status: it.status, code: body.code })
+      }
+      return { typeId, madeItems }
+    }, { dictName: CONS_NAME, dictKey: CONS_KEY })
+    assert(!made.error, `消费测试造数应成功: ${made.error || ''}`)
+    assert(made.madeItems.every((m) => m.code === 200), `3 个字典项应全部新增成功，实际 ${JSON.stringify(made.madeItems)}`)
+    log(`  造数: 类型 ${CONS_NAME}（dictKey ${CONS_KEY}，id=${made.typeId}）+ 3 项（sort 3/1/2，丙停用）`)
+    // ---- 5a-consume. 消费口径：停用过滤（长度 2）+ sort 升序（首项最小）+ 字段恰 value/label/sort ----
+    const consumed = await page.evaluate(async (dictKey) => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const res = await fetch(`/api/system/dict/data/type/${dictKey}`, { headers: { Authorization: `Bearer ${token}` } })
+      return { httpStatus: res.status, body: await res.json() }
+    }, CONS_KEY)
+    log(`  消费接口: HTTP ${consumed.httpStatus} body=${JSON.stringify(consumed.body)}`)
+    assertEq(consumed.httpStatus, 200, '契约：HTTP 恒 200')
+    assertEq(consumed.body.code, 200, '消费端点业务码应为 200')
+    assert(Array.isArray(consumed.body.data), `消费 data 应为数组，实际 ${typeof consumed.body.data}`)
+    const items = consumed.body.data
+    assertEq(items.length, 2, `停用项应被过滤，data 长度应为 2，实际 ${items.length}（${JSON.stringify(items)}）`)
+    assertEq(items[0].value, 'b', '首项应为 sort 最小的 消费乙（value=b）')
+    assertEq(items[0].sort, 1, '首项 sort 应为 1（消费口径 sort 升序）')
+    assertEq(items[0].label, '消费乙', '首项 label 应为 消费乙')
+    assertEq(items[1].value, 'a', '次项应为 消费甲（value=a，sort=3；停用的丙被过滤）')
+    for (const it of items) {
+      assertEq(Object.keys(it).sort().join(','), 'label,sort,value', `消费项字段应恰 value/label/sort，实际 ${JSON.stringify(Object.keys(it))}`)
+    }
+    await shot(page, 'd5-consume-endpoint.png')
+    // ---- 5b. 未知 dictKey → 200 + data:[]（表单容错语义，不设业务错误码） ----
+    const unknown = await page.evaluate(async () => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const res = await fetch('/api/system/dict/data/type/nonexistent_key', { headers: { Authorization: `Bearer ${token}` } })
+      return { httpStatus: res.status, body: await res.json() }
+    })
+    log(`  未知键: HTTP ${unknown.httpStatus} body=${JSON.stringify(unknown.body)}`)
+    assertEq(unknown.httpStatus, 200, '未知 dictKey 也应 HTTP 200')
+    assertEq(unknown.body.code, 200, '未知 dictKey 业务码应为 200（空态非错误）')
+    assert(Array.isArray(unknown.body.data), `未知 dictKey data 应为数组，实际 ${typeof unknown.body.data}`)
+    assertEq(unknown.body.data.length, 0, '未知 dictKey data 应为空数组 []')
+    // ---- 5c. 无 token 直调网关 → HTTP 401（网关鉴权真实状态码） ----
+    const noToken = await page.request.get(`${GATEWAY}/system/dict/data/type/user_status`)
+    log(`  无 token 直调网关 ${GATEWAY}: HTTP ${noToken.status()}`)
+    assertEq(noToken.status(), 401, '无 token 直调网关应 HTTP 401')
+    // ---- 5d. 种子回归：user_status 消费恰 2 项（内置字典消费面锁定，零触碰） ----
+    const seed = await page.evaluate(async () => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const res = await fetch('/api/system/dict/data/type/user_status', { headers: { Authorization: `Bearer ${token}` } })
+      return await res.json()
+    })
+    log(`  种子消费: ${JSON.stringify(seed)}`)
+    assertEq(seed.code, 200, '种子消费业务码应为 200')
+    assert(Array.isArray(seed.data), `种子消费 data 应为数组，实际 ${typeof seed.data}`)
+    assertEq(seed.data.length, 2, `user_status 种子应恰 2 项，实际 ${JSON.stringify(seed.data)}`)
+    assertEq(seed.data[0].label, '正常', '种子首项应为 正常（sort 1）')
+    assertEq(seed.data[0].value, '0', '种子首项 value 应为 "0"')
+    assertEq(seed.data[1].label, '停用', '种子次项应为 停用（sort 2）')
+    assertEq(seed.data[1].value, '1', '种子次项 value 应为 "1"')
+  })
+
+  // ================= CLEANUP 删净（兜底清扫全部 e2e 前缀类型：先删项后删类型；D5 的 e2econs 含在内） =================
+  await step('CLEANUP', '删净：清扫全部 e2e 前缀字典类型（含 D5 e2econs，先删项后删类型）→ 断言左表无 e2e 残留、仅剩 user_status 种子', async () => {
     await loadDictPage()
     for (let guard = 0; guard < 100; guard++) {
       const rows = page.locator('.type-pane .el-table__row')
@@ -530,7 +624,12 @@ try {
     assertEq(residue, 0, `清理后左表不应残留任何 e2e 前缀类型行，实际 ${residue}`)
     const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
     log(`  清理后左表分页: ${leftTotal}`)
-    assertEq(leftTotal, '共 0 条', `清理后左表应回 共 0 条，实际 "${leftTotal}"`)
+    assertEq(leftTotal, '共 1 条', `清理后左表应仅剩 user_status 种子（共 1 条），实际 "${leftTotal}"`)
+    // 种子零触碰终检：残留的恰 1 行就是 user_status（名称/键/状态原样）
+    const finalRows = page.locator('.type-pane .el-table__row')
+    assertEq(await finalRows.count(), 1, `清理后左表应恰 1 行（种子），实际 ${await finalRows.count()}`)
+    const finalCells = await rowCells(finalRows.first())
+    assertEq(finalCells[1], 'user_status', `清理后仅剩行应为 user_status 种子，实际 ${JSON.stringify(finalCells)}`)
     await shot(page, 'cleanup-final.png')
   })
 
@@ -549,8 +648,8 @@ try {
   // ---------- 汇总 ----------
   h.summary({
     extras: [
-      `\n测试数据: 类型 ${TEST_KEY}（${TEST_NAME}→${TEST_NAME_V2}）/ 项 ${ITEM_VALUE}（${ITEM_LABEL}→${ITEM_LABEL_V2}）/ 3009 探针 ${TEST_NAME_DUP} / 3012 探针 ${ITEM_LABEL_B}（应均已在 D4/CLEANUP 删净或从未落库）`,
-      '字典域无种子数据（契约 §6）；admin 未做任何种子外数据写操作',
+      `\n测试数据: 类型 ${TEST_KEY}（${TEST_NAME}→${TEST_NAME_V2}）/ 项 ${ITEM_VALUE}（${ITEM_LABEL}→${ITEM_LABEL_V2}）/ 3009 探针 ${TEST_NAME_DUP} / 3012 探针 ${ITEM_LABEL_B} / D5 消费类型 ${CONS_KEY}（${CONS_NAME}，含 3 项）——应均已在 D4/CLEANUP 删净或从未落库`,
+      'user_status 内置种子（翻译契约 §0.3）全程零触碰；admin 未做任何种子外数据写操作',
     ],
   })
   await browser.close()
