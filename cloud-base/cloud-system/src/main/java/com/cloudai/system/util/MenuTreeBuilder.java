@@ -57,6 +57,7 @@ public final class MenuTreeBuilder {
         node.setCreateTime(m.getCreateTime());
         node.setUpdateBy(m.getUpdateBy());
         node.setUpdateTime(m.getUpdateTime());
+        node.setBuiltin(Integer.valueOf(1).equals(m.getIsBuiltin()));
         return node;
     }
 }

@@ -142,7 +142,9 @@ async function handleSubmit(): Promise<void> {
       <el-form-item label="状态" prop="status">
         <el-radio-group v-model="form.status" :disabled="loading">
           <el-radio :value="STATUS_NORMAL">正常</el-radio>
-          <el-radio :value="STATUS_DISABLED">停用</el-radio>
+          <!-- 内置用户（admin）仅禁「停用」项（保护契约 §7.2/§2：停用→3017）；
+               「正常」不禁、弹窗不整体锁死——昵称可改是合法运维；新增模式 user 缺省 → 不禁 -->
+          <el-radio :value="STATUS_DISABLED" :disabled="user?.builtin ?? false">停用</el-radio>
         </el-radio-group>
       </el-form-item>
     </el-form>

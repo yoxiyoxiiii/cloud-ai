@@ -1,11 +1,11 @@
 # 内置数据保护 API 契约（cloud-system：角色/菜单/字典/admin 用户防删防改防停）
 
 - 日期：2026-10-07
-- 状态：**保护域现行版（v1）**——由架构-agent 定稿，配合内置保护需求（设计 `docs/superpowers/specs/2026-10-07-translate-remote-builtin-protection-design.md`，计划 `docs/superpowers/plans/2026-10-07-translate-remote-builtin-protection.md`）
+- 状态：**保护域现行版（v1.1）**——v1 配合内置保护需求（设计 `docs/superpowers/specs/2026-10-07-translate-remote-builtin-protection-design.md`，计划 `docs/superpowers/plans/2026-10-07-translate-remote-builtin-protection.md`）；**v1.1 = §7 UI 强化修订**（2026-10-07 同日第二批：五域 VO additive `builtin` 字段 + 徽标/按钮禁用语义，设计 `docs/superpowers/specs/2026-10-07-translate-rollout-builtin-ui-design.md`，计划 `docs/superpowers/plans/2026-10-07-translate-rollout-builtin-ui.md`）——v1 全部条款零回改，§7 为 additive 声明 + 对 §5.4/§5.5 的声明性关闭
 - **与既有契约的关系（additive 错误码扩张 + 声明性取代）**：本文档对 pilot（`2026-10-05-pilot-auth-user-api.md` 用户/角色/菜单域）、dict（`2026-10-07-dict-api.md`）、translation（`2026-10-07-translation-api.md`）三契约的部分条款做**声明性取代/增补**——既有端点、入参、出参、成功语义**零变化**，仅其 delete/update 类端点的**错误码集合扩张**（新增可能错误码 3013-3017）。各域冲突处以本文档为准（仅限保护语义）；通用约定沿用 pilot §1
 - 约定：前端实现与本文档冲突时，以本文档为准；发现文档与实测不符，回报主控修订契约，不自行猜测
 
-## 0. 变更点清单（相对既有契约，共 5 处）
+## 0. 变更点清单（相对既有契约，v1 共 5 处 + v1.1 补行 1 处）
 
 | # | 对象 | 变更 | 性质 |
 |---|---|---|---|
@@ -14,6 +14,7 @@
 | 3 | pilot 用户域 | DELETE /system/user/{id} 新增 3017；PUT /system/user 新增 3017（仅停用分支）；PUT /system/role（用户分配角色端点 PUT /system/user/role）新增 3017（§2 矩阵与 §5 延伸声明） | additive |
 | 4 | dict 域 | PUT/DELETE /system/dict/type、PUT/DELETE /system/dict/data 新增可能 3015/3016 | additive |
 | 5 | translation-api §5 宽松语义 | §5 第 4 条"种子可被管理操作破坏"**关闭**——user_status 已受内置保护（本文档 §2）；其余宽松语义条目不变 | 声明性取代（缩小） |
+| 6 | （v1.1 补行） | **五域 VO additive `builtin: boolean` + UI 徽标/按钮禁用语义**（§7）；**声明性关闭 §5.4/§5.5**；内置范围扩张声明（common_status 种子，随 translation-api §8.3） | additive + 声明性取代——详见 §7；保护矩阵/错误码/校验实现零变化 |
 
 ## 1. 域语义（保护域特有）
 
@@ -87,3 +88,63 @@ UPDATE sys_user      SET is_builtin = 1 WHERE id = 1;
 - **backend**：B1 DDL 增量 + 基线同步 + 执行回查；B2 五实体 is_builtin + BuiltinEnum + 五 mapper allColumns 补列（INSERT/UPDATE 不动 = 结构性防篡改）；B3 保护校验 12 处 + 错误码常量 + 单测；B4-B5 remote 子模块 + inner 端点（见 inner 契约）；B6 全量构建；B7【卡点】重启 9202 + curl 验收（保护矩阵 12 条 + inner 直连 + 网关 403 实证）
 - **e2e**：E1 四脚本内置保护断言（toast + 行仍在）；E2 逐脚本种子操作点复核 + 六脚本全量回归
 - 红线：契约定稿后两端不得单方改；既有端点 additive-only（仅错误码集合扩张）；3013-3017 归保护域、3018+ 归 bpmn；零新增 @Transactional、零索引增量、零前端改动
+
+## 7. v1.1 UI 强化修订（builtin VO 字段 + 徽标/禁用语义，2026-10-07 第二批）
+
+> 设计 `2026-10-07-translate-rollout-builtin-ui-design.md`（D2-D4/D6）｜计划 `2026-10-07-translate-rollout-builtin-ui.md`｜**保护矩阵 §2、错误码 §4、12 处校验实现零变化**——本节只做「前端可感知」的 additive 声明与两条宽松语义的声明性关闭。
+
+### 7.0 变更点清单（v1.1 相对 v1，共 5 处）
+
+| # | 对象 | 变更 | 性质 |
+|---|---|---|---|
+| 1 | 五域 VO | SysRoleVo / MenuTreeNode / SysDictTypeVo / SysDictDataVo / SysUserVo 各 additive `builtin: boolean`（§7.1） | additive |
+| 2 | 前端 UI | 徽标（el-tag info「内置」）+ 写按钮禁用（§7.2 矩阵 = §2 镜像） | 前端实现细节 |
+| 3 | §5.4 | **声明性关闭**：错误 toast 不再是全部前端反馈——徽标+禁用为主反馈，3013-3017 降为最终防线（标准 UI 下不再可触发，错误码与后端校验原样保留） | 声明性取代 |
+| 4 | §5.5 | **声明性关闭**：is_builtin 经 `builtin` 只读字段对前端可见；**写出口仍零**（SaveRequest 无此字段、实体写列不含 is_builtin，结构性防篡改维持；请求传入 builtin 属 DTO 超集被忽略） | 声明性取代（缩小） |
+| 5 | 内置范围 | **扩张声明**：common_status 字典类型与其 2 项（translation-api §8.3 种子，is_builtin=1）自动落入 §2 字典域保护（3015/3016）——判定本体是 is_builtin 列，§2 矩阵 id 列为 v1 描述不回改 | 范围扩张——校验逻辑零改动 |
+
+### 7.1 builtin 字段（五 VO 同构）
+
+| 字段 | 类型 | 必返 | 说明 | 示例 |
+|---|---|---|---|---|
+| builtin | boolean | 是 | is_builtin=1 → true；0/null → false（null-safe：无标记行与用户创建行同为 false） | `true` |
+
+- **生效端点**：`GET /system/role/page`、`GET /system/role/list`、`GET /system/menu/tree`、`GET /system/dict/type/page`、`GET /system/dict/data/page`、`GET /system/user/page`、`GET /system/user/{id}`（与 translation-api §8.2 同批；/role/list、user/{id} 当前无 UI 消费方，流入无害）
+- **只读**：无任何写端点接受 builtin（超集传入不落库）；is_builtin 变更仍只经 SQL（§1 维持）
+- 响应示例（role 分页种子行，menu/dict/user 同构）：
+
+```json
+{ "id": "1", "name": "管理员", "roleKey": "admin", "status": 0, "builtin": true, "...": "审计与译文字段" }
+```
+
+### 7.2 UI 禁用矩阵（§2 保护矩阵的逐行镜像，前端唯一权威）
+
+| 域 | 徽标位置 | 禁用按钮（:disabled="row.builtin"） | 保持可用 | 弹窗内表达 |
+|---|---|---|---|---|
+| 角色 | name 列 | 编辑 / 分配权限 / 删除 | — | — |
+| 菜单 | name 列 | 编辑 / 删除 | — | — |
+| 字典类型 | dictName 列 | 编辑 / 删除 | **字典项**（打开弹框管理项） | — |
+| 字典项 | label 列（弹框内） | 编辑 / 删除 | **新增**（内置类型可追加项，§7.3） | — |
+| 用户 | account 列 | 删除 / 分配角色 | **编辑**（弹窗开、昵称可改）/ **重置密码** | 编辑弹窗内**「停用」单选项禁用**（「正常」不禁）；不整体锁弹窗 |
+
+- 徽标统一 `el-tag type="info" size="small"` 文本「内置」，内联名称类单元格（不新增列）；tag 颜色与状态列无关
+- 隐藏按钮 / 保留可点靠 toast 均不采用（设计 D3）；AssignMenuDialog、AssignRoleDialog 内部零改（builtin 流入不消费）
+
+### 7.3 宽松语义（v1.1 新增 1 条，其余沿用 §5）
+
+1. **内置字典类型可追加项**：向 user_status / common_status 新增字典项（POST）不在保护面 = 放行，UI 同步放行（§7.2）；追加项 is_builtin=0 可正常编辑删除。误删内置项的后果 = 译文降级 null + 消费端点空数组（translation-api §1 优雅降级覆盖）。若未来要「内置类型整体冻结」属矩阵收紧，另案明示
+
+### 7.4 TypeScript 类型字典（types/api.ts additive）
+
+| 类型 | 增补 |
+|---|---|
+| SysRoleVo / MenuTreeNode / SysDictTypeVo / SysDictDataVo / SysUserVo | 各 + `builtin: boolean`（与 translation-api §8.4 译文字段同批增补） |
+
+## 给 backend-agent / frontend-agent / e2e 的任务清单（v1.1 增补）
+
+完整清单见 `docs/superpowers/plans/2026-10-07-translate-rollout-builtin-ui.md`（后端章 B3 / 前端章 F2-F5 / e2e 章 E2）。要点：
+
+- **backend**：五 VO +Boolean builtin、四 Convert + MenuTreeBuilder 各 +1 行 setter 传递（null-safe）；**保护校验/错误码/mapper 零改动**
+- **frontend**：五处徽标 + 禁用绑定（§7.2 矩阵）+ UserFormDialog 停用项禁用
+- **e2e**：四脚本保护断言迁移为「UI disabled + page.request 直连 body 3013-3017」双层（N5 先例）；3015 先于 3011、3013 原值亦拒两语义断言转 API 层保留
+- 红线：保护矩阵/错误码/权限标识/事务/索引零变化；builtin 只读无写出口；既有端点 additive-only

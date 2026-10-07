@@ -120,7 +120,15 @@ onMounted(() => {
     </template>
 
     <el-table v-loading="loading" :data="rows">
-      <el-table-column prop="account" label="账号" min-width="120" />
+      <el-table-column label="账号" min-width="120">
+        <template #default="{ row }">
+          <span>{{ rowOf(row).account }}</span>
+          <!-- 内置徽标（保护契约 §7.2：内联账号格不新增列；仅展示，禁用面在操作列） -->
+          <el-tag v-if="rowOf(row).builtin" class="builtin-badge" type="info" size="small"
+            >内置</el-tag
+          >
+        </template>
+      </el-table-column>
       <el-table-column prop="nickname" label="昵称" min-width="120" />
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
@@ -143,6 +151,7 @@ onMounted(() => {
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
+          <!-- 内置用户（admin）仅禁 删除/分配角色；编辑/重置密码放行——用户域例外（保护契约 §7.2/§2 放行项，错误码 3017 为最终防线）；编辑弹窗内「停用」项单独禁用 -->
           <el-button v-perms="'system:user:edit'" link type="primary" @click="openEdit(rowOf(row))"
             >编辑</el-button
           >
@@ -157,10 +166,16 @@ onMounted(() => {
             v-perms="'system:user:assignRole'"
             link
             type="primary"
+            :disabled="rowOf(row).builtin"
             @click="openAssignRole(rowOf(row))"
             >分配角色</el-button
           >
-          <el-button v-perms="'system:user:remove'" link type="danger" @click="handleDelete(rowOf(row))"
+          <el-button
+            v-perms="'system:user:remove'"
+            link
+            type="danger"
+            :disabled="rowOf(row).builtin"
+            @click="handleDelete(rowOf(row))"
             >删除</el-button
           >
         </template>
@@ -199,5 +214,10 @@ onMounted(() => {
 .table-pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+/** 内置徽标内联账号格（设计 D3 统一形态） */
+.builtin-badge {
+  margin-left: 8px;
 }
 </style>

@@ -1,17 +1,18 @@
 # 字段翻译 API 契约（cloud-system：字典消费端点 + 用户 VO 译文字段 additive）
 
 - 日期：2026-10-07
-- 状态：**翻译域现行版（v1）**——由架构-agent 定稿，配合字段统一翻译需求（设计 `docs/superpowers/specs/2026-10-07-field-translation-design.md`，计划 `docs/superpowers/plans/2026-10-07-field-translation.md`）
+- 状态：**翻译域现行版（v1.1）**——v1 配合字段统一翻译需求（设计 `docs/superpowers/specs/2026-10-07-field-translation-design.md`，计划 `docs/superpowers/plans/2026-10-07-field-translation.md`）；**v1.1 = §8 铺开修订**（2026-10-07 同日第二批：四 VO 译文字段 + common_status 种子，设计 `docs/superpowers/specs/2026-10-07-translate-rollout-builtin-ui-design.md`，计划 `docs/superpowers/plans/2026-10-07-translate-rollout-builtin-ui.md`）——v1 全部条款零回改，§8 为 additive 声明
 - **与既有契约的关系（additive-only）**：本文档包含 ① 新端点（字典消费）② 对 pilot（`2026-10-05-pilot-auth-user-api.md`）用户域的 **additive 字段变更声明**。pilot 全部既有端点与字段**零触碰零变更**；两文冲突以本文档为准（仅限翻译域）。通用约定（R 结构 / HTTP 恒 200 + body.code / Long→String / 时间格式 / 错误码分段 / 前端处理策略）沿用 pilot §1。dict 契约（`2026-10-07-dict-api.md`）8 个管理端点零触碰
 - 约定：前端实现与本文档冲突时，以本文档为准；发现文档与实测不符，回报主控修订契约，不自行猜测
 
-## 0. 变更点清单（相对既有契约，共 3 处）
+## 0. 变更点清单（相对既有契约，v1 共 3 处 + v1.1 补行 1 处）
 
 | # | 对象 | 变更 | 性质 |
 |---|---|---|---|
 | 1 | pilot §3.1/§6.1 SysUserVo | **additive 三字段**：statusLabel / createByName / updateByName（§3）——**既有全部字段语义与取值零变化**（原字段永不因翻译被覆盖/丢弃，见 §1 红线） | additive——旧前端按原字段消费不受任何影响；新字段可选消费 |
 | 2 | 字典域 | 新增消费端点 `GET /system/dict/data/type/{dictKey}`（§2）——兑现 dict 契约移交备忘 1 预留；dict 8 管理端点与其错误码（3008-3012）零触碰 | additive 新端点 |
 | 3 | 种子数据 | sys_dict_type/sys_dict_data 各 +内置种子（user_status：正常/停用）——字典管理页可见可操作（防删并入 3013+ 保护 backlog，本轮不设防） | 数据扩张——对 sys_menu/perms 零影响（无新权限节点） |
+| 4 | （v1.1 补行） | **四 VO 翻译铺开 + common_status 内置种子**（§8）：SysRoleVo / MenuTreeNode / SysDictTypeVo / SysDictDataVo additive 译文字段，status 译文经新种子 common_status；user 域零触碰 | additive——详见 §8；设计 D1/D5 |
 
 ## 1. 域语义（翻译域特有）
 
@@ -119,3 +120,74 @@
 - **frontend**：F1 types/api.ts additive；F2 用户页三列降级链消费；F3 build + 联调
 - **e2e**：E1 run-e2e.mjs +S13 翻译断言；E2 run-dict-e2e.mjs +D5 消费端点场景；E3 六脚本全量回归
 - 红线：契约定稿后两端不得单方改；既有端点/字段 additive-only（原字段零变化）；错误码零新增、3013+ 预留不动；Element Plus 按需；黑盒纪律
+
+## 8. v1.1 铺开修订（四 VO 译文字段 + common_status 种子，2026-10-07 第二批）
+
+> 设计 `2026-10-07-translate-rollout-builtin-ui-design.md`（D1/D5）｜计划 `2026-10-07-translate-rollout-builtin-ui.md`｜v1 全部条款与 §3 用户域字段**零回改零变化**；本节为对 role/menu/dict 三域既有端点的 **additive 出参声明**（同 §3 对 pilot 的声明方式）。共同语义（红线/降级链/null 多因一果/手翻优先/宽松语义）**全部沿用 §1/§3.1/§5，本节不重复**，仅列差异。
+
+### 8.0 变更点清单（v1.1 相对 v1，共 4 处）
+
+| # | 对象 | 变更 | 性质 |
+|---|---|---|---|
+| 1 | SysRoleVo / SysDictTypeVo / SysDictDataVo / MenuTreeNode（dto） | **各 additive 三字段**：statusLabel / createByName / updateByName（§8.1）——既有字段零变化；status 的译文键为 **common_status**（非 user_status） | additive |
+| 2 | 生效端点 | `GET /system/role/page`、`GET /system/role/list`、`GET /system/menu/tree`、`GET /system/dict/type/page`、`GET /system/dict/data/page`（§8.2）；/menu/tree 嵌套子节点译文恒 null（机制边界，见 §8.2 要点） | additive——MenuTreeNode 字段表同时为 menu-management v2 §3 的 additive 声明（原文不回改，冲突以本节为准） |
+| 3 | 种子数据 | sys_dict_type/sys_dict_data 各 +内置种子 common_status（通用状态：正常"0"/停用"1"）（§8.3）——is_builtin=1，自动受 3015/3016 保护（保护契约 §7 范围扩张声明） | 数据扩张——sys_menu/perms 零影响 |
+| 4 | 前端消费 | role/menu 页三列 + dict 类型表/项弹框状态列接入降级链（§8.4） | 前端实现细节 |
+
+### 8.1 四 VO additive 字段（逐 VO 同构，语义同 §3.1）
+
+| VO | statusLabel | createByName / updateByName | 说明 |
+|---|---|---|---|
+| SysRoleVo | 字典 common_status 中 value=String(status) 的 label | createBy / updateBy（account）对应 nickname | 必返、可 null（降级链 §3.1 同款） |
+| MenuTreeNode | 同上 | 同上（种子菜单审计列为 null → 译文 null，属正确降级） | 同上 |
+| SysDictTypeVo | 同上 | 同上（种子 createBy='system' 非真实账号 → 译文 null，降级显示 'system'） | 同上 |
+| SysDictDataVo | 同上 | 同上 | 同上 |
+
+- **SysUserVo 零触碰**：statusLabel 仍为 user_status 口径（§3 原文为准）——用户域不随本节变化
+- 原字段（status/createBy/updateBy）语义与取值零变化（§1 红线对本节同样生效）；tag 颜色/编辑回填/行内判断仍用原字段
+- 响应示例（role 分页种子行形态，menu/dict 同构）：
+
+```json
+{ "id": "1", "name": "管理员", "roleKey": "admin", "status": 0,
+  "createBy": null, "createTime": "2026-10-05 21:30:00", "updateBy": null, "updateTime": null,
+  "statusLabel": "正常", "createByName": null, "updateByName": null }
+```
+
+### 8.2 生效端点与消费方
+
+| 端点 | 出参载体 | 既有消费方对新字段的消费 |
+|---|---|---|
+| GET /system/role/page | PageResult<SysRoleVo> | 角色管理页三列（§8.4） |
+| GET /system/role/list | List<SysRoleVo> | 分配角色弹窗候选——**流入不消费**（JSON 多字段运行时忽略） |
+| GET /system/menu/tree | List<MenuTreeNode> | 菜单管理页三列；AssignMenuDialog 流入不消费 |
+| GET /system/dict/type/page | PageResult<SysDictTypeVo> | 字典管理页类型表状态列 |
+| GET /system/dict/data/page | PageResult<SysDictDataVo> | DictDataDialog 弹框状态列 |
+
+- **`/menu/tree` 嵌套子节点译文恒 null（机制边界）**：翻译收集只展开容器（PageResult.rows/Collection/数组），到 `@TranslateVO` 实例只收集**自身字段**、不遍历对象字段；且响应层级 R→List→根节点已达深度上限 3——**仅根节点（顶级菜单）回填译文**，嵌套子节点 statusLabel/createByName/updateByName 恒 null（字段键仍在 JSON 中，值为 null）。前端降级链兜底（common_status 项文案与本地 STATUS_MAP 一致，UI 零可见差异）；原字段（status/createBy/updateBy）不受影响照常返回。嵌套 VO 下钻增强记移交候选（另轮，见计划移交备忘 8）
+
+### 8.3 common_status 内置种子声明
+
+- sys_dict_type：`通用状态 / common_status / status=0 / is_builtin=1`；sys_dict_data：`正常 / "0" / sort=1`、`停用 / "1" / sort=2`（均 is_builtin=1，create_by='system' 种子惯例）
+- **id 非契约内容**：新建环境基线为 2/3/4；存量环境经增量脚本自动分配（AUTO_INCREMENT 已被历史数据消耗，显式 id 会冲突）——两种形态均合法，**内置保护按 is_builtin 判定与 id 无关**（保护契约 §1/§7）
+- 消费口径同 §2.1：`GET /system/dict/data/type/common_status` → 2 项（label 与 user_status 项文案一致为设计现状，两类型独立演化）
+- user_status 种子与管理端语义零变化；字典管理页将可见两个内置类型（user_status / common_status）
+
+### 8.4 前端消费映射（additive 增行）
+
+| 消费方 | 接入 | 备注 |
+|---|---|---|
+| 角色管理页 | 状态 tag 文本 `statusLabel ?? STATUS_MAP[status].label ?? status`；创建人/更新人列 `*Name ?? 原字段 ?? '-'` | tagType 仍按原 status（§1 红线） |
+| 菜单管理页（树表） | 同上三处 | 同上 |
+| 字典类型表 / DictDataDialog | 仅状态列 statusLabel 降级链 | 审计列不展示（Round E 取舍维持；译文字段后端照给，UI 暂不消费） |
+| TS 类型（types/api.ts） | SysRoleVo / MenuTreeNode / SysDictTypeVo / SysDictDataVo 各 + `statusLabel: string \| null; createByName: string \| null; updateByName: string \| null` | builtin 字段见保护契约 §7 |
+
+- 错误码：**v1.1 仍零新增**（§4 账本延续：3013-3017 已占，3018 起预留给 bpmn）；译文失败一律降级 null（§1）
+
+## 给 backend-agent / frontend-agent / e2e 的任务清单（v1.1 增补）
+
+完整清单见 `docs/superpowers/plans/2026-10-07-translate-rollout-builtin-ui.md`（后端章 B2 / 前端章 F1-F5 / e2e 章 E2）。要点：
+
+- **backend**：B1 common_status 种子（增量不写显式 id + 基线显式 id + 回查）；B2 四 VO 注解与译文字段（SysUserVo 零触碰）；B3 五域 builtin 传递见保护契约 §7（同轮同任务）
+- **frontend**：F1 TS additive；F2-F5 四页 + DictDataDialog + UserFormDialog 翻译列/降级链/徽标/禁用
+- **e2e**：E2 四脚本断言迁移（翻译每页 UI+fetch 各一条）
+- 红线：既有端点 additive-only；user_status 与 admin 零触碰；错误码/权限标识零新增；降级链必做

@@ -49,4 +49,7 @@ public class SysUserVo implements Serializable {
 
     /** updateBy(account) 对应昵称；null 同上 */
     private String updateByName;
+
+    /** 内置标记（保护契约 2026-10-07-builtin-protection §7.1）：is_builtin=1 → true；0/null → false（null-safe），只读无写出口 */
+    private Boolean builtin;
 }

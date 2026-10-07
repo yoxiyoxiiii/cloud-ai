@@ -22,7 +22,12 @@ const TYPE_MAP: Record<string, { label: string; tagType: 'primary' | 'success' |
   F: { label: '按钮', tagType: 'warning' },
 }
 
-/** 状态展示映射（契约 §1：0=正常 1=停用；tree 不过滤停用菜单，靠此列区分） */
+/**
+ * 状态本地映射（契约 §1：0=正常 1=停用；tree 不过滤停用菜单，靠此列区分）：
+ * - tagType 是颜色映射本体，永远按原字段 status 取值（译文不含颜色语义——契约 §1 红线）
+ * - label 仅作 statusLabel 缺位时的降级文案（契约 2026-10-07-translation-api §8.1/§8.4 降级链）
+ * 编辑弹窗回填/提交仍用原字段 status，不消费译文
+ */
 const STATUS_MAP: Record<number, { label: string; tagType: 'success' | 'danger' }> = {
   0: { label: '正常', tagType: 'success' },
   1: { label: '停用', tagType: 'danger' },
@@ -109,7 +114,15 @@ onMounted(() => {
       :tree-props="{ children: 'children' }"
       default-expand-all
     >
-      <el-table-column prop="name" label="名称" min-width="240" />
+      <el-table-column label="名称" min-width="240">
+        <template #default="{ row }">
+          <span>{{ rowOf(row).name }}</span>
+          <!-- 内置徽标（保护契约 §7.2：内联名称格不新增列；仅展示，禁用面在操作列） -->
+          <el-tag v-if="rowOf(row).builtin" class="builtin-badge" type="info" size="small"
+            >内置</el-tag
+          >
+        </template>
+      </el-table-column>
       <el-table-column label="类型" width="90">
         <template #default="{ row }">
           <el-tag :type="TYPE_MAP[rowOf(row).type]?.tagType ?? 'info'">
@@ -125,31 +138,38 @@ onMounted(() => {
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="STATUS_MAP[rowOf(row).status]?.tagType ?? 'info'">
-            {{ STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
+            {{ rowOf(row).statusLabel ?? STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="创建人" width="100">
-        <template #default="{ row }">{{ rowOf(row).createBy ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).createByName ?? rowOf(row).createBy ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="创建时间" width="160">
         <template #default="{ row }">{{ rowOf(row).createTime ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="更新人" width="100">
-        <template #default="{ row }">{{ rowOf(row).updateBy ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).updateByName ?? rowOf(row).updateBy ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="更新时间" width="160">
         <template #default="{ row }">{{ rowOf(row).updateTime ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
-          <el-button v-perms="'system:menu:edit'" link type="primary" @click="openEdit(rowOf(row))"
+          <!-- 内置行（23 行种子菜单）编辑/删除禁用（保护契约 §7.2 矩阵镜像，错误码 3014 为最终防线） -->
+          <el-button
+            v-perms="'system:menu:edit'"
+            link
+            type="primary"
+            :disabled="rowOf(row).builtin"
+            @click="openEdit(rowOf(row))"
             >编辑</el-button
           >
           <el-button
             v-perms="'system:menu:remove'"
             link
             type="danger"
+            :disabled="rowOf(row).builtin"
             @click="handleDelete(rowOf(row))"
             >删除</el-button
           >
@@ -172,5 +192,10 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+/** 内置徽标内联名称格（设计 D3 统一形态） */
+.builtin-badge {
+  margin-left: 8px;
 }
 </style>

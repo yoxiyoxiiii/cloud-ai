@@ -21,6 +21,7 @@ public final class SysDictTypeConvert {
         vo.setCreateTime(dictType.getCreateTime());
         vo.setUpdateBy(dictType.getUpdateBy());
         vo.setUpdateTime(dictType.getUpdateTime());
+        vo.setBuiltin(Integer.valueOf(1).equals(dictType.getIsBuiltin()));
         return vo;
     }
 }

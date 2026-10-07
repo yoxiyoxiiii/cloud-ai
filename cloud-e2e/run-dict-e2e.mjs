@@ -5,12 +5,12 @@
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 npm run e2e:dict）
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码
  * 测试数据（删净纪律最高优先）：
- * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；user_status 为内置种子（翻译契约 §0.3）——零放行触碰；
- *   D5b 内置保护对 user_status/种子项仅做"尝试后验证拒"（3015/3016，契约 2026-10-07-builtin-protection §2，种子零变更）
+ * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；user_status/common_status 为内置种子（翻译契约 §0.3/§8.3）——零放行触碰；
+ *   D5b 内置保护：user_status 行徽标/禁用面 + 直连 3015/3016 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
  * - 结束清扫全部 e2e 前缀类型（含 D5 的 e2econs；先删项后删类型，3011 禁删约束）并断言左表无 e2e 残留、仅剩种子
  * 核心断言（契约 §2 §3 §5；界面重构后字典项管理在弹框内——2026-10-07-dict-ui-list-dialog plan D4）：
  * - D0 侧边 字典管理 位于 菜单管理 之后 + 面包屑 首页/字典管理 + admin 重登快照含 dict 权限（新增类型按钮可见）
- * - D1 全宽类型表：4 列/恰 1 行（user_status 内置种子，契约 2026-10-07-translation-api §0.3）；
+ * - D1 全宽类型表：4 列/恰 2 行（user_status + common_status 内置种子，契约 2026-10-07-translation-api §0.3/§8.3）；
  *   种子行"字典项"弹框：标题 `字典项：用户状态（user_status）`、5 列精确序、种子 2 行（正常/停用）、共 2 条
  * - D2 类型闭环：空提交 0 请求 → 新增（提交恰三字段）→ 编辑改名+停用（全量三字段+id、tag danger）
  *   → 重开弹框标题跟随新名 → 同 dictKey 重提 3009 toast 弹窗保持
@@ -18,9 +18,9 @@
  *   → 审计断言改页内 fetch（createBy/updateBy=admin、createTime 格式——UI 已减审计列，契约 VO 仍返回）
  *   → 同 value 重提 3012 toast 弹窗保持 → 编辑改 label/sort（全量五字段+id、弹框行内更新）
  * - D4 删除约束：有项删类型 3011 toast 行保留 → 弹框内删净项 → 删类型（确认框含类型名）→ 类型行消失
- * - D5 消费端点（契约 2026-10-07-translation-api §2.1）：造 e2econs 类型+3 项（sort 3/1/2，1 项停用）→
+ * - D5 消费端点（契约 2026-10-07-translation-api §2.1/§8.3）：造 e2econs 类型+3 项（sort 3/1/2，1 项停用）→
  *   消费断言停用过滤/长度 2/sort 升序/字段恰 value-label-sort；未知 dictKey → 200 data:[]；
- *   无 token 直调网关 401；种子 user_status 消费回归恰 2 项（CLEANUP 一并删 e2econs，种子零触碰）
+ *   无 token 直调网关 401；种子 user_status/common_status 消费回归各恰 2 项（CLEANUP 一并删 e2econs，种子零触碰）
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -156,20 +156,20 @@ async function confirmDelete(expected) {
   return boxText
 }
 
-/** 期望错误 toast（超时兜底抓页上实际 toast 文案进失败信息——内置保护断言专用，D5b） */
-async function expectErrToast(expected) {
-  try {
-    const t = await waitToast(page, expected, 'error')
-    log(`  toast: "${t}"`)
-    return t
-  } catch {
-    const present = []
-    const msgs = page.locator('.el-message')
-    const n = await msgs.count()
-    for (let i = 0; i < n; i++) present.push((await msgs.nth(i).innerText()).trim())
-    throw new Error(`期望错误 toast "${expected}" 未出现，页上实际 toast: ${JSON.stringify(present)}`)
-  }
+/** 直连网关小助手（E2 通用模式）：page.evaluate 取 localStorage token + page.request + Bearer——
+ *  不入 page 网络统计（不污染 D-VERIFY，N5/D5c 先例）；请求体中文经 Node UTF-8 无 GBK 陷阱 */
+async function directApi(method, path, data) {
+  const token = await page.evaluate(() => JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken)
+  const res = await page.request.fetch(`${GATEWAY}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    data: data === undefined ? undefined : JSON.stringify(data),
+  })
+  return { httpStatus: res.status(), body: await res.json() }
 }
+
+/** 名称格内联徽标（el-tag「内置」）使 innerText 变 "{name}\n内置"（tag 独立成行）——比对前统一剥离尾缀并 trim（E2 通用模式） */
+const stripBadge = (s) => s.replace(/\s*内置\s*$/, '').trim()
 
 /** 删净弹框内当前类型的全部字典项（逐行首项删，含确认框文案断言；页大小 10 场景足够） */
 async function deleteAllDataItems() {
@@ -224,7 +224,7 @@ try {
   })
 
   // ================= D1 全宽类型表 + 种子行"字典项"弹框 =================
-  await step('D1', '全宽类型表：4 列 + 恰 1 行（user_status 种子）；种子行弹框：标题/5 列精确序/种子 2 行（正常/停用）/共 2 条', async () => {
+  await step('D1', '全宽类型表：4 列 + 恰 2 行（user_status + common_status 种子，均带徽标）；种子行弹框：标题/5 列精确序/种子 2 行（正常/停用）/共 2 条', async () => {
     // 类型表 4 列精确序
     const ths = page.locator('.type-pane .el-table__header-wrapper th')
     const tn = await ths.count()
@@ -232,20 +232,29 @@ try {
     for (let i = 0; i < tn; i++) headers.push(((await ths.nth(i).innerText()) || '').trim())
     log(`  类型表头(${tn}): ${JSON.stringify(headers)}`)
     assertEq(headers.join(','), '字典名称,字典键,状态,操作', `类型表头应为 4 列精确序，实际 ${JSON.stringify(headers)}`)
-    // 类型表：仅剩 user_status 内置种子（契约 2026-10-07-translation-api §0.3 本轮新增，管理页可见可操作）——
-    // 原"共 0 条"断言随种子落地失真，改为锁定种子行内容（名称/键/状态）与总数恰 1
+    // 类型表：恰 2 行内置种子（user_status §0.3 + common_status §8.3 本轮新增，管理页可见可操作）——
+    // E2 种子计数迁移：两行均断言徽标与状态列「正常」，名称/键逐行锁定（顺序不依赖 id 倒序）
     const seedRows = page.locator('.type-pane .el-table__row')
-    assertEq(await seedRows.count(), 1, `类型表应恰 1 行（user_status 种子），实际 ${await seedRows.count()}`)
-    const seedCells = await rowCells(seedRows.first())
-    log(`  种子行: ${JSON.stringify(seedCells)}`)
-    assertEq(seedCells[0], '用户状态', '种子行字典名称应为 用户状态')
-    assertEq(seedCells[1], 'user_status', '种子行字典键应为 user_status')
-    assertEq(seedCells[2], '正常', '种子行状态应为 正常')
+    assertEq(await seedRows.count(), 2, `类型表应恰 2 行（user_status + common_status 种子），实际 ${await seedRows.count()}`)
+    const SEED_TYPE_NAMES = { user_status: '用户状态', common_status: '通用状态' }
+    let userStatusRow = null
+    const seenKeys = []
+    for (let i = 0; i < 2; i++) {
+      const r = seedRows.nth(i)
+      const c = await rowCells(r)
+      seenKeys.push(c[1])
+      log(`  种子行[${i}]: ${JSON.stringify(c)}`)
+      assertEq(stripBadge(c[0]), SEED_TYPE_NAMES[c[1]] || '', `种子行 ${c[1]} 字典名称应为 ${SEED_TYPE_NAMES[c[1]] || '?'}（徽标剥离后）`)
+      assertEq(c[2], '正常', `种子行 ${c[1]} 状态列应为 正常（statusLabel 译文/降级链同文案）`)
+      assert((await r.locator('.builtin-badge').count()) === 1, `种子行 ${c[1]} 名称格应有内联「内置」徽标（el-tag）`)
+      if (c[1] === 'user_status') userStatusRow = r
+    }
+    assertEq(seenKeys.sort().join(','), 'common_status,user_status', `两行应恰为 user_status 与 common_status，实际 ${JSON.stringify(seenKeys)}`)
     const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
     log(`  类型表分页: ${leftTotal}`)
-    assertEq(leftTotal, '共 1 条', `类型表分页应为 共 1 条（仅种子），实际 "${leftTotal}"`)
+    assertEq(leftTotal, '共 2 条', `类型表分页应为 共 2 条（两枚种子），实际 "${leftTotal}"`)
     // 种子行"字典项"弹框：标题（原右栏标题格式平移）+ 5 列精确序 + 种子 2 项 + 共 2 条
-    const dlg = await openDataDialog(seedRows.first())
+    const dlg = await openDataDialog(userStatusRow)
     assertEq(await dataDialogTitle(), '字典项：用户状态（user_status）', `弹框标题应为 字典项：用户状态（user_status），实际 "${await dataDialogTitle()}"`)
     const dhs = dlg.locator('.el-table__header-wrapper th')
     const dn = await dhs.count()
@@ -258,8 +267,8 @@ try {
     const itemCellsA = await rowCells(itemRows.nth(0))
     const itemCellsB = await rowCells(itemRows.nth(1))
     log(`  种子项行: ${JSON.stringify(itemCellsA)} / ${JSON.stringify(itemCellsB)}`)
-    assertEq(itemCellsA[0], '正常', '种子第 1 行标签应为 正常（sort 1）')
-    assertEq(itemCellsB[0], '停用', '种子第 2 行标签应为 停用（sort 2）')
+    assertEq(stripBadge(itemCellsA[0]), '正常', '种子第 1 行标签应为 正常（sort 1，内联「内置」徽标剥离后）')
+    assertEq(stripBadge(itemCellsB[0]), '停用', '种子第 2 行标签应为 停用（sort 2，徽标剥离后）')
     const dlgTotal = (await dlg.locator('.el-pagination__total').innerText()).trim()
     assertEq(dlgTotal, '共 2 条', `弹框分页应为 共 2 条，实际 "${dlgTotal}"`)
     await shot(page, 'd1-seed-dialog.png')
@@ -547,7 +556,7 @@ try {
   })
 
   // ================= D5 消费端点（契约 2026-10-07-translation-api §2.1，D4 后 CLEANUP 前） =================
-  await step('D5', '消费端点：e2econs 停用过滤 + sort 升序 + 字段恰 value/label/sort；未知键 200 空数组；无 token 直调网关 401；种子 user_status 回归 2 项', async () => {
+  await step('D5', '消费端点：e2econs 停用过滤 + sort 升序 + 字段恰 value/label/sort；未知键 200 空数组；无 token 直调网关 401；种子 user_status/common_status 回归各 2 项', async () => {
     // ---- 5a. 造数（页内 fetch，admin 会话）：类型 + 3 项（sort 3/1/2 乱序，其中 1 项停用）----
     const made = await page.evaluate(async (args) => {
       const { dictName, dictKey } = args
@@ -622,70 +631,81 @@ try {
     assertEq(seed.data[0].value, '0', '种子首项 value 应为 "0"')
     assertEq(seed.data[1].label, '停用', '种子次项应为 停用（sort 2）')
     assertEq(seed.data[1].value, '1', '种子次项 value 应为 "1"')
+    // ---- 5e. common_status 消费回归（E2 补，契约 §8.3：role/menu/dict 四域 status 译文字典）----
+    const common = await page.evaluate(async () => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const res = await fetch('/api/system/dict/data/type/common_status', { headers: { Authorization: `Bearer ${token}` } })
+      return await res.json()
+    })
+    log(`  common_status 种子消费: ${JSON.stringify(common)}`)
+    assertEq(common.code, 200, 'common_status 消费业务码应为 200')
+    assert(Array.isArray(common.data), `common_status data 应为数组，实际 ${typeof common.data}`)
+    assertEq(common.data.length, 2, `common_status 种子应恰 2 项，实际 ${JSON.stringify(common.data)}`)
+    assertEq(common.data[0].label, '正常', 'common_status 首项应为 正常（sort 1）')
+    assertEq(common.data[0].value, '0', 'common_status 首项 value 应为 "0"')
+    assertEq(common.data[1].label, '停用', 'common_status 次项应为 停用（sort 2）')
+    assertEq(common.data[1].value, '1', 'common_status 次项 value 应为 "1"')
   })
 
-  // ================= D5b 内置字典保护（契约 2026-10-07-builtin-protection §2：user_status"尝试后验证拒"） =================
-  await step('D5b', '内置字典保护：user_status 删除 → 3015（先于 3011 的次序断言点）→ 弹框内种子项删除 → 3016 → 行/项原样', async () => {
-    // ---- a. 种子类型删除被拒：body 3015 + toast 文案必须是内置保护而非 3011"先删除字典项"（user_status 有 2 项，旧路径必 3011） ----
+  // ================= D5b 内置字典保护（契约 2026-10-07-builtin-protection §2/§7.2-§7.3：徽标+禁用面 UI 断言 + 直连 3015/3016 API 断言，种子零变更） =================
+  await step('D5b', '内置字典保护：user_status 行徽标 + 编辑/删除禁用、「字典项」放行 → 直连删类型 3015（先于 3011）→ 弹框种子项徽标/行内禁用/「新增」放行 → 直连删项 3016 → 行/项原样', async () => {
+    // ---- a. UI 禁用面 + 徽标（§7.2：编辑/删除禁用；§7.3：「字典项」放行——内置类型可进弹框管理项）----
     await loadDictPage()
     let row = await findTypeRowByKey('user_status', { reload: false })
     assert(row, '应能定位 user_status 种子类型行')
     const cellsBefore = await rowCells(row)
     log(`  种子类型行（保护前）: ${JSON.stringify(cellsBefore)}`)
-    await row.getByRole('button', { name: '删除' }).click()
-    const box = page.locator('.el-message-box')
-    await box.waitFor({ state: 'visible', timeout: 8000 })
-    const boxText = (await box.innerText()).trim().replace(/\n/g, ' | ')
-    log(`  删除类型确认框: ${boxText}`)
-    assert(boxText.includes('确定删除字典类型 "用户状态"'), `确认框文案应含 确定删除字典类型 "用户状态"，实际 "${boxText}"`)
-    await shot(page, 'd5b-delete-confirm.png')
-    const delP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/dict/type/'), { timeout: 15000 })
-    await box.locator('.el-message-box__btns .el-button--primary').click()
-    const del = await delP
-    const delBody = await del.json()
-    log(`  删除类型接口: HTTP ${del.status()} code=${delBody.code} msg="${delBody.msg}"`)
-    assertEq(del.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
-    assertEq(delBody.code, 3015, `内置类型删除应 body 3015（保护校验先于 3011 项检查），实际 ${delBody.code}`)
-    await expectErrToast('内置字典类型禁止删除')
+    const badge = row.locator('.builtin-badge')
+    assert((await badge.count()) === 1, 'user_status 行名称格应有内联「内置」徽标（el-tag）')
+    assertEq((await badge.innerText()).trim(), '内置', '徽标文本应为 内置')
+    assert(await row.getByRole('button', { name: '编辑' }).isDisabled(), '内置类型「编辑」按钮应禁用')
+    assert(await row.getByRole('button', { name: '删除' }).isDisabled(), '内置类型「删除」按钮应禁用')
+    assert(await row.getByRole('button', { name: '字典项' }).isEnabled(), '「字典项」按钮应放行（§7.3 内置类型可进弹框管理项）')
+    await shot(page, 'd5b-builtin-disabled.png')
+    // ---- b. 直连 DELETE /system/dict/type/1 → body 3015（次序断言在 API 层保留：user_status 有 2 项，
+    //      旧路径必 3011——3015 意味着保护校验先于 3011 项检查）----
+    const del = await directApi('DELETE', '/system/dict/type/1')
+    log(`  直连删除类型接口: HTTP ${del.httpStatus} code=${del.body.code} msg="${del.body.msg}"`)
+    assertEq(del.httpStatus, 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(del.body.code, 3015, `内置类型删除应 body 3015（先于 3011 项检查）而非 3011，实际 ${del.body.code}`)
+    // ---- c. 弹框（放行入口）：种子项徽标 + 行内编辑/删除禁用 + 「新增字典项」放行（§7.3）----
     row = await findTypeRowByKey('user_status', { reload: false })
     assert(row, '3015 拒绝后 user_status 类型行应仍在')
-    // ---- b. 弹框内种子项（正常 id=1）删除被拒 → 3016 ----
     const dlg = await openDataDialog(row)
     const itemRows = dlg.locator('.el-table__row')
     assertEq(await itemRows.count(), 2, '种子弹框应恰 2 行（正常/停用）')
     const firstCells = await rowCells(itemRows.first())
     log(`  种子首项行: ${JSON.stringify(firstCells)}`)
-    assertEq(firstCells[0], '正常', '种子首项应为 正常（id=1，sort 1）')
-    await itemRows.first().getByRole('button', { name: '删除' }).click()
-    const itemBox = page.locator('.el-message-box')
-    await itemBox.waitFor({ state: 'visible', timeout: 8000 })
-    const itemBoxText = (await itemBox.innerText()).trim().replace(/\n/g, ' | ')
-    log(`  删项确认框: ${itemBoxText}`)
-    assert(itemBoxText.includes('确定删除字典项 "正常"'), `确认框文案应含 确定删除字典项 "正常"，实际 "${itemBoxText}"`)
-    const itemDelP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/dict/data/'), { timeout: 15000 })
-    await itemBox.locator('.el-message-box__btns .el-button--primary').click()
-    const itemDel = await itemDelP
-    const itemDelBody = await itemDel.json()
-    log(`  删除项接口: HTTP ${itemDel.status()} code=${itemDelBody.code} msg="${itemDelBody.msg}"`)
-    assertEq(itemDelBody.code, 3016, `内置字典项删除应 body 3016，实际 ${itemDelBody.code}`)
-    await expectErrToast('内置字典项禁止删除')
+    assertEq(stripBadge(firstCells[0]), '正常', '种子首项应为 正常（sort 1，徽标剥离后）')
+    assert((await itemRows.first().locator('.builtin-badge').count()) === 1, '种子项行标签格应有内联「内置」徽标（el-tag）')
+    assert(await itemRows.first().getByRole('button', { name: '编辑' }).isDisabled(), '内置项行内「编辑」按钮应禁用')
+    assert(await itemRows.first().getByRole('button', { name: '删除' }).isDisabled(), '内置项行内「删除」按钮应禁用')
+    assert(await dlg.getByRole('button', { name: '新增字典项' }).isEnabled(), '弹框「新增字典项」按钮应放行（§7.3 内置类型可追加项）')
+    await shot(page, 'd5b-item-disabled.png')
+    // ---- d. 直连 DELETE 种子项（id=1 正常）→ body 3016 ----
+    const itemsPage = await directApi('GET', '/system/dict/data/page?typeId=1&pageNum=1&pageSize=10')
+    assertEq(itemsPage.body.code, 200, '项分页直连业务码应为 200')
+    assertEq(itemsPage.body.data.rows.length, 2, `user_status 应恰 2 项，实际 ${itemsPage.body.data.rows.length}`)
+    assertEq(String(itemsPage.body.data.rows[0].id), '1', `种子首项 id 应为 1（正常），实际 ${itemsPage.body.data.rows[0].id}`)
+    const itemDel = await directApi('DELETE', `/system/dict/data/${itemsPage.body.data.rows[0].id}`)
+    log(`  直连删除项接口: HTTP ${itemDel.httpStatus} code=${itemDel.body.code} msg="${itemDel.body.msg}"`)
+    assertEq(itemDel.body.code, 3016, `内置字典项删除应 body 3016，实际 ${itemDel.body.code}`)
+    // ---- e. 种子终态：弹框 2 行/共 2 条 + 类型行原样 ----
     assertEq(await dlg.locator('.el-table__row').count(), 2, '3016 拒绝后弹框内种子项应仍恰 2 行')
     const dlgTotal = (await dlg.locator('.el-pagination__total').innerText()).trim()
     assertEq(dlgTotal, '共 2 条', `弹框分页应仍为 共 2 条，实际 "${dlgTotal}"`)
-    await shot(page, 'd5b-item-3016.png')
     await closeDataDialog()
-    // ---- c. 种子终态：类型名/键/状态与保护前一致 ----
     row = await findTypeRowByKey('user_status', { reload: false })
     assert(row, '保护场景后 user_status 类型行应仍在（种子终态）')
     const cellsAfter = await rowCells(row)
     log(`  种子类型行（保护后）: ${JSON.stringify(cellsAfter)}`)
-    assertEq(cellsAfter[0], '用户状态', '种子类型名应保持 用户状态')
+    assertEq(stripBadge(cellsAfter[0]), '用户状态', '种子类型名应保持 用户状态（徽标剥离后）')
     assertEq(cellsAfter[1], 'user_status', '种子 dictKey 应保持 user_status')
     assertEq(cellsAfter[2], cellsBefore[2], `种子类型状态应保持原值 "${cellsBefore[2]}"`)
   })
 
   // ================= CLEANUP 删净（兜底清扫全部 e2e 前缀类型：先删项后删类型；D5 的 e2econs 含在内） =================
-  await step('CLEANUP', '删净：清扫全部 e2e 前缀字典类型（含 D5 e2econs，先删项后删类型）→ 断言左表无 e2e 残留、仅剩 user_status 种子', async () => {
+  await step('CLEANUP', '删净：清扫全部 e2e 前缀字典类型（含 D5 e2econs，先删项后删类型）→ 断言左表无 e2e 残留、残留集合恰 {user_status, common_status}', async () => {
     await loadDictPage()
     for (let guard = 0; guard < 100; guard++) {
       const rows = page.locator('.type-pane .el-table__row')
@@ -729,12 +749,19 @@ try {
     assertEq(residue, 0, `清理后左表不应残留任何 e2e 前缀类型行，实际 ${residue}`)
     const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
     log(`  清理后左表分页: ${leftTotal}`)
-    assertEq(leftTotal, '共 1 条', `清理后左表应仅剩 user_status 种子（共 1 条），实际 "${leftTotal}"`)
-    // 种子零触碰终检：残留的恰 1 行就是 user_status（名称/键/状态原样）
+    assertEq(leftTotal, '共 2 条', `清理后左表应仅剩两枚内置种子（共 2 条），实际 "${leftTotal}"`)
+    // 种子零触碰终检：残留集合恰 {user_status, common_status}（名称/状态原样）
     const finalRows = page.locator('.type-pane .el-table__row')
-    assertEq(await finalRows.count(), 1, `清理后左表应恰 1 行（种子），实际 ${await finalRows.count()}`)
-    const finalCells = await rowCells(finalRows.first())
-    assertEq(finalCells[1], 'user_status', `清理后仅剩行应为 user_status 种子，实际 ${JSON.stringify(finalCells)}`)
+    assertEq(await finalRows.count(), 2, `清理后左表应恰 2 行（种子），实际 ${await finalRows.count()}`)
+    const FINAL_SEED_NAMES = { user_status: '用户状态', common_status: '通用状态' }
+    const finalKeys = []
+    for (let i = 0; i < 2; i++) {
+      const c = await rowCells(finalRows.nth(i))
+      finalKeys.push(c[1])
+      assertEq(stripBadge(c[0]), FINAL_SEED_NAMES[c[1]] || '', `残留种子 ${c[1]} 名称应原样 ${FINAL_SEED_NAMES[c[1]] || '?'}（徽标剥离后）`)
+      assertEq(c[2], '正常', `残留种子 ${c[1]} 状态应原样 正常`)
+    }
+    assertEq(finalKeys.sort().join(','), 'common_status,user_status', `残留 dictKey 集合应恰为 {{user_status, common_status}}，实际 ${JSON.stringify(finalKeys)}`)
     await shot(page, 'cleanup-final.png')
   })
 
@@ -754,7 +781,7 @@ try {
   h.summary({
     extras: [
       `\n测试数据: 类型 ${TEST_KEY}（${TEST_NAME}→${TEST_NAME_V2}）/ 项 ${ITEM_VALUE}（${ITEM_LABEL}→${ITEM_LABEL_V2}）/ 3009 探针 ${TEST_NAME_DUP} / 3012 探针 ${ITEM_LABEL_B} / D5 消费类型 ${CONS_KEY}（${CONS_NAME}，含 3 项）——应均已在 D4/CLEANUP 删净或从未落库`,
-      'user_status 内置种子（翻译契约 §0.3）全程零触碰；admin 未做任何种子外数据写操作',
+      'user_status/common_status 内置种子（翻译契约 §0.3/§8.3）全程零触碰；admin 未做任何种子外数据写操作',
     ],
   })
   await browser.close()

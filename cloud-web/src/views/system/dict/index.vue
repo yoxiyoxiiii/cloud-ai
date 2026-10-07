@@ -17,7 +17,12 @@ import DictDataDialog from './components/DictDataDialog.vue'
  * keep-alive include 按组件名匹配会失效（动态路由设计 D5 红字坑） */
 defineOptions({ name: 'SystemDict' })
 
-/** 状态展示映射（契约 §1：0=正常 1=停用；管理端点不过滤停用，靠 tag 区分） */
+/**
+ * 状态本地映射（契约 §1：0=正常 1=停用；管理端点不过滤停用，靠 tag 区分）：
+ * - tagType 是颜色映射本体，永远按原字段 status 取值（译文不含颜色语义——契约 §1 红线）
+ * - label 仅作 statusLabel 缺位时的降级文案（契约 2026-10-07-translation-api §8.1/§8.4 降级链；
+ *   审计译文后端照给、UI 审计列不展示——Round E 取舍维持）
+ */
 const STATUS_MAP: Record<number, { label: string; tagType: 'success' | 'danger' }> = {
   0: { label: '正常', tagType: 'success' },
   1: { label: '停用', tagType: 'danger' },
@@ -121,17 +126,28 @@ onMounted(() => {
     </template>
 
     <el-table v-loading="typeLoading" :data="typeRows">
-      <el-table-column prop="dictName" label="字典名称" min-width="140" />
+      <el-table-column label="字典名称" min-width="140">
+        <template #default="{ row }">
+          <span>{{ typeRowOf(row).dictName }}</span>
+          <!-- 内置徽标（保护契约 §7.2：内联名称格不新增列；仅展示，禁用面在操作列） -->
+          <el-tag v-if="typeRowOf(row).builtin" class="builtin-badge" type="info" size="small"
+            >内置</el-tag
+          >
+        </template>
+      </el-table-column>
       <el-table-column prop="dictKey" label="字典键" min-width="160" />
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="STATUS_MAP[typeRowOf(row).status]?.tagType ?? 'info'">
-            {{ STATUS_MAP[typeRowOf(row).status]?.label ?? typeRowOf(row).status }}
+            {{
+              typeRowOf(row).statusLabel ?? STATUS_MAP[typeRowOf(row).status]?.label ?? typeRowOf(row).status
+            }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
+          <!-- 内置类型（user_status/common_status）编辑/删除禁用；「字典项」按钮放行——内置类型可进弹框管理项（保护契约 §7.2/§7.3，错误码 3015 为最终防线） -->
           <el-button
             v-perms="'system:dict:list'"
             link
@@ -143,6 +159,7 @@ onMounted(() => {
             v-perms="'system:dict:edit'"
             link
             type="primary"
+            :disabled="typeRowOf(row).builtin"
             @click="openTypeEdit(typeRowOf(row))"
             >编辑</el-button
           >
@@ -150,6 +167,7 @@ onMounted(() => {
             v-perms="'system:dict:remove'"
             link
             type="danger"
+            :disabled="typeRowOf(row).builtin"
             @click="handleTypeDelete(typeRowOf(row))"
             >删除</el-button
           >
@@ -186,5 +204,10 @@ onMounted(() => {
 .table-pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+/** 内置徽标内联名称格（设计 D3 统一形态） */
+.builtin-badge {
+  margin-left: 8px;
 }
 </style>

@@ -26,7 +26,7 @@ const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173'
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), 'artifacts')
 
 const h = createHarness({ base: BASE, artDir: ART })
-const { log, sleep, step, assert, assertEq, shot, waitToast, waitDialogGone, waitTableIdle, breadcrumbTexts, login, logoutViaUi, findRow, rowCells } = h
+const { log, sleep, step, assert, assertEq, shot, waitToast, waitDialogGone, waitTableIdle, breadcrumbTexts, login, logoutViaUi, findRow, findRowByCell, rowCells } = h
 
 // ---------- 测试数据（只作用于 e2e 前缀测试数据，不碰 admin/种子） ----------
 const ts = new Date()
@@ -85,25 +85,8 @@ async function menuLabels() {
   return labels
 }
 
-/** 按权限标识列精确找角色行（roleKey 唯一锚点；跨页全量检索——run-role 同款） */
-async function findRoleRowByKey(roleKey) {
-  await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
-  await waitTableIdle(page)
-  for (let guard = 0; guard < 30; guard++) {
-    const rows = page.locator('.el-table__row')
-    const n = await rows.count()
-    for (let i = 0; i < n; i++) {
-      const cells = await rowCells(rows.nth(i))
-      if (cells[1] === roleKey) return rows.nth(i)
-    }
-    const next = page.locator('.el-pagination .btn-next')
-    if ((await next.count()) === 0 || !(await next.isEnabled())) return null
-    await next.click()
-    await waitTableIdle(page)
-    await sleep(300)
-  }
-  return null
-}
+// 按权限标识列精确找角色行：统一走 harness 共享版 findRowByCell（本地副本已删——副本漂移根除，
+// 设计 D7；旧本地副本缺首渲染竞态守卫是 N2b/CLEANUP 偶发 null 误判根因；cellIndex=1 即 roleKey 列）
 
 // ---------- 分配权限弹窗助手（run-role 同款子集：本脚本只点 F 与三态断言） ----------
 
@@ -250,7 +233,7 @@ try {
     // （AssignMenuDialog toggleC），会把 121(system:role:add) 一并授予，使 N5 的 403 前提失效；
     // 改点其 F"角色修改"(122)——C12 半选、M10 半选，两 id 随半选父语义入提交集合，
     // 效果 = 计划"仅勾选角色管理（半选自动带上系统管理）"且不含 add 权限
-    let roleRow = await findRoleRowByKey(TEST_ROLE_KEY)
+    let roleRow = await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: TEST_ROLE_KEY })
     assert(roleRow, '应能定位测试角色行')
     await roleRow.getByRole('button', { name: '分配权限' }).click()
     let permDlg = page.locator('.el-dialog', { hasText: '分配权限' }).last()
@@ -408,7 +391,7 @@ try {
     assertEq(body.code, 403, '无 system:role:add 权限直连提交应 body 403（@PreAuthorize 最终防线）')
     assert(typeof body.msg === 'string' && body.msg.length > 0, `403 msg 应非空，实际 "${body.msg}"`)
     // 列表不新增该行（全表检索；N5 若意外成功落库由 CLEANUP 兜底删净）
-    const leaked = await findRoleRowByKey(TEST_403_ROLE_KEY)
+    const leaked = await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: TEST_403_ROLE_KEY })
     assert(leaked === null, `403 后角色列表不应新增 ${TEST_403_ROLE_KEY}`)
     await shot(page, 'n5-hidden-and-403.png')
   })
@@ -448,7 +431,7 @@ try {
     await sleep(800)
     assert((await findRow(page, TEST_ACCOUNT)) === null, `删除后全表不应再有 ${TEST_ACCOUNT}`)
     // ---- 删测试角色（确认框含解绑提示——用户已删，关系级联解除文案仍应出现） ----
-    let roleRow = await findRoleRowByKey(TEST_ROLE_KEY)
+    let roleRow = await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: TEST_ROLE_KEY })
     assert(roleRow, '应能定位测试角色行')
     await roleRow.getByRole('button', { name: '删除' }).click()
     box = page.locator('.el-message-box')
@@ -459,9 +442,9 @@ try {
     await box.locator('.el-message-box__btns .el-button--primary').click()
     await waitToast(page, '删除成功')
     await sleep(800)
-    assert((await findRoleRowByKey(TEST_ROLE_KEY)) === null, `删除后全表不应再有 ${TEST_ROLE_KEY}`)
+    assert((await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: TEST_ROLE_KEY })) === null, `删除后全表不应再有 ${TEST_ROLE_KEY}`)
     // ---- N5 意外落库兜底（正常路径不存在；存在即删，保证复跑两轮均绿） ----
-    const leak403 = await findRoleRowByKey(TEST_403_ROLE_KEY)
+    const leak403 = await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: TEST_403_ROLE_KEY })
     if (leak403) {
       log(`  [兜底] N5 探针角色 ${TEST_403_ROLE_KEY} 意外存在，执行删除`)
       await leak403.getByRole('button', { name: '删除' }).click()
@@ -470,7 +453,7 @@ try {
       await box.locator('.el-message-box__btns .el-button--primary').click()
       await waitToast(page, '删除成功')
       await sleep(800)
-      assert((await findRoleRowByKey(TEST_403_ROLE_KEY)) === null, '兜底删除后 403 探针角色应删净')
+      assert((await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: TEST_403_ROLE_KEY })) === null, '兜底删除后 403 探针角色应删净')
     }
     // ---- 残留核验：用户表/角色表无 e2e 残留 ----
     await page.goto(`${BASE}${USER_PATH}`, { waitUntil: 'domcontentloaded' })
@@ -505,6 +488,10 @@ try {
     assertEq(h.state.pageErrors.length, 0, `不应有未捕获异常，实际 ${JSON.stringify(h.state.pageErrors)}`)
     assertEq(h.state.badResponses.length, 0, `不应有 >=400 的 /api 响应（N5 的 403 为 page.request 直连，不进 page 网络事件），实际 ${JSON.stringify(h.state.badResponses)}`)
     assertEq(h.state.requestFailures.length, 0, `不应有网络失败，实际 ${JSON.stringify(h.state.requestFailures)}`)
+    // logoutViaUi 常驻回归守卫（设计 D7，与 scaffold T-VERIFY 同款）：每次调用 logout POST 应 ≤1
+    for (const s of h.state.logoutViaUiStats) {
+      assert(s.posts <= 1, `logoutViaUi 单次调用 logout POST 应 ≤1，实际 ${JSON.stringify(s)}`)
+    }
   })
 } finally {
   // ---------- 汇总 ----------

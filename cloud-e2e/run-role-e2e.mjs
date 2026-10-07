@@ -3,8 +3,8 @@
  *
  * 运行前提：后端 gateway 18080 / sso 9201 / system 9202 已启动；前端 dev 5173 已启动（/api 代理 18080）
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 node run-role-e2e.mjs）
- * 测试数据：角色 roleKey 用 e2e 前缀+时间戳；绝不删 admin 角色、绝不改 admin 绑定（R5 只读 admin 回显）；
- *           R6b 内置保护对 admin 角色仅做"尝试后验证拒"（3013，契约 2026-10-07-builtin-protection §2，种子零变更）
+ * 测试数据：角色 roleKey 用 e2e 前缀+时间戳；绝不删 admin 角色、绝不改 admin 绑定（R5a 直连只读查绑定）；
+ *           R6b 内置保护：admin 行徽标/禁用面 UI 断言 + 直连 3013 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -15,7 +15,7 @@ const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173'
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), 'artifacts')
 
 const h = createHarness({ base: BASE, artDir: ART })
-const { log, sleep, step, assert, assertEq, shot, waitToast, waitDialogGone, waitTableIdle, breadcrumbTexts, login, findRow, rowCells } = h
+const { log, sleep, step, assert, assertEq, shot, waitToast, waitDialogGone, waitTableIdle, breadcrumbTexts, login, findRow, findRowByCell, rowCells } = h
 
 // ---------- 测试数据（只作用于测试角色） ----------
 const ts = new Date()
@@ -42,49 +42,24 @@ const rolePostCount = () => h.state.apiCalls.filter((c) => c.url === '/api/syste
 /** waitForResponse 的 URL 匹配：r.url() 是含 origin 的完整地址，须比 pathname */
 const apiPath = (url, pathname) => new URL(url).pathname === pathname
 
-/**
- * 按权限标识列精确找角色行（hasText 是子串且不区分大小写——"admin" 会撞上
- * 创建人列同为 admin 的其他行，id 倒序时测试行在前）
- */
-async function findRoleRowByKey(page, roleKey) {
-  // 首渲染竞态修复（同 harness findRow 的 S10 修复）：goto 后表格/分页可能尚未首渲染
-  // （waitTableIdle 对"mask 未出现"直接放行），空表 DOM 会让下方"btn-next 不存在"分支提前
-  // return null（R6b 曾误判）——先等本次列表接口（*/page）响应落定，再等首行或分页控件可见
-  const listP = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith('/page'), { timeout: 15000 }).catch(() => null)
-  await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
-  await listP
-  await page.locator('.el-table__row, .el-pagination').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {})
-  await waitTableIdle(page)
-  for (let guard = 0; guard < 30; guard++) {
-    const rows = page.locator('.el-table__row')
-    const n = await rows.count()
-    for (let i = 0; i < n; i++) {
-      const cells = await rowCells(rows.nth(i))
-      if (cells[1] === roleKey) return rows.nth(i)
-    }
-    const next = page.locator('.el-pagination .btn-next')
-    if ((await next.count()) === 0 || !(await next.isEnabled())) return null
-    await next.click()
-    await waitTableIdle(page)
-    await sleep(300)
-  }
-  return null
+// 按权限标识列精确找角色行：统一走 harness 共享版 findRowByCell（本地副本已删——副本漂移根除，设计 D7）；
+// cellIndex=1 即 roleKey 列；hasText 子串不区分大小写会误撞创建人列同值行，须精确比对
+
+/** 直连网关小助手（E2 通用模式）：page.evaluate 取 localStorage token + page.request + Bearer——
+ *  不入 page 网络统计（不污染 *-VERIFY，N5/D5c 先例）；请求体中文经 Node UTF-8 无 GBK 陷阱 */
+const GATEWAY = process.env.E2E_GATEWAY || 'http://localhost:18080'
+async function directApi(method, path, data) {
+  const token = await page.evaluate(() => JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken)
+  const res = await page.request.fetch(`${GATEWAY}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    data: data === undefined ? undefined : JSON.stringify(data),
+  })
+  return { httpStatus: res.status(), body: await res.json() }
 }
 
-/** 期望错误 toast（超时兜底抓页上实际 toast 文案进失败信息——内置保护断言专用，R6b） */
-async function expectErrToast(expected) {
-  try {
-    const t = await waitToast(page, expected, 'error')
-    log(`  toast: "${t}"`)
-    return t
-  } catch {
-    const present = []
-    const msgs = page.locator('.el-message')
-    const n = await msgs.count()
-    for (let i = 0; i < n; i++) present.push((await msgs.nth(i).innerText()).trim())
-    throw new Error(`期望错误 toast "${expected}" 未出现，页上实际 toast: ${JSON.stringify(present)}`)
-  }
-}
+/** 名称格内联徽标（el-tag「内置」）使 innerText 变 "{name}\n内置"（tag 独立成行）——比对前统一剥离尾缀并 trim（E2 通用模式） */
+const stripBadge = (s) => s.replace(/\s*内置\s*$/, '').trim()
 
 /** 等分配权限弹窗内分组布局渲染并回显落定（勾选设置发生在 loading 遮罩撤下前） */
 async function waitTreeReady(dlg) {
@@ -187,6 +162,29 @@ try {
     roleTableTotal = parseInt((totalText.match(/\d+/) || ['0'])[0], 10)
     log(`  分页 total: "${totalText}"（解析=${roleTableTotal}）`)
     assert(roleTableTotal >= 1, `total 应 >=1，实际 ${roleTableTotal}`)
+    // ---- 补（E2）：admin 行状态列「正常」（经 statusLabel 降级链）+ 页内 fetch 并存断言（红线黑盒）----
+    const adminRow = await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: 'admin' })
+    assert(adminRow, '应能定位 admin 行（按 roleKey=admin）')
+    const adminCells = await rowCells(adminRow)
+    log(`  admin 行: ${JSON.stringify(adminCells.slice(0, 3))}`)
+    assertEq(stripBadge(adminCells[0]), '管理员', 'admin 角色名称应为 管理员（内联「内置」徽标剥离后）')
+    assertEq(adminCells[2], '正常', 'admin 行状态列 tag 文本应为 正常（statusLabel 译文，common_status 命中）')
+    assert((await adminRow.locator('.builtin-badge').count()) === 1, 'admin 行角色名称格应有内联「内置」徽标')
+    const probe = await page.evaluate(async () => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const res = await fetch('/api/system/role/page?pageNum=1&pageSize=10', { headers: { Authorization: `Bearer ${token}` } })
+      return { httpStatus: res.status, body: await res.json() }
+    })
+    assertEq(probe.httpStatus, 200, '契约：HTTP 恒 200')
+    assertEq(probe.body.code, 200, '分页业务码应为 200')
+    const adminVo = (probe.body.data.rows || []).find((r) => r.roleKey === 'admin')
+    assert(adminVo, 'rows 应含 admin 行')
+    log(`  fetch admin 行: ${JSON.stringify(adminVo)}`)
+    assertEq(adminVo.status, 0, 'admin 原字段 status 应为 0（翻译不覆盖原字段）')
+    assertEq(adminVo.statusLabel, '正常', 'admin 译文字段 statusLabel 应为 正常（common_status 字典命中）')
+    assert('createByName' in adminVo, 'createByName 键必返（原字段与译文字段并存）')
+    assertEq(adminVo.builtin, true, 'admin builtin 应为 true（is_builtin=1，保护契约 §7.1）')
+    assert('builtin' in adminVo, 'builtin 键必返（原字段/译文字段/保护字段三者并存）')
     await shot(page, 'r1-role-list.png')
   })
 
@@ -289,23 +287,38 @@ try {
     await shot(page, 'r4-row-updated.png')
   })
 
-  // ================= R5 分配权限：树勾选/保存/回显一致/清空（含 admin 存量回显） =================
-  await step('R5', '分配权限：admin 存量回显 + 测试角色勾选→保存→重开回显一致（父半选）→清空回显空', async () => {
-    // ---- 5a. admin 角色存量回显（绑定含父目录 id：叶子过滤后应全选/半选，不误勾不报错；只读不改） ----
-    let adminRow = await findRoleRowByKey(page, 'admin')
-    assert(adminRow, '应能定位 admin 行（按 roleKey=admin）')
-    await adminRow.getByRole('button', { name: '分配权限' }).click()
+  // ================= R5 分配权限：admin 存量绑定（直连）+ 测试角色树勾选/保存/回显/清空 =================
+  await step('R5', '分配权限：admin 存量绑定（直连 23 id 全量含父目录）+ 测试角色勾选→保存→重开回显一致（父半选）→清空回显空', async () => {
+    // ---- 5a. admin 存量绑定改直连 GET（E2：admin 行「分配权限」已禁用，语义本体保留且更精确——
+    //      断言库里存的就是 23 个种子菜单 id 全量，含父目录 id（10/20 等），叶子过滤/全选推导由此推导而来）----
+    const SEED_MENU_IDS = ['10', '11', '12', '13', '111', '112', '113', '114', '115', '121', '122', '123', '124', '131', '132', '133', '14', '141', '142', '143', '20', '21', '211']
+    const bound = await directApi('GET', '/system/role/1/menus')
+    log(`  直连 GET /system/role/1/menus: HTTP ${bound.httpStatus} code=${bound.body.code} data=${JSON.stringify(bound.body.data)}`)
+    assertEq(bound.httpStatus, 200, '契约：HTTP 恒 200')
+    assertEq(bound.body.code, 200, '角色菜单绑定查询业务码应为 200')
+    assert(Array.isArray(bound.body.data), `data 应为数组，实际 ${typeof bound.body.data}`)
+    assertEq(bound.body.data.length, 23, `admin 绑定应恰 23 个种子菜单 id 全量，实际 ${bound.body.data.length}`)
+    const boundIds = bound.body.data.map(String)
+    assertEq([...boundIds].sort().join(','), [...SEED_MENU_IDS].sort().join(','), `admin 绑定应为 23 个种子菜单 id 全量（含父目录），实际 ${JSON.stringify(boundIds)}`)
+    for (const pid of ['10', '20', '11', '111']) {
+      assert(boundIds.includes(pid), `绑定应含父目录/菜单 id ${pid}（存量绑定含父目录语义）`)
+    }
+    await shot(page, 'r5-admin-bindings.png')
+
+    // ---- 5b. 测试角色：勾选某菜单的部分按钮 → 保存（提交含半选父）→ 重开回显一致 ----
+    let row = await findRow(page, TEST_ROLE_KEY, { path: ROLE_PATH })
+    assert(row, '应能定位测试行')
+    await row.getByRole('button', { name: '分配权限' }).click()
     let dlg = page.locator('.el-dialog', { hasText: '分配权限' }).last()
     await dlg.waitFor({ state: 'visible', timeout: 8000 })
-    assert((await dlg.locator('.el-dialog__title').innerText()).includes('管理员'), '弹窗标题应含角色名称（管理员）')
     await waitTreeReady(dlg)
-    // 分组布局渲染：M 目录组头 / C 菜单行；F 按钮显示 perms 灰字
+    // 分组布局渲染（E2：admin 开窗断言随 5a 直连化移到测试角色首次开窗）：M 目录组头 / C 菜单行；F 按钮显示 perms 灰字
     const groupCount = await dlg.locator('.perm-group').count()
     const rowCount = await dlg.locator('.perm-menu-row').count()
     const headerTexts = (await dlg.locator('.perm-group-header').allInnerTexts()).map((t) => t.trim())
     log(`  分组布局: 目录组 ${groupCount} 个（${headerTexts.join('/')}），菜单行 ${rowCount} 行`)
     assert(groupCount >= 2, `应渲染目录分组（系统管理/认证管理），实际 ${groupCount} 组`)
-    assert(rowCount >= 4, `应渲染菜单行（用户/角色/菜单管理·在线用户），实际 ${rowCount} 行`)
+    assert(rowCount >= 4, `应渲染菜单行（用户/角色/菜单/字典管理·在线用户），实际 ${rowCount} 行`)
     assert(headerTexts.includes('系统管理'), `组头应含 系统管理，实际 ${JSON.stringify(headerTexts)}`)
     const funcCount = await dlg.locator('.perm-func').count()
     log(`  F 按钮 checkbox 个数: ${funcCount}`)
@@ -316,29 +329,6 @@ try {
     const permsText = (await dlg.locator('.perm-func-perms').first().innerText()).trim()
     log(`  首个 perms 文本: "${permsText}"`)
     assert(/^[\w:]+:[\w:]+:[\w]+$/.test(permsText), `perms 文本应为权限标识格式，实际 "${permsText}"`)
-    // admin 绑定全部叶子 → 全部 checkbox 全选（存量父目录绑定经叶子域过滤后由子孙推导，无半选残留）
-    // 三态走原生 input DOM 属性：checked / indeterminate（EP el-checkbox 实测绑定）
-    const stats = await permInputStats(dlg)
-    log(`  admin 回显: checkbox ${stats.total} 个，勾选 ${stats.checked} 个，勾选/半选 ${stats.active} 个`)
-    assert(stats.total > 0, '权限 checkbox 数应大于 0')
-    assertEq(stats.active, stats.total, 'admin 绑定全部菜单：所有 checkbox 应为勾选或半选（叶子过滤回显）')
-    assertEq(stats.checked, stats.total, 'admin 全量绑定应全部全选（无半选）')
-    const adminRoot = await checkBoxState(dlg, '系统管理')
-    const adminMenu = await checkBoxState(dlg, '用户管理')
-    log(`  admin 三态抽检: 系统管理(M)=${JSON.stringify(adminRoot)} 用户管理(C)=${JSON.stringify(adminMenu)}`)
-    assert(adminRoot.checked && !adminRoot.half, 'admin 回显：系统管理（M 目录）应全选（input.checked=true）')
-    assert(adminMenu.checked && !adminMenu.half, 'admin 回显：用户管理（C 菜单）应全选（input.checked=true）')
-    await shot(page, 'r5-admin-echo.png')
-    await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
-    await waitDialogGone(page, '分配权限')
-
-    // ---- 5b. 测试角色：勾选某菜单的部分按钮 → 保存（提交含半选父）→ 重开回显一致 ----
-    let row = await findRow(page, TEST_ROLE_KEY, { path: ROLE_PATH })
-    assert(row, '应能定位测试行')
-    await row.getByRole('button', { name: '分配权限' }).click()
-    dlg = page.locator('.el-dialog', { hasText: '分配权限' }).last()
-    await dlg.waitFor({ state: 'visible', timeout: 8000 })
-    await waitTreeReady(dlg)
     // 初始无勾选
     const initStats = await permInputStats(dlg)
     assertEq(initStats.checked, 0, '新角色初始应无勾选')
@@ -429,66 +419,40 @@ try {
     await shot(page, 'r6-after-delete.png')
   })
 
-  // ================= R6b 内置角色保护（契约 2026-10-07-builtin-protection §2：admin 角色"尝试后验证拒"） =================
-  await step('R6b', '内置角色保护：admin 删除/编辑/分配权限均被 3013 拒（toast 文案）→ 行原样', async () => {
-    // ---- a. 删除确认 → 3013 拒 ----
-    let row = await findRoleRowByKey(page, 'admin')
+  // ================= R6b 内置角色保护（契约 2026-10-07-builtin-protection §2/§7.2：徽标+禁用面 UI 断言 + 直连 3013 API 断言，种子零变更） =================
+  await step('R6b', '内置角色保护：admin 行徽标 + 编辑/分配权限/删除禁用 → 直连 DELETE/PUT/PUT role-menu → 3013 → 行原样', async () => {
+    // ---- a. UI 禁用面 + 徽标（§7.2 矩阵镜像：内置角色三按钮全禁——3013 为最终防线）----
+    let row = await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: 'admin' })
     assert(row, '应能定位 admin 角色行')
     const cellsBefore = await rowCells(row)
     log(`  admin 角色行（保护前）: ${JSON.stringify(cellsBefore.slice(0, 3))}`)
-    await row.getByRole('button', { name: '删除' }).click()
-    const box = page.locator('.el-message-box')
-    await box.waitFor({ state: 'visible', timeout: 8000 })
-    await shot(page, 'r6b-delete-confirm.png')
-    const delP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/role/'), { timeout: 15000 })
-    await box.locator('.el-message-box__btns .el-button--primary').click()
-    const del = await delP
-    const delBody = await del.json()
-    log(`  删除接口: HTTP ${del.status()} code=${delBody.code} msg="${delBody.msg}"`)
-    assertEq(del.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
-    assertEq(delBody.code, 3013, `内置角色删除应 body 3013，实际 ${delBody.code}`)
-    await expectErrToast('内置角色禁止删除')
-    row = await findRoleRowByKey(page, 'admin')
-    assert(row, '3013 拒绝后 admin 角色行应仍在')
-    // ---- b. 编辑提交（回显值原样，零改动）→ 3013 拒 ----
-    await row.getByRole('button', { name: '编辑' }).click()
-    let dlg = page.locator('.el-dialog', { hasText: '编辑角色' }).last()
-    await dlg.waitFor({ state: 'visible', timeout: 8000 })
-    const putP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/role') && r.request().method() === 'PUT', { timeout: 15000 })
-    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
-    const put = await putP
-    const putBody = await put.json()
-    log(`  编辑提交接口: HTTP ${put.status()} code=${putBody.code} msg="${putBody.msg}"`)
-    assertEq(putBody.code, 3013, `内置角色修改应 body 3013，实际 ${putBody.code}`)
-    await expectErrToast('内置角色禁止修改')
-    assert(await dlg.isVisible(), '3013 后弹窗应保持打开（可改后重提，同 R3 语义）')
-    await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
-    await waitDialogGone(page, '编辑角色')
-    // ---- c. 分配权限保存（回显态原样提交，勾选零改动）→ 3013 拒 ----
-    row = await findRoleRowByKey(page, 'admin')
-    await row.getByRole('button', { name: '分配权限' }).click()
-    dlg = page.locator('.el-dialog', { hasText: '分配权限' }).last()
-    await dlg.waitFor({ state: 'visible', timeout: 8000 })
-    await waitTreeReady(dlg)
-    const assignP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/role/menu') && r.request().method() === 'PUT', { timeout: 15000 })
-    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
-    const assign = await assignP
-    const assignBody = await assign.json()
-    log(`  分配权限接口: HTTP ${assign.status()} code=${assignBody.code} msg="${assignBody.msg}"`)
-    assertEq(assignBody.code, 3013, `内置角色分配权限应 body 3013，实际 ${assignBody.code}`)
-    await expectErrToast('内置角色禁止修改权限')
-    if (await dlg.isVisible()) {
-      await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
+    const badge = row.locator('.builtin-badge')
+    assert((await badge.count()) === 1, 'admin 行角色名称格应有内联「内置」徽标（el-tag）')
+    assertEq((await badge.innerText()).trim(), '内置', '徽标文本应为 内置')
+    for (const name of ['编辑', '分配权限', '删除']) {
+      assert(await row.getByRole('button', { name }).isDisabled(), `内置角色「${name}」按钮应禁用`)
     }
-    await waitDialogGone(page, '分配权限')
-    // ---- d. 种子终态：角色名/roleKey/状态与保护前一致 ----
-    row = await findRoleRowByKey(page, 'admin')
+    await shot(page, 'r6b-builtin-disabled.png')
+    // ---- b. 直连三条写路径全拒（UI 禁用不可点，3013 断言转 API 层；「原值亦拒」全禁语义保留）----
+    const del = await directApi('DELETE', '/system/role/1')
+    log(`  直连删除接口: HTTP ${del.httpStatus} code=${del.body.code} msg="${del.body.msg}"`)
+    assertEq(del.httpStatus, 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(del.body.code, 3013, `内置角色删除应 body 3013，实际 ${del.body.code}`)
+    const put = await directApi('PUT', '/system/role', { id: '1', name: '管理员', roleKey: 'admin', status: 0 })
+    log(`  直连原值编辑接口: HTTP ${put.httpStatus} code=${put.body.code} msg="${put.body.msg}"`)
+    assertEq(put.body.code, 3013, `内置角色修改（全量原值提交）应 body 3013——「原值亦拒」全禁语义，实际 ${put.body.code}`)
+    const assign = await directApi('PUT', '/system/role/menu', { roleId: '1', menuIds: ['10'] })
+    log(`  直连分配权限接口: HTTP ${assign.httpStatus} code=${assign.body.code} msg="${assign.body.msg}"`)
+    assertEq(assign.body.code, 3013, `内置角色分配权限应 body 3013，实际 ${assign.body.code}`)
+    // ---- c. 种子终态：角色名/roleKey/状态与保护前一致 ----
+    row = await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: 'admin' })
     assert(row, '保护场景后 admin 角色行应仍在（种子终态）')
     const cellsAfter = await rowCells(row)
     log(`  admin 角色行（保护后）: ${JSON.stringify(cellsAfter.slice(0, 3))}`)
-    assertEq(cellsAfter[0], cellsBefore[0], `admin 角色名应保持原值 "${cellsBefore[0]}"`)
+    assertEq(stripBadge(cellsAfter[0]), '管理员', 'admin 角色名应保持 管理员（徽标剥离后）')
     assertEq(cellsAfter[1], 'admin', 'admin roleKey 应保持 admin')
     assertEq(cellsAfter[2], cellsBefore[2], `admin 角色状态应保持原值 "${cellsBefore[2]}"`)
+    assertEq(cellsAfter[2], '正常', 'admin 角色状态终态应为 正常')
   })
 
   // ---------- 清理核验：角色表无 e2e 前缀残留、admin 角色仍在 ----------
@@ -498,11 +462,11 @@ try {
     await waitTableIdle(page)
     const anyE2e = await page.locator('.el-table__row', { hasText: 'e2e' }).count()
     assertEq(anyE2e, 0, '清理后角色表中不应残留 e2e 前缀 roleKey 行')
-    const adminStill = await findRoleRowByKey(page, 'admin')
+    const adminStill = await findRowByCell(page, { path: ROLE_PATH, cellIndex: 1, value: 'admin' })
     assert(adminStill, 'admin 角色应仍在列表（绝不删 admin 纪律核验）')
     const adminCells = await rowCells(adminStill)
     log(`  admin 角色终态: ${JSON.stringify(adminCells.slice(0, 3))}`)
-    assertEq(adminCells[0], '管理员', 'admin 角色名称终态应为 管理员（R6b 保护后原样）')
+    assertEq(stripBadge(adminCells[0]), '管理员', 'admin 角色名称终态应为 管理员（R6b 保护后原样，徽标剥离后）')
     assertEq(adminCells[1], 'admin', 'admin roleKey 终态应为 admin')
     assertEq(adminCells[2], '正常', 'admin 角色状态终态应为 正常')
     const totalText = (await page.locator('.el-pagination__total').innerText()).trim()

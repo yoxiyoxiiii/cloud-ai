@@ -21,6 +21,7 @@ public final class SysRoleConvert {
         vo.setCreateTime(role.getCreateTime());
         vo.setUpdateBy(role.getUpdateBy());
         vo.setUpdateTime(role.getUpdateTime());
+        vo.setBuiltin(Integer.valueOf(1).equals(role.getIsBuiltin()));
         return vo;
     }
 }

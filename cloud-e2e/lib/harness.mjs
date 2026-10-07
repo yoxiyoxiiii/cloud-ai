@@ -31,6 +31,7 @@ export function createHarness({ base, artDir }) {
     apiCalls: [], // { method, url, status }
     badResponses: [], // status >= 400
     requestFailures: [], // 网络层失败
+    logoutViaUiStats: [], // { clicks, posts }——logoutViaUi 每次调用记档（设计 D7 常驻回归守卫）
     currentScenario: 'init',
     ctx: null, // BrowserContext（step 失败截图用，主脚本注入）
     page: null, // 主 page（主脚本注入）
@@ -135,18 +136,31 @@ export function createHarness({ base, artDir }) {
   }
 
   async function logoutViaUi(page) {
-    // hover 触发的 EP dropdown 在 headed+slowMo 下偶发自动收起（popper 动画/leave 计时竞争），
+    // 双守卫（设计 D7，根治「重定向未完成时二击 → 第二个 POST 撞已失效会话得 401」flake）：
+    // 1) 请求级守卫：函数生命周期内挂一次性 logout POST 响应等待，sawLogout 置位后循环条件含
+    //    !sawLogout —— 永不再点（守卫判定在 click 之前）
+    // 2) 时序修：每轮点击后以 waitForURL(4s) 取代盲等 600ms——URL 已落定则循环条件自然退出
+    // 另：hover 触发的 EP dropdown 在 headed+slowMo 下偶发自动收起（popper 动画/leave 计时竞争），
     // 重试至多 3 轮：重新 hover → 等菜单可见 → 先移入菜单项维持 hover 链再点
+    const postsBefore = state.apiCalls.filter((c) => c.url === '/api/sso/auth/logout' && c.method === 'POST').length
+    let sawLogout = false
+    page.waitForResponse((r) => new URL(r.url()).pathname === '/api/sso/auth/logout', { timeout: 15000 })
+      .then(() => { sawLogout = true })
+      .catch(() => { /* 未发生即不置位；最终 waitForURL 兜底报错 */ })
     const item = page.locator('.el-dropdown-menu__item', { hasText: '退出登录' })
-    for (let attempt = 0; attempt < 3 && !page.url().includes('/login'); attempt++) {
+    let clicks = 0
+    for (let attempt = 0; attempt < 3 && !sawLogout && !page.url().includes('/login'); attempt++) {
       await page.locator('.navbar-account').hover()
       await item.waitFor({ state: 'visible', timeout: 5000 })
       await item.hover().catch(() => {})
+      clicks += 1
       await item.click({ timeout: 5000 }).catch(() => {})
-      await sleep(600)
+      await page.waitForURL('**/login', { timeout: 4000 }).catch(() => {})
     }
     await page.waitForURL('**/login', { timeout: 15000 })
     await sleep(300)
+    const postsAfter = state.apiCalls.filter((c) => c.url === '/api/sso/auth/logout' && c.method === 'POST').length
+    state.logoutViaUiStats.push({ clicks, posts: postsAfter - postsBefore })
   }
 
   /**
@@ -187,6 +201,42 @@ export function createHarness({ base, artDir }) {
     const out = []
     for (let i = 0; i < n; i++) out.push(((await tds.nth(i).innerText()) || '').trim())
     return out
+  }
+
+  /**
+   * 全表翻页按单元格精确找行（以 run-role 已修版 findRoleRowByKey 为体抽共享——副本漂移根除，
+   * run-role/run-nav 统一改调本函数；设计 D7）
+   * 精确比对（===）而非 hasText：hasText 是子串且不区分大小写——"admin" 会撞上
+   * 创建人列同为 admin 的其他行（run-role R6b 曾误判的根因）
+   * @param {import('playwright').Page} page
+   * @param {{ path: string, cellIndex: number, value: string, reload?: boolean }} opts
+   *   path=目标页路由；cellIndex=锚定列下标；value=精确比对值（唯一性锚点，如 roleKey/dictKey）
+   */
+  async function findRowByCell(page, { path, cellIndex, value, reload = true } = {}) {
+    if (reload) {
+      // 首渲染竞态守卫（同 findRow 的 S10 修复）：goto 后表格/分页可能尚未首渲染
+      // （waitTableIdle 对"mask 未出现"直接放行），空表 DOM 会让下方"btn-next 不存在"分支提前
+      // return null——先等本次列表接口（*/page）响应落定，再等首行或分页控件可见
+      const listP = page.waitForResponse((r) => new URL(r.url()).pathname.endsWith('/page'), { timeout: 15000 }).catch(() => null)
+      await page.goto(`${base}${path}`, { waitUntil: 'domcontentloaded' })
+      await listP
+      await page.locator('.el-table__row, .el-pagination').first().waitFor({ state: 'visible', timeout: 10000 }).catch(() => {})
+    }
+    await waitTableIdle(page)
+    for (let guard = 0; guard < 30; guard++) {
+      const rows = page.locator('.el-table__row')
+      const n = await rows.count()
+      for (let i = 0; i < n; i++) {
+        const cells = await rowCells(rows.nth(i))
+        if (cells[cellIndex] === value) return rows.nth(i)
+      }
+      const next = page.locator('.el-pagination .btn-next')
+      if ((await next.count()) === 0 || !(await next.isEnabled())) return null
+      await next.click()
+      await waitTableIdle(page)
+      await sleep(300)
+    }
+    return null
   }
 
   /** 挂载网络/console 证据采集（主 page 创建后调用一次） */
@@ -245,6 +295,7 @@ export function createHarness({ base, artDir }) {
     login,
     logoutViaUi,
     findRow,
+    findRowByCell,
     rowCells,
     attachListeners,
     summary,

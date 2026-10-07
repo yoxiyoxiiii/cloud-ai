@@ -57,9 +57,17 @@ export interface SysUserVo {
   createByName: string | null
   /** 更新人译文（契约 2026-10-07-translation-api §3.1）：updateBy(account) 对应 nickname；null 时降级显示 updateBy */
   updateByName: string | null
+  /** 内置标记（契约 2026-10-07-builtin-protection-api §7.1/§7.4）：true=系统内置（admin）——徽标/按钮禁用依据（§7.2 矩阵） */
+  builtin: boolean
 }
 
-/** 角色 VO（契约 §4/§6）：status 语义 0=正常 1=停用；审计四字段可空 */
+/**
+ * 角色 VO（契约 §4/§6）：status 语义 0=正常 1=停用；审计四字段可空
+ * 译文字段三项 + builtin 为 additive 追加（契约 2026-10-07-translation-api §8.1 +
+ * 2026-10-07-builtin-protection-api §7.1/§7.4）：必返但译文可 null——展示走降级链
+ * （statusLabel ?? 本地 STATUS_MAP ?? status；*Name ?? 原字段 ?? '-'），
+ * 业务处理（编辑回填/颜色映射/行内判断）仍用原字段，原字段永不因翻译被覆盖（契约 §1 红线）
+ */
 export interface SysRoleVo {
   id: string
   name: string
@@ -69,6 +77,14 @@ export interface SysRoleVo {
   createTime: string | null
   updateBy: string | null
   updateTime: string | null
+  /** 状态译文（契约 2026-10-07-translation-api §8.1）：common_status 字典消费口径 label；null 时降级本地文案 */
+  statusLabel: string | null
+  /** 创建人译文（契约 2026-10-07-translation-api §8.1）：createBy(account) 对应 nickname；null 时降级显示 createBy */
+  createByName: string | null
+  /** 更新人译文（契约 2026-10-07-translation-api §8.1）：updateBy(account) 对应 nickname；null 时降级显示 updateBy */
+  updateByName: string | null
+  /** 内置标记（契约 2026-10-07-builtin-protection-api §7.1/§7.4）：true=系统内置（admin 角色）——徽标/按钮禁用依据（§7.2 矩阵） */
+  builtin: boolean
 }
 
 /** 在线会话 VO（契约 §2.4）：loginTime 为 epoch 毫秒字符串，展示需自行格式化 */
@@ -85,6 +101,8 @@ export interface OnlineSessionVo {
  * 菜单树节点（契约 v2：2026-10-06-menu-management-api §3，取代 pilot §5.1，additive 扩展）：
  * type 枚举 'M' 目录 / 'C' 菜单 / 'F' 按钮；叶子 children 恒为空数组 []（非 null，契约已核实）；
  * 目录节点 perms 为空串；tree 不过滤停用菜单（管理页靠 status 区分，契约 §1）
+ * 译文字段三项 + builtin 为 additive 追加（契约 2026-10-07-translation-api §8.1 +
+ * 2026-10-07-builtin-protection-api §7.1/§7.4）：必返但译文可 null——展示走降级链（同 SysRoleVo 注释）
  */
 export interface MenuTreeNode {
   id: string
@@ -103,10 +121,18 @@ export interface MenuTreeNode {
   updateBy: string | null
   /** 更新时间（契约 v2 §3 新增）：未更新过为 null */
   updateTime: string | null
-  /** 路由路径（契约 v2 增补 §5.1）：C 为 / 开头或空串；M/F 通常空串（前端约定不采编） */
+  /** 路径（契约 v2 增补 §5.1）：C 为 / 开头或空串；M/F 通常空串（前端约定不采编） */
   path: string
   /** 图标名（契约 v2 增补 §5.1）：@element-plus/icons-vue 组件名，空串 = 默认图标 */
   icon: string
+  /** 状态译文（契约 2026-10-07-translation-api §8.1）：common_status 字典消费口径 label；null 时降级本地文案 */
+  statusLabel: string | null
+  /** 创建人译文（契约 2026-10-07-translation-api §8.1）：createBy(account) 对应 nickname；null 时降级显示 createBy */
+  createByName: string | null
+  /** 更新人译文（契约 2026-10-07-translation-api §8.1）：updateBy(account) 对应 nickname；null 时降级显示 updateBy */
+  updateByName: string | null
+  /** 内置标记（契约 2026-10-07-builtin-protection-api §7.1/§7.4）：true=系统内置（23 行种子菜单）——徽标/按钮禁用依据（§7.2 矩阵） */
+  builtin: boolean
   children: MenuTreeNode[]
 }
 
@@ -130,6 +156,9 @@ export interface UserNavNode {
 /**
  * 字典类型 VO（契约 2026-10-07-dict-api §4.1/§7）：status 语义 0=正常 1=停用（两级各自独立）；
  * dict_key 全库唯一、可修改；审计四字段可空（yyyy-MM-dd HH:mm:ss 或 null）；不含 deleted（VO 隔离）
+ * 译文字段三项 + builtin 为 additive 追加（契约 2026-10-07-translation-api §8.1 +
+ * 2026-10-07-builtin-protection-api §7.1/§7.4）：审计译文后端照给、UI 暂不消费（Round E 取舍，
+ * 契约 §8.4）；statusLabel/builtin 管理页消费（降级链同 SysRoleVo 注释）
  */
 export interface SysDictTypeVo {
   id: string
@@ -140,11 +169,22 @@ export interface SysDictTypeVo {
   createTime: string | null
   updateBy: string | null
   updateTime: string | null
+  /** 状态译文（契约 2026-10-07-translation-api §8.1）：common_status 字典消费口径 label；null 时降级本地文案 */
+  statusLabel: string | null
+  /** 创建人译文（契约 2026-10-07-translation-api §8.1）：后端照给；UI 审计列不展示（Round E 取舍），暂不消费 */
+  createByName: string | null
+  /** 更新人译文（契约 2026-10-07-translation-api §8.1）：同上，暂不消费 */
+  updateByName: string | null
+  /** 内置标记（契约 2026-10-07-builtin-protection-api §7.1/§7.4）：true=系统内置（user_status/common_status）——徽标/按钮禁用依据（§7.2 矩阵，「字典项」按钮放行） */
+  builtin: boolean
 }
 
 /**
  * 字典项 VO（契约 2026-10-07-dict-api §4.2/§7）：经 typeId（数值 id 的字符串）归属类型——
  * dict_key 不冗余进项表；value 同类型内唯一（消费键），label 类型内不唯一；sort 恒有值（DDL 默认 0）
+ * 译文字段三项 + builtin 为 additive 追加（契约 2026-10-07-translation-api §8.1 +
+ * 2026-10-07-builtin-protection-api §7.1/§7.4）：审计译文 UI 不消费（Round E 取舍）；
+ * statusLabel/builtin 项弹框消费；builtin 行编辑/删除禁用、「新增」放行（契约 §7.3）
  */
 export interface SysDictDataVo {
   id: string
@@ -157,6 +197,14 @@ export interface SysDictDataVo {
   createTime: string | null
   updateBy: string | null
   updateTime: string | null
+  /** 状态译文（契约 2026-10-07-translation-api §8.1）：common_status 字典消费口径 label；null 时降级本地文案 */
+  statusLabel: string | null
+  /** 创建人译文（契约 2026-10-07-translation-api §8.1）：后端照给；UI 审计列不展示（Round E 取舍），暂不消费 */
+  createByName: string | null
+  /** 更新人译文（契约 2026-10-07-translation-api §8.1）：同上，暂不消费 */
+  updateByName: string | null
+  /** 内置标记（契约 2026-10-07-builtin-protection-api §7.1/§7.4）：true=系统内置（种子项）——徽标/行内编辑删除禁用依据（§7.2 矩阵，「新增」放行 §7.3） */
+  builtin: boolean
 }
 
 /**

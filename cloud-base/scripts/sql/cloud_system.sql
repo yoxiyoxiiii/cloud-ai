@@ -168,3 +168,13 @@ INSERT INTO sys_dict_type (id, dict_name, dict_key, status, is_builtin, create_b
 INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
 (1, 1, '正常', '0', 1, 0, 1, 'system', NOW(), 'system', NOW()),
 (2, 1, '停用', '1', 2, 0, 1, 'system', NOW(), 'system', NOW());
+
+-- 内置字典种子 common_status（通用状态；与增量脚本 2026-10-07-common-status-seed.sql 语义等价，
+-- 存量环境 id 由 AUTO_INCREMENT 自动分配，id 非契约内容（内置保护按 is_builtin 判定，与 id 无关）；
+-- role/menu/dict 四域 status 译文字典键（契约 2026-10-07-translation-api §8.1/§8.3））
+INSERT INTO sys_dict_type (id, dict_name, dict_key, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
+(2, '通用状态', 'common_status', 0, 1, 'system', NOW(), 'system', NOW());
+
+INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
+(3, 2, '正常', '0', 1, 0, 1, 'system', NOW(), 'system', NOW()),
+(4, 2, '停用', '1', 2, 0, 1, 'system', NOW(), 'system', NOW());

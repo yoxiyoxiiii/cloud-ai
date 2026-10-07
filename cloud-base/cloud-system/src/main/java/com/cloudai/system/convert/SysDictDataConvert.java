@@ -23,6 +23,7 @@ public final class SysDictDataConvert {
         vo.setCreateTime(dictData.getCreateTime());
         vo.setUpdateBy(dictData.getUpdateBy());
         vo.setUpdateTime(dictData.getUpdateTime());
+        vo.setBuiltin(Integer.valueOf(1).equals(dictData.getIsBuiltin()));
         return vo;
     }
 }

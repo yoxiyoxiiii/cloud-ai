@@ -23,7 +23,11 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
 
-/** 状态展示映射（契约 §1：0=正常 1=停用；管理端点不过滤停用，靠 tag 区分） */
+/**
+ * 状态本地映射（契约 §1：0=正常 1=停用；管理端点不过滤停用，靠 tag 区分）：
+ * - tagType 是颜色映射本体，永远按原字段 status 取值（译文不含颜色语义——契约 §1 红线）
+ * - label 仅作 statusLabel 缺位时的降级文案（契约 2026-10-07-translation-api §8.1/§8.4 降级链）
+ */
 const STATUS_MAP: Record<number, { label: string; tagType: 'success' | 'danger' }> = {
   0: { label: '正常', tagType: 'success' },
   1: { label: '停用', tagType: 'danger' },
@@ -136,22 +140,32 @@ async function handleDelete(row: SysDictDataVo): Promise<void> {
     </div>
 
     <el-table v-loading="loading" :data="rows">
-      <el-table-column prop="label" label="标签" min-width="120" />
+      <el-table-column label="标签" min-width="120">
+        <template #default="{ row }">
+          <span>{{ rowOf(row).label }}</span>
+          <!-- 内置徽标（保护契约 §7.2：内联标签格不新增列；仅展示，禁用面在行内操作） -->
+          <el-tag v-if="rowOf(row).builtin" class="builtin-badge" type="info" size="small"
+            >内置</el-tag
+          >
+        </template>
+      </el-table-column>
       <el-table-column prop="value" label="值" min-width="120" />
       <el-table-column prop="sort" label="排序" width="70" />
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="STATUS_MAP[rowOf(row).status]?.tagType ?? 'info'">
-            {{ STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
+            {{ rowOf(row).statusLabel ?? STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="110" fixed="right">
         <template #default="{ row }">
+          <!-- 内置项（种子项）行内编辑/删除禁用；「新增」按钮放行——内置类型可追加项（保护契约 §7.2/§7.3，错误码 3016 为最终防线） -->
           <el-button
             v-perms="'system:dict:edit'"
             link
             type="primary"
+            :disabled="rowOf(row).builtin"
             @click="openEdit(rowOf(row))"
             >编辑</el-button
           >
@@ -159,6 +173,7 @@ async function handleDelete(row: SysDictDataVo): Promise<void> {
             v-perms="'system:dict:remove'"
             link
             type="danger"
+            :disabled="rowOf(row).builtin"
             @click="handleDelete(rowOf(row))"
             >删除</el-button
           >
@@ -199,5 +214,10 @@ async function handleDelete(row: SysDictDataVo): Promise<void> {
 .dialog-pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+/** 内置徽标内联标签格（设计 D3 统一形态） */
+.builtin-badge {
+  margin-left: 8px;
 }
 </style>

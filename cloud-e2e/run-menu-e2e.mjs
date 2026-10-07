@@ -5,9 +5,9 @@
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 node run-menu-e2e.mjs）
  * 测试数据（删净纪律最高优先，设计 D8）：
  * - 菜单名 E2E 前缀+时间戳；绝不编辑/删除种子菜单（10/11/12/13/111… 与 20/21/211）；
- *   M5b 内置保护对种子"用户管理"仅做"尝试后验证拒"（3014，契约 2026-10-07-builtin-protection §2，种子零变更）
+ *   M5b 内置保护：种子"用户管理"行徽标/禁用面断言 + 直连 PUT/DELETE → 3014 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
  * - 结束按 F → C → M 自底向上删净并断言树中无 E2E 残留——
- *   role e2e R5a 断言 admin 绑定全部菜单全选（active == total），任何残留 E2E 行都会让下一轮回归必红
+ *   role e2e R5a 直连断言 admin 绑定恰 23 个种子菜单 id 全量（E2 迁移后形态），任何残留 E2E 行都会让下一轮回归必红
  * - 不断言"权限改完立即可用"（权限快照时效，契约 §1：变更需重登/refresh 生效）
  * - 动态路由适配（2026-10-07 计划 E1）：M3/M4 C 型表单补填新必填"路由路径"（契约 §5.2 v2），
  *   M4 请求体键断言随 v2 更新为八字段+id；其余场景零改动
@@ -65,7 +65,24 @@ async function loadTreePage() {
   await waitTableIdle(page)
 }
 
-/** 按名称列精确找菜单行（树表无分页，全量行内线性检索；行首列=名称） */
+/** 名称格内联徽标（el-tag「内置」）使 innerText 变 "{name}\n内置"（tag 独立成行）——比对前统一剥离尾缀并 trim（E2 通用模式） */
+const stripBadge = (s) => s.replace(/\s*内置\s*$/, '').trim()
+
+/** 直连网关小助手（E2 通用模式）：page.evaluate 取 localStorage token + page.request + Bearer——
+ *  不入 page 网络统计（不污染 M-VERIFY，N5/D5c 先例）；请求体中文经 Node UTF-8 无 GBK 陷阱 */
+const GATEWAY = process.env.E2E_GATEWAY || 'http://localhost:18080'
+async function directApi(method, path, data) {
+  const token = await page.evaluate(() => JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken)
+  const res = await page.request.fetch(`${GATEWAY}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    data: data === undefined ? undefined : JSON.stringify(data),
+  })
+  return { httpStatus: res.status(), body: await res.json() }
+}
+
+/** 按名称列精确找菜单行（树表无分页，全量行内线性检索；行首列=名称）——
+ *  种子行名称格带内联「内置」徽标（"{name}内置"），比对前统一 stripBadge（种子带标、e2e 行不带，剥离后统一） */
 async function findMenuRow(name, { reload = true } = {}) {
   if (reload) {
     await loadTreePage()
@@ -74,7 +91,29 @@ async function findMenuRow(name, { reload = true } = {}) {
   const n = await rows.count()
   for (let i = 0; i < n; i++) {
     const cells = await rowCells(rows.nth(i))
-    if (cells[0] === name) return rows.nth(i)
+    if (stripBadge(cells[0]) === name) return rows.nth(i)
+  }
+  return null
+}
+
+/** 页内 fetch 菜单树（page.evaluate + Bearer——与页面同 /api 代理链路；HTTP 200 不入 M-VERIFY 黑名单） */
+async function fetchMenuTree() {
+  const res = await page.evaluate(async () => {
+    const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+    const r = await fetch('/api/system/menu/tree', { headers: { Authorization: `Bearer ${token}` } })
+    return { httpStatus: r.status, body: await r.json() }
+  })
+  assertEq(res.httpStatus, 200, '契约：HTTP 恒 200')
+  assertEq(res.body.code, 200, '菜单树业务码应为 200')
+  return res.body.data
+}
+
+/** 递归按名称找树节点（roots + 嵌套 children；名称在种子/e2e 数据内唯一） */
+function findTreeNode(nodes, name) {
+  for (const n of nodes || []) {
+    if (n.name === name) return n
+    const hit = findTreeNode(n.children, name)
+    if (hit) return hit
   }
   return null
 }
@@ -106,21 +145,6 @@ async function formErrors(dlg) {
   const n = await errs.count()
   for (let i = 0; i < n; i++) texts.push((await errs.nth(i).innerText()).trim())
   return texts
-}
-
-/** 期望错误 toast（超时兜底抓页上实际 toast 文案进失败信息——内置保护断言专用，M5b） */
-async function expectErrToast(expected) {
-  try {
-    const t = await waitToast(page, expected, 'error')
-    log(`  toast: "${t}"`)
-    return t
-  } catch {
-    const present = []
-    const msgs = page.locator('.el-message')
-    const n = await msgs.count()
-    for (let i = 0; i < n; i++) present.push((await msgs.nth(i).innerText()).trim())
-    throw new Error(`期望错误 toast "${expected}" 未出现，页上实际 toast: ${JSON.stringify(present)}`)
-  }
 }
 
 /** 删除行（确认框文案断言后确认），返回 toast 文本 */async function deleteMenuViaUi(name) {
@@ -183,29 +207,52 @@ try {
     assert(sysRow, '树应含根行 系统管理')
     const funcRow = await findMenuRow('用户新增', { reload: false })
     assert(funcRow, '默认全展开：F 级行 用户新增 应可见')
-    // 类型三色 tag 抽检：M=primary / C=success / F=warning
-    const sysTag = sysRow.locator('.el-tag').first()
+    // 类型三色 tag 抽检：M=primary / C=success / F=warning——按列位（td1=类型列）取：
+    // 种子行名称格（td0）新增内联「内置」徽标（el-tag）后，行内首个 .el-tag 已非类型 tag
+    const sysTag = sysRow.locator('td').nth(1).locator('.el-tag')
     assert((await sysTag.innerText()).trim() === '目录', '系统管理类型 tag 文本应为 目录')
     assert(((await sysTag.getAttribute('class')) || '').includes('el-tag--primary'), `目录 tag 应为 primary，实际 ${await sysTag.getAttribute('class')}`)
     const userRow = await findMenuRow('用户管理', { reload: false })
-    const userTag = userRow.locator('.el-tag').first()
+    const userTag = userRow.locator('td').nth(1).locator('.el-tag')
     assert((await userTag.innerText()).trim() === '菜单', '用户管理类型 tag 文本应为 菜单')
     assert(((await userTag.getAttribute('class')) || '').includes('el-tag--success'), '菜单 tag 应为 success')
     const addRow = await findMenuRow('用户新增', { reload: false })
     const addCells = await rowCells(addRow)
-    const addTag = addRow.locator('.el-tag').first()
+    const addTag = addRow.locator('td').nth(1).locator('.el-tag')
     assert((await addTag.innerText()).trim() === '按钮', '用户新增类型 tag 文本应为 按钮')
     assert(((await addTag.getAttribute('class')) || '').includes('el-tag--warning'), '按钮 tag 应为 warning')
     assertEq(addCells[2], 'system:user:add', '用户新增权限标识列应为 system:user:add')
     // M 行权限标识列显示 -
     const sysCells = await rowCells(sysRow)
     assertEq(sysCells[2], '-', '目录行权限标识列应显示 -')
-    // 状态 tag 与时间格式
-    assert(['正常', '停用'].includes(sysCells[4]), `状态列应为 正常/停用，实际 "${sysCells[4]}"`)
+    // 状态 tag 与时间格式 + 徽标（E2 补：种子根行状态列精确「正常」经 statusLabel 降级链）
+    assertEq(sysCells[4], '正常', '系统管理状态列应为 正常（statusLabel 译文/降级链同文案）')
+    assertEq(stripBadge(sysCells[0]), '系统管理', '根行名称应为 系统管理（内联「内置」徽标剥离后）')
+    assert((await sysRow.locator('.builtin-badge').count()) === 1, '种子行名称格应有内联「内置」徽标（el-tag）')
     assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(sysCells[6]) || sysCells[6] === '-', `创建时间应为 yyyy-MM-dd HH:mm:ss 或 -，实际 "${sysCells[6]}"`)
     // 无分页（全量树）
     assertEq(await page.locator('.el-pagination').count(), 0, '菜单树表不应渲染分页组件')
     await shot(page, 'm1-tree-table.png')
+    // ---- 补（E2·层级敏感，计划 157 行）：页内 fetch /system/menu/tree 译文/保护字段断言 ----
+    // 机制边界（契约 2026-10-07-translation-api §8.2）：翻译收集只展开容器，到 @TranslateVO 实例只收集
+    // 自身字段、不遍历对象字段——仅根节点（顶级）回填译文，嵌套子节点三译文字段恒 null（字段键仍在）；
+    // builtin 由 Convert/Builder 传递不经 Advisor，嵌套行照常 true/false
+    const treeData = await fetchMenuTree()
+    assert(Array.isArray(treeData) && treeData.length > 0, '树 data 应为非空数组')
+    const rootNode = findTreeNode(treeData, '系统管理')
+    assert(rootNode, '树应含根节点 系统管理')
+    log(`  fetch 根节点 系统管理: ${JSON.stringify({ ...rootNode, children: `<${(rootNode.children || []).length} children>` })}`)
+    assertEq(rootNode.builtin, true, '根节点（系统管理）builtin 应为 true')
+    assertEq(rootNode.statusLabel, '正常', '根节点 statusLabel 应为 正常（根层译文回填）')
+    assert('createByName' in rootNode && 'updateByName' in rootNode, '根节点译文字段键必返（原字段与译文字段并存）')
+    assertEq(rootNode.status, 0, '根节点原字段 status 应为 0（翻译不覆盖原字段）')
+    const nestedNode = findTreeNode(treeData, '用户管理')
+    assert(nestedNode, '树应含嵌套节点 用户管理')
+    log(`  fetch 嵌套节点 用户管理: ${JSON.stringify({ ...nestedNode, children: `<${(nestedNode.children || []).length} children>` })}`)
+    assertEq(nestedNode.builtin, true, '嵌套节点（用户管理）builtin 应为 true（Convert 传递，不经 Advisor）')
+    assertEq(nestedNode.statusLabel, null, '嵌套子节点 statusLabel 应为 null（机制边界——降级链兜底，非故障）')
+    assert('statusLabel' in nestedNode && 'createByName' in nestedNode, '嵌套节点译文字段键仍在（值为 null，键并存）')
+    assertEq(nestedNode.status, 0, '嵌套节点原字段 status 应为 0（原字段不受影响）')
   })
 
   // ================= M2 新增目录：空提交 0 请求 → 根级目录出现 =================
@@ -253,10 +300,18 @@ try {
     assertEq(cells[1], '目录', '新行类型应为 目录')
     assertEq(cells[2], '-', '目录行权限标识应显示 -')
     assertEq(cells[4], '正常', '新行状态应为 正常')
-    assertEq(cells[5], 'admin', '新行创建人应为 admin（审计透传，契约 §3）')
+    assertEq(cells[5], '管理员', '新行创建人应为 管理员（createBy=admin 经 UserTrans 译文——顶级行译文回填，E2 迁移）')
     // 根级行无树缩进
     assertEq(await rowIndentWidth(row), 0, '根级目录行不应有树形缩进')
     await shot(page, 'm2-dir-created.png')
+    // ---- 补（E2·层级敏感）：顶级 e2e 行（parentId=0）——builtin=false + 根层译文回填（顶级非空）----
+    const dirNode = findTreeNode(await fetchMenuTree(), TEST_DIR)
+    assert(dirNode, `树 fetch 应含新目录节点 ${TEST_DIR}`)
+    log(`  fetch 新目录节点: ${JSON.stringify(dirNode)}`)
+    assertEq(dirNode.builtin, false, '顶级 e2e 行 builtin 应为 false')
+    assertEq(String(dirNode.parentId), '0', '新目录 parentId 应为 "0"（顶级）')
+    assertEq(dirNode.statusLabel, '正常', '顶级 e2e 行 statusLabel 应为 正常（根层译文回填——顶级非空）')
+    assertEq(dirNode.createByName, '管理员', '顶级 e2e 行 createByName 应为 管理员（createBy=admin 译文）')
   })
 
   // ================= M3 新增 C 与 F：类型化候选 + F perms 必填 + 三行层级 =================
@@ -367,6 +422,14 @@ try {
     log(`  F 行缩进: ${fIndent}px`)
     assert(fIndent > cIndent, `F 行缩进（${fIndent}px）应深于 C 行（${cIndent}px）——三级层级 DOM 证据`)
     await shot(page, 'm3-three-levels.png')
+    // ---- 补（E2·层级敏感）：嵌套 e2e 行（C 级，父=TEST_DIR）——builtin=false + 译文恒 null（机制边界）----
+    const pageNode = findTreeNode(await fetchMenuTree(), TEST_PAGE)
+    assert(pageNode, `树 fetch 应含新菜单节点 ${TEST_PAGE}`)
+    log(`  fetch 新菜单节点: ${JSON.stringify({ ...pageNode, children: `<${(pageNode.children || []).length} children>` })}`)
+    assertEq(pageNode.builtin, false, '嵌套 e2e 行 builtin 应为 false')
+    assert(String(pageNode.parentId) !== '0', '新菜单应为嵌套行（parentId 非 0）')
+    assertEq(pageNode.statusLabel, null, '嵌套 e2e 行 statusLabel 应为 null（机制边界——契约 §8.2，UI 降级链兜底）')
+    assert('statusLabel' in pageNode && 'createByName' in pageNode, '嵌套 e2e 行译文字段键仍在（值为 null，键并存）')
   })
 
   // ================= M4 编辑：type 锁定/上级回显 → 改名+停用 → 行内更新 =================
@@ -419,7 +482,8 @@ try {
     assertEq(cells[4], '停用', '行内状态应更新为 停用')
     const tagClass = await rowV2.locator('.el-tag').nth(1).getAttribute('class')
     assert((tagClass || '').includes('el-tag--danger'), `停用状态 tag 应为 danger，实际 ${tagClass}`)
-    assertEq(cells[7], 'admin', '编辑后更新人应为 admin（审计透传）')
+    // 嵌套行译文恒 null（机制边界 §8.2）→ 降级链落原值：更新人列显示原始 admin（与 M2 顶级行显示 管理员 成对照）
+    assertEq(cells[7], 'admin', '编辑后更新人应为 admin（嵌套行译文 null → 降级链显示原值）')
     await shot(page, 'm4-row-updated.png')
   })
 
@@ -450,50 +514,51 @@ try {
     await shot(page, 'm5-after-delete.png')
   })
 
-  // ================= M5b 内置菜单保护（契约 2026-10-07-builtin-protection §2：种子"用户管理""尝试后验证拒"） =================
-  await step('M5b', '内置菜单保护：用户管理 删除/编辑均被 3014 拒（toast 文案）→ 行原样', async () => {
+  // ================= M5b 内置菜单保护（契约 2026-10-07-builtin-protection §2/§7.2：徽标+禁用面 UI 断言 + 直连 3014 API 断言，种子零变更） =================
+  await step('M5b', '内置菜单保护：用户管理行徽标 + 编辑/删除禁用 → 直连 PUT（全量原值）/DELETE → 3014 → 行原样', async () => {
     const SEED_NAME = '用户管理'
-    // ---- a. 删除确认 → 3014 拒 ----
+    // ---- a. UI 禁用面 + 徽标（§7.2 矩阵镜像：内置菜单两按钮全禁——3014 为最终防线）----
     let row = await findMenuRow(SEED_NAME)
     assert(row, `应能定位种子菜单行 ${SEED_NAME}`)
     const cellsBefore = await rowCells(row)
     log(`  种子行（保护前）: ${JSON.stringify(cellsBefore.slice(0, 5))}`)
-    await row.getByRole('button', { name: '删除' }).click()
-    const box = page.locator('.el-message-box')
-    await box.waitFor({ state: 'visible', timeout: 8000 })
-    await shot(page, 'm5b-delete-confirm.png')
-    const delP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/menu/'), { timeout: 15000 })
-    await box.locator('.el-message-box__btns .el-button--primary').click()
-    const del = await delP
-    const delBody = await del.json()
-    log(`  删除接口: HTTP ${del.status()} code=${delBody.code} msg="${delBody.msg}"`)
-    assertEq(del.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
-    assertEq(delBody.code, 3014, `内置菜单删除应 body 3014，实际 ${delBody.code}`)
-    await expectErrToast('内置菜单禁止删除')
-    row = await findMenuRow(SEED_NAME)
-    assert(row, '3014 拒绝后种子菜单行应仍在')
-    // ---- b. 编辑提交（回显值原样，零改动）→ 3014 拒 ----
-    await row.getByRole('button', { name: '编辑' }).click()
-    const dlg = page.locator('.el-dialog', { hasText: '编辑菜单' }).last()
-    await dlg.waitFor({ state: 'visible', timeout: 8000 })
-    const putP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/menu') && r.request().method() === 'PUT', { timeout: 15000 })
-    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
-    const put = await putP
-    const putBody = await put.json()
-    log(`  编辑提交接口: HTTP ${put.status()} code=${putBody.code} msg="${putBody.msg}"`)
-    assertEq(putBody.code, 3014, `内置菜单修改应 body 3014，实际 ${putBody.code}`)
-    await expectErrToast('内置菜单禁止修改')
-    if (await dlg.isVisible()) {
-      await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
-    }
-    await waitDialogGone(page, '编辑菜单')
-    // ---- c. 种子终态：名称/状态与保护前一致 ----
+    const badge = row.locator('.builtin-badge')
+    assert((await badge.count()) === 1, '种子行名称格应有内联「内置」徽标（el-tag）')
+    assertEq((await badge.innerText()).trim(), '内置', '徽标文本应为 内置')
+    assert(await row.getByRole('button', { name: '编辑' }).isDisabled(), '内置菜单「编辑」按钮应禁用')
+    assert(await row.getByRole('button', { name: '删除' }).isDisabled(), '内置菜单「删除」按钮应禁用')
+    await shot(page, 'm5b-builtin-disabled.png')
+    // ---- b. 直连 PUT /system/menu（id=11 + 全量原值——「原值亦拒」全禁语义保留）→ 3014 ----
+    const node11 = findTreeNode(await fetchMenuTree(), SEED_NAME)
+    assert(node11, '树 fetch 应含种子节点 用户管理')
+    assertEq(String(node11.id), '11', '用户管理节点 id 应为 11')
+    assertEq(node11.builtin, true, '用户管理节点 builtin 应为 true')
+    const put = await directApi('PUT', '/system/menu', {
+      id: node11.id,
+      parentId: node11.parentId,
+      name: node11.name,
+      type: node11.type,
+      path: node11.path,
+      icon: node11.icon,
+      perms: node11.perms,
+      sort: node11.sort,
+      status: node11.status,
+    })
+    log(`  直连原值编辑接口: HTTP ${put.httpStatus} code=${put.body.code} msg="${put.body.msg}"`)
+    assertEq(put.httpStatus, 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(put.body.code, 3014, `内置菜单修改（全量原值提交）应 body 3014——「原值亦拒」，实际 ${put.body.code}`)
+    // ---- c. 直连 DELETE /system/menu/11 → 3014 ----
+    const del = await directApi('DELETE', '/system/menu/11')
+    log(`  直连删除接口: HTTP ${del.httpStatus} code=${del.body.code} msg="${del.body.msg}"`)
+    assertEq(del.body.code, 3014, `内置菜单删除应 body 3014，实际 ${del.body.code}`)
+    // ---- d. 种子终态：名称/状态与保护前一致 ----
     row = await findMenuRow(SEED_NAME)
     assert(row, '保护场景后种子菜单行应仍在（种子终态）')
     const cellsAfter = await rowCells(row)
     log(`  种子行（保护后）: ${JSON.stringify(cellsAfter.slice(0, 5))}`)
-    assertEq(cellsAfter[0], SEED_NAME, `种子菜单名应保持 ${SEED_NAME}`)
+    assertEq(stripBadge(cellsAfter[0]), SEED_NAME, `种子菜单名应保持 ${SEED_NAME}（徽标剥离后）`)
     assertEq(cellsAfter[4], cellsBefore[4], `种子菜单状态应保持原值 "${cellsBefore[4]}"`)
+    assertEq(cellsAfter[4], '正常', '种子菜单状态终态应为 正常')
   })
 
   // ================= CLEANUP 删净核验：无 E2E 残留 + 种子菜单仍在 =================
@@ -501,7 +566,7 @@ try {
     await loadTreePage()
     const residue = await page.locator('.el-table__row', { hasText: 'E2E' }).count()
     log(`  E2E 残留行数: ${residue}`)
-    assertEq(residue, 0, '清理后菜单树中不应残留任何 E2E 前缀行（残留会让 role e2e R5a admin 全选断言必红）')
+    assertEq(residue, 0, '清理后菜单树中不应残留任何 E2E 前缀行（残留会让 role e2e R5a 直连 23 id 全量断言必红）')
     for (const seed of ['系统管理', '用户管理', '角色管理', '菜单管理', '认证管理', '用户新增']) {
       const row = await findMenuRow(seed, { reload: false })
       assert(row !== null, `种子菜单 ${seed} 应仍在（绝不删种子纪律核验）`)

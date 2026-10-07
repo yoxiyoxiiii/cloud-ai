@@ -46,6 +46,21 @@ class MenuTreeBuilderTest {
     }
 
     @Test
+    void builtinFlagPassedThroughNullSafe() {
+        SysMenu builtinMenu = menu(10L, 0L, "内置菜单", 1);
+        builtinMenu.setIsBuiltin(SysMenu.BuiltinEnum.BUILT_IN.getCode());
+        SysMenu userMenu = menu(11L, 0L, "用户菜单", 2);
+        userMenu.setIsBuiltin(SysMenu.BuiltinEnum.DEFAULT.getCode());
+        SysMenu unmarkedMenu = menu(12L, 0L, "未标记菜单", 3);
+
+        List<MenuTreeNode> tree = MenuTreeBuilder.build(List.of(builtinMenu, userMenu, unmarkedMenu));
+
+        // null-safe：is_builtin=1 → true；0/null → false（保护契约 §7.1）
+        assertThat(tree).extracting(MenuTreeNode::getBuiltin)
+                .containsExactly(true, false, false);
+    }
+
+    @Test
     void statusAndAuditFieldsPassedThrough() {
         SysMenu root = menu(10L, 0L, "系统管理", 1);
         root.setStatus(SysMenu.StatusEnum.NORMAL.getCode());

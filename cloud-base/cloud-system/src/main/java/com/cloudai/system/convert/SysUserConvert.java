@@ -21,6 +21,7 @@ public final class SysUserConvert {
         vo.setCreateTime(user.getCreateTime());
         vo.setUpdateBy(user.getUpdateBy());
         vo.setUpdateTime(user.getUpdateTime());
+        vo.setBuiltin(Integer.valueOf(1).equals(user.getIsBuiltin()));
         return vo;
     }
 }

@@ -15,7 +15,12 @@ import AssignMenuDialog from './components/AssignMenuDialog.vue'
  * keep-alive include 按组件名匹配会失效（升级设计 D5 红字坑） */
 defineOptions({ name: 'SystemRole' })
 
-/** 角色状态展示映射（契约 §4：0=正常 1=停用；未知值 fallback info + 原值） */
+/**
+ * 角色状态本地映射（status 语义 0=正常 1=停用，契约 §4）：
+ * - tagType 是颜色映射本体，永远按原字段 status 取值（译文不含颜色语义——契约 §1 红线）
+ * - label 仅作 statusLabel 缺位时的降级文案（契约 2026-10-07-translation-api §8.1/§8.4 降级链）
+ * 编辑弹窗回填/提交仍用原字段 status，不消费译文
+ */
 const STATUS_MAP: Record<number, { label: string; tagType: 'success' | 'danger' }> = {
   0: { label: '正常', tagType: 'success' },
   1: { label: '停用', tagType: 'danger' },
@@ -112,36 +117,51 @@ onMounted(() => {
     </template>
 
     <el-table v-loading="loading" :data="rows">
-      <el-table-column prop="name" label="角色名称" min-width="120" />
+      <el-table-column label="角色名称" min-width="120">
+        <template #default="{ row }">
+          <span>{{ rowOf(row).name }}</span>
+          <!-- 内置徽标（保护契约 §7.2：内联名称格不新增列；仅展示，禁用面在操作列） -->
+          <el-tag v-if="rowOf(row).builtin" class="builtin-badge" type="info" size="small"
+            >内置</el-tag
+          >
+        </template>
+      </el-table-column>
       <el-table-column prop="roleKey" label="权限标识" min-width="120" />
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="STATUS_MAP[rowOf(row).status]?.tagType ?? 'info'">
-            {{ STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
+            {{ rowOf(row).statusLabel ?? STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
           </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="创建人" min-width="100">
-        <template #default="{ row }">{{ rowOf(row).createBy ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).createByName ?? rowOf(row).createBy ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="创建时间" min-width="160">
         <template #default="{ row }">{{ rowOf(row).createTime ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="更新人" min-width="100">
-        <template #default="{ row }">{{ rowOf(row).updateBy ?? '-' }}</template>
+        <template #default="{ row }">{{ rowOf(row).updateByName ?? rowOf(row).updateBy ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="更新时间" min-width="160">
         <template #default="{ row }">{{ rowOf(row).updateTime ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
-          <el-button v-perms="'system:role:edit'" link type="primary" @click="openEdit(rowOf(row))"
+          <!-- 内置行（admin）编辑/分配权限/删除禁用（保护契约 §7.2 矩阵镜像，错误码 3013 为最终防线） -->
+          <el-button
+            v-perms="'system:role:edit'"
+            link
+            type="primary"
+            :disabled="rowOf(row).builtin"
+            @click="openEdit(rowOf(row))"
             >编辑</el-button
           >
           <el-button
             v-perms="'system:role:assignMenu'"
             link
             type="primary"
+            :disabled="rowOf(row).builtin"
             @click="openAssignMenu(rowOf(row))"
             >分配权限</el-button
           >
@@ -149,6 +169,7 @@ onMounted(() => {
             v-perms="'system:role:remove'"
             link
             type="danger"
+            :disabled="rowOf(row).builtin"
             @click="handleDelete(rowOf(row))"
             >删除</el-button
           >
@@ -187,5 +208,10 @@ onMounted(() => {
 .table-pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+/** 内置徽标内联名称格（设计 D3 统一形态） */
+.builtin-badge {
+  margin-left: 8px;
 }
 </style>

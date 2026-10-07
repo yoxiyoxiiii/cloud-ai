@@ -6,7 +6,7 @@
  * 目标入口：E2E_BASE_URL 环境变量覆盖（默认 http://localhost:5173）
  * 截图输出：cloud-e2e/artifacts/*.png
  * 测试数据：账号 e2e+时间戳（仅作用于该测试账号，不改 admin；结束时删除该账号）
- *           S14b 内置保护：对 admin 行仅做"尝试后验证拒"（3013-3017 域，种子零变更——契约 2026-10-07-builtin-protection §2）
+ *           S14b 内置保护：admin 行徽标/禁用面断言 + 直连 DELETE/PUT → 3017 拒（种子零变更——契约 2026-10-07-builtin-protection §2；E2 断言迁移）
  * 公共工具已抽 lib/harness.mjs（设计 D5）——本脚本只保留用户管理场景本体
  */
 import { chromium } from 'playwright'
@@ -30,20 +30,21 @@ const TEST_NICKNAME_V2 = 'E2E测试用户v2'
 const TEST_PWD = 'e2ePass123'
 const TEST_PWD_NEW = 'e2eNew456'
 
-/** 期望错误 toast（超时兜底抓页上实际 toast 文案进失败信息——内置保护断言专用，S14b） */
-async function expectErrToast(expected) {
-  try {
-    const t = await waitToast(page, expected, 'error')
-    log(`  toast: "${t}"`)
-    return t
-  } catch {
-    const present = []
-    const msgs = page.locator('.el-message')
-    const n = await msgs.count()
-    for (let i = 0; i < n; i++) present.push((await msgs.nth(i).innerText()).trim())
-    throw new Error(`期望错误 toast "${expected}" 未出现，页上实际 toast: ${JSON.stringify(present)}`)
-  }
+/** 直连网关小助手（E2 通用模式）：page.evaluate 取 localStorage token + page.request + Bearer——
+ *  不入 page 网络统计（不污染 *-VERIFY，N5/D5c 先例）；请求体中文经 Node UTF-8 无 GBK 陷阱 */
+const GATEWAY = process.env.E2E_GATEWAY || 'http://localhost:18080'
+async function directApi(method, path, data) {
+  const token = await page.evaluate(() => JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken)
+  const res = await page.request.fetch(`${GATEWAY}${path}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    data: data === undefined ? undefined : JSON.stringify(data),
+  })
+  return { httpStatus: res.status(), body: await res.json() }
 }
+
+/** 名称格内联徽标（el-tag「内置」）使 innerText 变 "{name}\n内置"（tag 独立成行）——比对前统一剥离尾缀并 trim（E2 通用模式） */
+const stripBadge = (s) => s.replace(/\s*内置\s*$/, '').trim()
 
 // ---------- 主流程 ----------
 // 主控要求：默认有头模式（用户可在本机看到 UI 效果）+ slowMo 300；--headless 或 E2E_HEADLESS=1 可切回无头
@@ -219,7 +220,8 @@ try {
     tableTotal = parseInt((totalText.match(/\d+/) || ['0'])[0], 10)
     log(`  分页 total 文案: "${totalText}"（解析=${tableTotal}）`)
     assert(tableTotal >= rowCount, `total(${tableTotal}) 应 >= 当前页行数(${rowCount})`)
-    const tagClass = await page.locator('.el-table__row').first().locator('.el-tag').getAttribute('class')
+    // 状态 tag 按列位取（td2=状态列）：首行（admin）账号格内联「内置」徽标也是 el-tag，行内裸取会撞 2 元素
+    const tagClass = await page.locator('.el-table__row').first().locator('td').nth(2).locator('.el-tag').getAttribute('class')
     log(`  首行状态 tag class: ${tagClass}`)
     await shot(page, 's08-user-table.png')
     if (tableTotal > 10) {
@@ -450,9 +452,11 @@ try {
     assert(row, '应能定位 admin 行')
     let cells = await rowCells(row)
     log(`  admin 行: ${JSON.stringify(cells.slice(0, 7))}`)
-    assertEq(cells[0], 'admin', 'admin 行账号列应为 admin')
+    assertEq(stripBadge(cells[0]), 'admin', 'admin 行账号列应为 admin（内联「内置」徽标剥离后）')
+    assert((await row.locator('.builtin-badge').count()) === 1, 'admin 行账号格应有内联「内置」徽标（el-tag）')
     assertEq(cells[2], '正常', 'admin 行状态 tag 文本应为 正常（statusLabel 译文，与本地降级同文案）')
-    const adminTagClass = (await row.locator('.el-tag').getAttribute('class')) || ''
+    // 状态 tag 按列位取（td2=状态列）：账号格内联「内置」徽标也是 el-tag，行内首个 .el-tag 已非状态 tag
+    const adminTagClass = (await row.locator('td').nth(2).locator('.el-tag').getAttribute('class')) || ''
     assert(adminTagClass.includes('el-tag--success'), `admin 行状态 tag 颜色应按原 status=0 映射 success，实际 "${adminTagClass}"`)
     assertEq(cells[3], '-', 'admin 行创建人列应为 -（种子 createBy=null → 降级链终点）')
     await shot(page, 's12b-admin-translated.png')
@@ -488,6 +492,8 @@ try {
     log(`  fetch admin 行: ${JSON.stringify(adminVo)}`)
     assertEq(adminVo.status, 0, 'admin 原字段 status 应为 0')
     assertEq(adminVo.statusLabel, '正常', 'admin 译文字段 statusLabel 应为 "正常"（字典命中）')
+    assertEq(adminVo.builtin, true, 'admin builtin 应为 true（is_builtin=1，保护契约 §7.1）')
+    assert('builtin' in adminVo, 'admin builtin 键必返（原字段/译文字段/保护字段三者并存）')
     assertEq(adminVo.createBy, null, 'admin 原字段 createBy 应为 null（种子原样）')
     assert('createByName' in adminVo && adminVo.createByName === null, 'admin createByName 必返且为 null（翻译未命中降级，不是错误）')
     // admin.updateBy 现值随管理操作演进（B7 放行冒烟改昵称后 updateBy=admin，API 无法置回 null）——
@@ -622,51 +628,47 @@ try {
     assertEq(anyE2e, 0, '清理后表中不应残留 e2e 前缀账号')
   })
 
-  // ================= S14b 内置用户保护（契约 2026-10-07-builtin-protection §2：admin 行"尝试后验证拒"，不做任何放行写） =================
-  await step('S14b', '内置用户保护：admin 删除/停用均被 3017 拒（toast 文案）→ 行/昵称/状态原样', async () => {
-    // ---- a. 删除确认 → 3017 拒 ----
+  // ================= S14b 内置用户保护（契约 2026-10-07-builtin-protection §2/§7.2：徽标+禁用面 UI 断言 + 直连 3017 API 断言，种子零变更） =================
+  await step('S14b', '内置用户保护：admin 行徽标 + 删除/分配角色禁用（编辑/重置密码放行）→ 编辑弹窗「停用」radio 禁用 → 直连 DELETE/PUT → 3017 → 行原样', async () => {
+    // ---- a. UI 禁用面 + 徽标（§7.2 用户域例外：编辑/重置密码放行——3017 为最终防线）----
     let row = await findRow(page, 'admin')
     assert(row, '应能定位 admin 行')
     const cellsBefore = await rowCells(row)
     log(`  admin 行（保护前）: ${JSON.stringify(cellsBefore.slice(0, 3))}`)
-    await row.getByRole('button', { name: '删除' }).click()
-    const box = page.locator('.el-message-box')
-    await box.waitFor({ state: 'visible', timeout: 8000 })
-    const boxText = (await box.innerText()).trim().replace(/\n/g, ' | ')
-    log(`  删除确认框: ${boxText}`)
-    assert(boxText.includes('admin'), `确认框文案应含 admin，实际 "${boxText}"`)
-    const delP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/user/'), { timeout: 15000 })
-    await box.locator('.el-message-box__btns .el-button--primary').click()
-    const del = await delP
-    const delBody = await del.json()
-    log(`  删除接口: HTTP ${del.status()} code=${delBody.code} msg="${delBody.msg}"`)
-    assertEq(del.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
-    assertEq(delBody.code, 3017, `内置用户删除应 body 3017，实际 ${delBody.code}`)
-    await expectErrToast('内置用户禁止删除')
-    await shot(page, 's14b-delete-3017.png')
-    row = await findRow(page, 'admin')
-    assert(row, '3017 拒绝后 admin 行应仍在')
-    // ---- b. 编辑停用提交 → 3017 拒（弹窗回显值直接提交，仅触发被拒路径——admin 行零放行写） ----
+    const badge = row.locator('.builtin-badge')
+    assert((await badge.count()) === 1, 'admin 行账号格应有内联「内置」徽标（el-tag）')
+    assertEq((await badge.innerText()).trim(), '内置', '徽标文本应为 内置')
+    assert(await row.getByRole('button', { name: '删除' }).isDisabled(), '内置用户「删除」按钮应禁用')
+    assert(await row.getByRole('button', { name: '分配角色' }).isDisabled(), '内置用户「分配角色」按钮应禁用')
+    assert(await row.getByRole('button', { name: '编辑' }).isEnabled(), '用户域例外：内置用户「编辑」应放行')
+    assert(await row.getByRole('button', { name: '重置密码' }).isEnabled(), '用户域例外：内置用户「重置密码」应放行')
+    await shot(page, 's14b-builtin-badge.png')
+    // ---- b. 直连 DELETE /system/user/1 → body 3017（UI 禁用不可点，3017 断言转 API 层）----
+    const del = await directApi('DELETE', '/system/user/1')
+    log(`  直连删除接口: HTTP ${del.httpStatus} code=${del.body.code} msg="${del.body.msg}"`)
+    assertEq(del.httpStatus, 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(del.body.code, 3017, `内置用户删除应 body 3017，实际 ${del.body.code}`)
+    // ---- c. 编辑弹窗（放行入口）：回显昵称 + 「停用」radio input 禁用（正常项可用）+ 取消关闭 ----
     await row.getByRole('button', { name: '编辑' }).click()
     const dlg = page.locator('.el-dialog', { hasText: '编辑用户' }).last()
     await dlg.waitFor({ state: 'visible', timeout: 8000 })
-    await dlg.locator('.el-radio', { hasText: '停用' }).click()
-    const putP = page.waitForResponse((r) => r.request().method() === 'PUT' && new URL(r.url()).pathname === '/api/system/user', { timeout: 15000 })
-    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
-    const put = await putP
-    const putBody = await put.json()
-    log(`  停用提交接口: HTTP ${put.status()} code=${putBody.code} msg="${putBody.msg}"`)
-    assertEq(putBody.code, 3017, `内置用户停用应 body 3017，实际 ${putBody.code}`)
-    await expectErrToast('内置用户禁止停用')
-    if (await dlg.isVisible()) {
-      await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
-    }
+    assertEq(await dlg.locator('input[placeholder="请输入昵称"]').inputValue(), '管理员', '编辑弹窗应回显 admin 昵称 管理员')
+    const stopInput = dlg.locator('.el-radio', { hasText: '停用' }).locator('input')
+    assert(await stopInput.isDisabled(), '内置用户编辑弹窗「停用」radio input 应禁用（停用→3017，防线前置）')
+    assert(await dlg.locator('.el-radio', { hasText: '正常' }).locator('input').isEnabled(), '「正常」radio 应保持可用（仅禁停用项）')
+    await shot(page, 's14b-edit-stop-disabled.png')
+    await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
     await waitDialogGone(page, '编辑用户')
-    // ---- c. 种子终态：行在 + 昵称/状态与保护前一致 ----
+    // ---- d. 直连 PUT /system/user（id=1，停用形态）→ body 3017（直连绕过 UI 前置禁用，验证服务端防线）----
+    const put = await directApi('PUT', '/system/user', { id: '1', nickname: '管理员', status: 1 })
+    log(`  直连停用接口: HTTP ${put.httpStatus} code=${put.body.code} msg="${put.body.msg}"`)
+    assertEq(put.body.code, 3017, `内置用户停用（直连）应 body 3017，实际 ${put.body.code}`)
+    // ---- e. 种子终态：行在 + 昵称/状态与保护前一致（cells[1]/[2] 比对不受徽标影响——徽标在 account 列）----
     row = await findRow(page, 'admin')
     assert(row, '保护场景后 admin 行应仍在（种子终态）')
     const cellsAfter = await rowCells(row)
     log(`  admin 行（保护后）: ${JSON.stringify(cellsAfter.slice(0, 3))}`)
+    assertEq(stripBadge(cellsAfter[0]), 'admin', 'admin 账号终态应为 admin（徽标剥离后）')
     assertEq(cellsAfter[1], cellsBefore[1], `admin 昵称应保持原值 "${cellsBefore[1]}"`)
     assertEq(cellsAfter[2], cellsBefore[2], `admin 状态应保持原值 "${cellsBefore[2]}"`)
     assertEq(cellsAfter[2], '正常', 'admin 状态终态应为 正常')

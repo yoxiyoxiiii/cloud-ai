@@ -323,6 +323,12 @@ try {
     // 零后端数据写：全程 /api/system无非 GET（弹窗只开不提交；/sso 登录注销属会话操作）
     const writes = h.state.apiCalls.filter((c) => c.url.startsWith('/api/system') && c.method !== 'GET')
     assertEq(writes.length, 0, `admin 会话不应有任何 /api/system 写操作，实际 ${JSON.stringify(writes)}`)
+    // logoutViaUi 常驻回归守卫（设计 D7）：双守卫（sawLogout 请求级 + waitForURL 时序）结构下，
+    // 每次调用 logout POST 应 ≤1——「重定向未完成二击 → 401」flake 修复转为永久断言
+    for (const s of h.state.logoutViaUiStats) {
+      assert(s.posts <= 1, `logoutViaUi 单次调用 logout POST 应 ≤1，实际 ${JSON.stringify(s)}`)
+    }
+    log(`  logoutViaUiStats: ${JSON.stringify(h.state.logoutViaUiStats)}`)
   })
 } finally {
   // ---------- 汇总 ----------
