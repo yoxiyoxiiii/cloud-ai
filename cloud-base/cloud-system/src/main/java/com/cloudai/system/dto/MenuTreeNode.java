@@ -17,6 +17,13 @@ public class MenuTreeNode implements Serializable {
     private String name;
     private String perms;
     private String type;
+
+    /** 路由路径；M/F 通常空串（前端约定不采编），C 为 / 开头或空串（契约 2026-10-07-menu-nav-api.md §5.1 增补） */
+    private String path;
+
+    /** 图标名，空串 = 默认图标（契约 v2 增补） */
+    private String icon;
+
     private Integer sort;
 
     /** 0 正常 1 停用（契约 v2 新增） */

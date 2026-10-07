@@ -5,6 +5,7 @@ import com.cloudai.system.dto.MenuTreeNode;
 import com.cloudai.system.entity.SysMenu;
 import com.cloudai.system.service.SysMenuManageService;
 import com.cloudai.system.util.MenuTreeBuilder;
+import com.cloudai.system.vo.UserNavVo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -32,6 +33,13 @@ public class SysMenuController {
         List<SysMenu> menus = manageService.listAll();
         List<MenuTreeNode> tree = MenuTreeBuilder.build(menus);
         return R.ok(tree);
+    }
+
+    /** 查询当前用户的导航树（仅 M/C，实时查库按角色聚合；无 @PreAuthorize——任何已登录用户可访问自己的投影） */
+    @GetMapping("/user-nav")
+    public R<List<UserNavVo>> userNav() {
+        List<UserNavVo> nav = manageService.listUserNav();
+        return R.ok(nav);
     }
 
     /** 新增菜单/按钮（返回新菜单 ID） */

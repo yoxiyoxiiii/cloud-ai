@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { useAuthStore } from '../../stores/auth'
 import { useTagsStore } from '../../stores/tags'
+import { useMenuStore } from '../../stores/menu'
 import { APP_TITLE } from '../../constants/app'
 // 登录背景图（升级设计 D11）：Pexels photo 2341830，来源页
 // https://www.pexels.com/photo/2341830/ ，Pexels License（免商用、免署名、可修改）；
@@ -20,11 +21,15 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const tagsStore = useTagsStore()
+const menuStore = useMenuStore()
 
 onMounted(() => {
   // 会话清理（升级设计 D4）：登录页是"进入新会话"的必经点（手动退出/401 清态跳转/直接访问），
   // 在此重置页签可统一覆盖三条路径；缓存的列表页组件随 cachedNames 清空被 keep-alive 自动剪枝
   tagsStore.closeAll()
+  // 动态路由清态（动态路由设计 D7，与上方同一收敛点）：移除上一账号注册的动态路由与菜单树，
+  // 重登后守卫按新账号角色实时重建（user-nav 实时语义，契约 §3）——无旧菜单/路由残留
+  menuStore.reset()
 })
 
 const formRef = ref<FormInstance>()

@@ -105,7 +105,9 @@ try {
     assertEq(body.code, 200, '登录业务码应为 200')
     assert(body.data?.accessToken, '登录响应应含 accessToken')
     await page.waitForURL('**/system/user', { timeout: 15000 })
-    await page.locator('.el-menu').waitFor({ state: 'visible', timeout: 8000 })
+    // 动态路由后根 M 渲染为 el-sub-menu，其内层 ul.el-menu--inline 也是 .el-menu——
+    // 裸 .el-menu 命中 2 元素触发 strict violation，改用侧边根元素 .sidebar-menu
+    await page.locator('.sidebar-menu').waitFor({ state: 'visible', timeout: 8000 })
     const accountText = (await page.locator('.navbar-account').innerText()).trim()
     assert(accountText.includes('admin'), `顶栏应显示 admin，实际 "${accountText}"`)
     await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })
@@ -423,7 +425,9 @@ try {
 
   // ================= S13 分配角色 =================
   await step('S13', '分配角色：勾选保存成功 + 重开回显；全不勾 → 回显空', async () => {
-    await page.waitForURL('**/system/user', { timeout: 8000 })
+    // 动态路由 D5 后 '/' 落 /dashboard：S12 末 admin 重登不再自动落 /system/user，显式进入用户页
+    await page.goto(`${BASE}/system/user`, { waitUntil: 'domcontentloaded' })
+    await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })
     let row = await findRow(page, TEST_ACCOUNT)
     assert(row, '应能定位测试行')
     await row.getByRole('button', { name: '分配角色' }).click()

@@ -48,6 +48,8 @@ CREATE TABLE sys_menu (
     name        VARCHAR(30) NOT NULL COMMENT '名称',
     perms       VARCHAR(50) NOT NULL DEFAULT '' COMMENT '权限标识，如 system:user:list',
     type        CHAR(1)     NOT NULL DEFAULT 'C' COMMENT 'M目录 C菜单 F按钮',
+    path        VARCHAR(100) NOT NULL DEFAULT '' COMMENT '前端路由路径，C型菜单有效（以/开头），空串=不进导航',
+    icon        VARCHAR(50)  NOT NULL DEFAULT '' COMMENT '菜单图标名（@element-plus/icons-vue 组件名），空串=默认图标',
     sort        INT         NOT NULL DEFAULT 0 COMMENT '排序',
     status      TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
     create_by   VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
@@ -82,26 +84,27 @@ CREATE TABLE sys_role_menu (
 -- ---------- 初始数据 ----------
 INSERT INTO sys_role (id, name, role_key, create_time) VALUES (1, '管理员', 'admin', NOW());
 
-INSERT INTO sys_menu (id, parent_id, name, perms, type, sort, create_time) VALUES
-(10, 0, '系统管理',   '',                   'M', 1, NOW()),
-(11, 10, '用户管理',  'system:user:list',   'C', 1, NOW()),
-(12, 10, '角色管理',  'system:role:list',   'C', 2, NOW()),
-(13, 10, '菜单管理',  'system:menu:list',   'C', 3, NOW()),
-(111, 11, '用户新增', 'system:user:add',    'F', 1, NOW()),
-(112, 11, '用户修改', 'system:user:edit',   'F', 2, NOW()),
-(113, 11, '用户删除', 'system:user:remove', 'F', 3, NOW()),
-(114, 11, '重置密码', 'system:user:resetPwd','F', 4, NOW()),
-(115, 11, '分配角色', 'system:user:assignRole','F', 5, NOW()),
-(121, 12, '角色新增', 'system:role:add',    'F', 1, NOW()),
-(122, 12, '角色修改', 'system:role:edit',   'F', 2, NOW()),
-(123, 12, '角色删除', 'system:role:remove', 'F', 3, NOW()),
-(124, 12, '分配权限', 'system:role:assignMenu','F', 4, NOW()),
-(131, 13, '菜单新增', 'system:menu:add',    'F', 1, NOW()),
-(132, 13, '菜单修改', 'system:menu:edit',   'F', 2, NOW()),
-(133, 13, '菜单删除', 'system:menu:remove', 'F', 3, NOW()),
-(20, 0, '认证管理',   '',                   'M', 2, NOW()),
-(21, 20, '在线用户',  'sso:online:list',    'C', 1, NOW()),
-(211, 21, '强制下线', 'sso:online:kick',    'F', 1, NOW());
+-- path/icon 初值与增量脚本 2026-10-07-menu-nav.sql 语义等价（21 在线用户 path/icon 均空串，不进导航）
+INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, create_time) VALUES
+(10, 0, '系统管理',   '',                   'M', '',             'Setting',    1, NOW()),
+(11, 10, '用户管理',  'system:user:list',   'C', '/system/user', 'User',       1, NOW()),
+(12, 10, '角色管理',  'system:role:list',   'C', '/system/role', 'UserFilled', 2, NOW()),
+(13, 10, '菜单管理',  'system:menu:list',   'C', '/system/menu', 'Menu',       3, NOW()),
+(111, 11, '用户新增', 'system:user:add',    'F', '',             '',           1, NOW()),
+(112, 11, '用户修改', 'system:user:edit',   'F', '',             '',           2, NOW()),
+(113, 11, '用户删除', 'system:user:remove', 'F', '',             '',           3, NOW()),
+(114, 11, '重置密码', 'system:user:resetPwd','F', '',            '',           4, NOW()),
+(115, 11, '分配角色', 'system:user:assignRole','F', '',          '',           5, NOW()),
+(121, 12, '角色新增', 'system:role:add',    'F', '',             '',           1, NOW()),
+(122, 12, '角色修改', 'system:role:edit',   'F', '',             '',           2, NOW()),
+(123, 12, '角色删除', 'system:role:remove', 'F', '',             '',           3, NOW()),
+(124, 12, '分配权限', 'system:role:assignMenu','F', '',          '',           4, NOW()),
+(131, 13, '菜单新增', 'system:menu:add',    'F', '',             '',           1, NOW()),
+(132, 13, '菜单修改', 'system:menu:edit',   'F', '',             '',           2, NOW()),
+(133, 13, '菜单删除', 'system:menu:remove', 'F', '',             '',           3, NOW()),
+(20, 0, '认证管理',   '',                   'M', '',             'Lock',       2, NOW()),
+(21, 20, '在线用户',  'sso:online:list',    'C', '',             '',           1, NOW()),
+(211, 21, '强制下线', 'sso:online:kick',    'F', '',             '',           1, NOW());
 
 -- admin 账号（密码 admin123）
 INSERT INTO sys_user (id, account, nickname, password, create_time) VALUES

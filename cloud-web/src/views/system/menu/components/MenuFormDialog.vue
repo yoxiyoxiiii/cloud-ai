@@ -36,6 +36,10 @@ interface MenuFormData {
   type: 'M' | 'C' | 'F'
   parentId: string
   name: string
+  /** 路由路径（契约 §5.2）：仅 C 采编（必填 / 开头）；M/F 提交空串 */
+  path: string
+  /** 图标名（契约 §5.2）：M/C 选填白名单名（ICON_MAP 兜底）；F 提交空串 */
+  icon: string
   perms: string
   sort: number
   status: number
@@ -55,12 +59,20 @@ const STATUS_DISABLED = 1
 /** perms 格式（前端约定兜底，契约 §4 后端无格式校验；DDL VARCHAR(50)） */
 const PERMS_PATTERN = /^[a-zA-Z][a-zA-Z0-9:_-]{0,49}$/
 
+/**
+ * 路由路径格式（前端约定，契约 §5.2 后端不校验非空与格式）：
+ * / 开头 + 字母起始，仅字母/数字/中横线/下划线/斜杠（DDL VARCHAR(100) 对齐 maxlength）
+ */
+const PATH_PATTERN = /^\/[a-zA-Z][\w/-]*$/
+
 const formRef = ref<FormInstance>()
 const loading = ref(false)
 const form = reactive<MenuFormData>({
   type: TYPE_DIR,
   parentId: ROOT_PARENT_ID,
   name: '',
+  path: '',
+  icon: '',
   perms: '',
   sort: 0,
   status: STATUS_NORMAL,
@@ -95,6 +107,23 @@ function validatePerms(_rule: unknown, value: string, callback: (err?: Error) =>
   callback()
 }
 
+/** path 校验随 type 联动（契约 §5.2 前端约定）：仅 C 必填；非空校验格式 */
+function validatePath(_rule: unknown, value: string, callback: (err?: Error) => void): void {
+  if (form.type !== TYPE_MENU) {
+    callback()
+    return
+  }
+  if (!value) {
+    callback(new Error('请输入路由路径'))
+    return
+  }
+  if (!PATH_PATTERN.test(value)) {
+    callback(new Error('以 / 开头，仅字母/数字/中横线/下划线/斜杠'))
+    return
+  }
+  callback()
+}
+
 const rules: FormRules<MenuFormData> = {
   name: [
     // name 后端仅非空白校验（契约 §2.2），长度为前端约定兜底（DDL VARCHAR(30)）
@@ -102,6 +131,7 @@ const rules: FormRules<MenuFormData> = {
     { min: 1, max: 30, message: '菜单名称长度为 1-30 位', trigger: 'blur' },
   ],
   parentId: [{ validator: validateParent, trigger: 'change' }],
+  path: [{ validator: validatePath, trigger: 'blur' }],
   perms: [{ validator: validatePerms, trigger: 'blur' }],
   sort: [{ required: true, message: '请输入排序号', trigger: 'change' }],
   status: [{ required: true, message: '请选择状态', trigger: 'change' }],
@@ -146,9 +176,11 @@ const parentCandidates = computed<MenuTreeNode[]>(() => {
   return []
 })
 
-/** type 切换：上级语义随类型变化（M=根 / C 挂 M / F 挂 C），重置选择并清除残留校验 */
+/** type 切换：上级语义随类型变化（M=根 / C 挂 M / F 挂 C），重置选择与路由字段并清除残留校验 */
 function handleTypeChange(): void {
   form.parentId = form.type === TYPE_DIR ? ROOT_PARENT_ID : ''
+  form.path = ''
+  form.icon = ''
   formRef.value?.clearValidate()
 }
 
@@ -161,7 +193,8 @@ function handleParentSelected(): void {
   formRef.value?.clearValidate(['parentId'])
 }
 
-/** 打开时初始化：编辑回显六字段（type 锁定，parentId 取行值）；新增给默认（M/根目录/空名/0/0） */
+/** 打开时初始化：编辑回显八字段（type 锁定，parentId 取行值；path/icon 回显 ?? '' 防旧后端缺字段）；
+ *  新增给默认（M/根目录/空名/0/0） */
 watch(
   () => props.modelValue,
   (visible) => {
@@ -173,6 +206,8 @@ watch(
       form.type = props.menu.type
       form.parentId = props.menu.parentId
       form.name = props.menu.name
+      form.path = props.menu.path ?? ''
+      form.icon = props.menu.icon ?? ''
       form.perms = props.menu.perms
       form.sort = props.menu.sort
       form.status = props.menu.status
@@ -180,6 +215,8 @@ watch(
       form.type = TYPE_DIR
       form.parentId = ROOT_PARENT_ID
       form.name = ''
+      form.path = ''
+      form.icon = ''
       form.perms = ''
       form.sort = 0
       form.status = STATUS_NORMAL
@@ -194,27 +231,34 @@ async function handleSubmit(): Promise<void> {
   }
   loading.value = true
   try {
-    // perms 语义随类型：目录恒空串提交（契约 §2.2）；上级 M 固定根
+    // perms/path/icon 语义随类型（契约 §5.2 前端约定）：目录 perms 恒空串；
+    // path 仅 C 采编（M/F 空串）；icon 对 M/C 采编（F 空串）；上级 M 固定根
     const parentId = form.type === TYPE_DIR ? ROOT_PARENT_ID : form.parentId
     const perms = form.type === TYPE_DIR ? '' : form.perms.trim()
+    const path = form.type === TYPE_MENU ? form.path.trim() : ''
+    const icon = form.type === TYPE_FUNC ? '' : form.icon.trim()
     if (props.mode === 'add') {
       await createMenu({
         parentId,
         name: form.name.trim(),
         perms,
         type: form.type,
+        path,
+        icon,
         sort: form.sort,
         status: form.status,
       })
       ElMessage.success('新增成功')
     } else if (props.menu) {
-      // 契约 §2.3 部分更新语义（null 不更新）：始终全量提交六写字段 + id 规避歧义
+      // 契约 §2.3 部分更新语义（null 不更新）：始终全量提交八写字段 + id 规避歧义
       await updateMenu({
         id: props.menu.id,
         parentId,
         name: form.name.trim(),
         perms,
         type: form.type,
+        path,
+        icon,
         sort: form.sort,
         status: form.status,
       })
@@ -270,6 +314,26 @@ async function handleSubmit(): Promise<void> {
       </el-form-item>
       <el-form-item label="名称" prop="name">
         <el-input v-model="form.name" placeholder="请输入菜单名称" :disabled="loading" maxlength="30" />
+      </el-form-item>
+      <!-- 路由路径（设计 D11 + 主控裁定 R2）：仅 C 型显示（M 恒空串、F 提交空串——
+           侧边导航/动态路由只认 C 的 path）；必填 + 格式校验见 validatePath -->
+      <el-form-item v-if="form.type === TYPE_MENU" label="路由路径" prop="path">
+        <el-input
+          v-model="form.path"
+          placeholder="必填，如 /system/xxx"
+          :disabled="loading"
+          maxlength="100"
+        />
+      </el-form-item>
+      <!-- 图标名（主控裁定 R2）：M/C 型显示（目录图标种子 10/20 已配，须可维护）、F 隐藏提交空串；
+           自由文本白名单名（ICON_MAP 兜底，icon picker 移交备忘），存在性为前端约定 -->
+      <el-form-item v-if="form.type !== TYPE_FUNC" label="图标" prop="icon">
+        <el-input
+          v-model="form.icon"
+          placeholder="选填，如 User"
+          :disabled="loading"
+          maxlength="50"
+        />
       </el-form-item>
       <el-form-item v-if="form.type !== TYPE_DIR" label="权限标识" prop="perms">
         <el-input

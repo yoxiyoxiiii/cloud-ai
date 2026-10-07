@@ -1,17 +1,27 @@
 /**
- * 路由表（全静态，设计 §7）+ 全局前置守卫
- * 守卫只校验 token 存在性：签名/过期校验是网关职责，
- * 过期 token 会在首个 API 调用时以 401 触发 request.ts 清态跳转，两处路径收敛。
+ * 路由两层结构（动态路由设计 D5/D6）+ 全局前置守卫
+ * - 静态核心层（写死，未登录也存在）：/login（public）+ '/'→Layout（redirect /dashboard，
+ *   dashboard 恒存在恒可见，零菜单用户也有落点——原 /system/user 是动态路由会成重定向环）
+ *   children：/dashboard、/redirect/:path(.*)（刷新中转，既有）、catchAll→NotFound
+ *   （承接 404/无权限直链/未开发 path 三义）、/menu-error（导航加载失败专用页）
+ * - 动态层：登录后守卫调 menuStore.ensureLoaded()，buildRoutes 对 user-nav 的 C 节点
+ *   逐个 addRoute('Layout', ...)（stores/menu.ts 单一来源，系统管理三页自此按 RBAC 注册）
+ * - 守卫流程（D6 防环）：MenuError 恒放行最前（失败跳 /login 会被登录页守卫弹回成环）→
+ *   public → 未登录 → !loaded 则 await ensureLoaded()（失败按 §9 矩阵分流：401 已清态 →
+ *   /login 带 redirect；其余失败落 MenuError；成功 return to.fullPath 重新匹配——
+ *   刷新/直链深路径的关键）；token 签名/过期是网关职责
+ * - 模块环说明：顶部 import stores/menu 与 store 顶部 import router 互为环，双方仅在
+ *   函数体内使用对方（守卫回调运行时调用，设计 D7 论证），ESM live binding 安全
  */
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
 import Layout from '../layouts/Layout.vue'
 import LoginView from '../views/login/index.vue'
 import DashboardView from '../views/dashboard/index.vue'
-import UserManageView from '../views/system/user/index.vue'
-import RoleManageView from '../views/system/role/index.vue'
-import MenuManageView from '../views/system/menu/index.vue'
 import RedirectView from '../views/redirect/index.vue'
+import NotFoundView from '../views/error/NotFound.vue'
+import MenuErrorView from '../views/error/MenuError.vue'
+import { useMenuStore } from '../stores/menu'
 import { getAuth } from '../utils/storage'
 import { APP_TITLE } from '../constants/app'
 
@@ -35,28 +45,13 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/',
+    // name 'Layout' 是动态层挂载点（menuStore.buildRoutes 的 addRoute('Layout', ...)），
+    // 无名父路由 addRoute 会抛错
+    name: 'Layout',
     component: Layout,
-    redirect: '/system/user',
+    redirect: '/dashboard',
     meta: { title: '首页' },
     children: [
-      {
-        path: 'system/user',
-        name: 'SystemUser',
-        component: UserManageView,
-        meta: { title: '用户管理', icon: 'User' },
-      },
-      {
-        path: 'system/role',
-        name: 'SystemRole',
-        component: RoleManageView,
-        meta: { title: '角色管理', icon: 'UserFilled' },
-      },
-      {
-        path: 'system/menu',
-        name: 'SystemMenu',
-        component: MenuManageView,
-        meta: { title: '菜单管理', icon: 'Menu' },
-      },
       {
         path: 'dashboard',
         name: 'Dashboard',
@@ -70,9 +65,23 @@ const routes: RouteRecordRaw[] = [
         name: 'Redirect',
         component: RedirectView,
       },
+      {
+        // catchAll 兜底（设计 D5）：与 addRoute 顺序无竞争——vue-router 按匹配特异性评分，
+        // catchAll 恒最低；未绑/未注册 path 的直链落此页（渲染侧边栏）
+        path: '/:pathMatch(.*)*',
+        name: 'NotFound',
+        component: NotFoundView,
+        meta: { title: '404' },
+      },
+      {
+        // 导航加载失败专用页（设计 D6）：守卫最优先放行，页内重试/重新登录
+        path: '/menu-error',
+        name: 'MenuError',
+        component: MenuErrorView,
+        meta: { title: '加载失败' },
+      },
     ],
   },
-  { path: '/:pathMatch(.*)*', redirect: '/' },
 ]
 
 const router = createRouter({
@@ -80,13 +89,35 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
+  // 错误页恒放行最前（设计 D6 防回弹环）：允许在 MenuError 上反复重试不触发守卫重定向
+  if (to.name === 'MenuError') {
+    return true
+  }
   const logged = !!getAuth()?.accessToken
   if (to.meta.public) {
     return logged ? { path: '/' } : true
   }
   if (!logged) {
     return { path: '/login', query: { redirect: to.fullPath } }
+  }
+  // 已登录但菜单未加载：等 user-nav + 动态路由注册完成再放行（首次认证导航/刷新/直链）
+  const menuStore = useMenuStore()
+  if (!menuStore.loaded) {
+    const ok = await menuStore.ensureLoaded()
+    if (!ok) {
+      // 401 区分（设计 §9 失败矩阵：user-nav 401 走 request.ts 既有清态跳登录）：
+      // 失败时若 token 已被 401 拦截器 clearAuth 清除（先于本守卫返回执行），
+      // 补发 /login 重定向并携带原目标回跳——此刻已未登录，无 D6 成环风险；
+      // 其余失败（网络/5xx/旧后端 404，token 仍在）才落 MenuError 专用页
+      // （不可跳 /login：已登录会被登录页守卫弹回成环，见文件头注释）
+      if (!getAuth()?.accessToken) {
+        return { path: '/login', query: { redirect: to.fullPath } }
+      }
+      return { name: 'MenuError', query: { redirect: to.fullPath } }
+    }
+    // 动态路由已注册：以同路径重新发起导航触发重新匹配
+    return to.fullPath
   }
   return true
 })

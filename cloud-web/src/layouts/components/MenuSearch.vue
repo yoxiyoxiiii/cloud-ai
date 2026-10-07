@@ -3,7 +3,8 @@
  * 菜单搜索（升级设计 D10）
  * - 顶栏 .navbar-search 图标按钮 + 全局快捷键 Ctrl+K / Ctrl+Shift+K（含 meta 判断，preventDefault）；
  *   仅 Ctrl/Meta 组合态拦键——裸 Shift+K 不拦（会污染输入框大写 K，主控裁决澄清）
- * - 数据源 constants/menus 的 MENU_ITEMS（单一来源，与 Sidebar 共用）
+ * - 数据源 menuStore.menuItems（动态路由单一来源：user-nav 树扁平化 C 项 + 工作台尾挂，
+ *   与 Sidebar 动态树同源——原 constants/menus.ts 已删除）
  * - el-dialog 外层 v-if 包裹：默认零 DOM（e2e 契约：初始 .menu-search-dialog count === 0）
  * - 交互：输入即过滤（title 不区分大小写 includes，空关键词全量）；↑↓ 环回移动高亮、
  *   Enter/点击行跳转并关闭、Esc 走 el-dialog 默认关闭；无结果 el-empty；@opened 聚焦输入框
@@ -12,9 +13,11 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Search } from '@element-plus/icons-vue'
 import type { InputInstance } from 'element-plus'
-import { MENU_ITEMS, type MenuItem } from '../../constants/menus'
+import { useMenuStore } from '../../stores/menu'
+import type { MenuItem } from '../../stores/menu'
 
 const router = useRouter()
+const menuStore = useMenuStore()
 
 const visible = ref(false)
 const keyword = ref('')
@@ -23,11 +26,12 @@ const inputRef = ref<InputInstance>()
 
 /** 过滤：空关键词全量；title 不区分大小写 includes（不做拼音/模糊匹配，无新依赖红线） */
 const filtered = computed<MenuItem[]>(() => {
+  const items = menuStore.menuItems
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) {
-    return MENU_ITEMS
+    return items
   }
-  return MENU_ITEMS.filter((m) => m.title.toLowerCase().includes(kw))
+  return items.filter((m) => m.title.toLowerCase().includes(kw))
 })
 
 function open(): void {

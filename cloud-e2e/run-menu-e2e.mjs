@@ -8,6 +8,8 @@
  * - 结束按 F → C → M 自底向上删净并断言树中无 E2E 残留——
  *   role e2e R5a 断言 admin 绑定全部菜单全选（active == total），任何残留 E2E 行都会让下一轮回归必红
  * - 不断言"权限改完立即可用"（权限快照时效，契约 §1：变更需重登/refresh 生效）
+ * - 动态路由适配（2026-10-07 计划 E1）：M3/M4 C 型表单补填新必填"路由路径"（契约 §5.2 v2），
+ *   M4 请求体键断言随 v2 更新为八字段+id；其余场景零改动
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -27,6 +29,8 @@ const stamp = `${pad(ts.getMonth() + 1)}${pad(ts.getDate())}${pad(ts.getHours())
 const TEST_DIR = `E2E目录${stamp}`
 const TEST_PAGE = `E2E页面${stamp}`
 const TEST_PAGE_V2 = `E2E页面v2${stamp}`
+/** C 型新必填路由路径（契约 §5.2 v2 / 设计 D11）：/e2e/page + 时间戳风格（计划 E1） */
+const TEST_PAGE_PATH = `/e2e/page${stamp}`
 const TEST_FUNC = `E2E按钮${stamp}`
 const TEST_PERMS = `system:e2e:test${stamp}`
 
@@ -258,6 +262,8 @@ try {
     let errs = await formErrors(dlg)
     log(`  C 未选上级提交错误: ${JSON.stringify(errs)}`)
     assert(errs.includes('请选择上级'), `C 未选上级应报"请选择上级"，实际 ${JSON.stringify(errs)}`)
+    // v2 新必填（契约 §5.2 前端约定）：C 型路由路径未填同批报错（M1 断言域外的新校验验证）
+    assert(errs.includes('请输入路由路径'), `C 未填路由路径应报"请输入路由路径"，实际 ${JSON.stringify(errs)}`)
     assertEq(menuPostCount(), before, '未选上级提交不应发出请求')
     // ---- 3b. 上级候选 = 仅 M 节点 ----
     const dd = await openParentDropdown(dlg)
@@ -268,14 +274,21 @@ try {
     await shot(page, 'm3-c-candidates.png')
     await dd.locator('.el-select-dropdown__item', { hasText: TEST_DIR }).first().click()
     await sleep(300)
+    // C 型新必填路由路径（计划 E1 补填）：placeholder 定位，/e2e/page+时间戳风格
+    await dlg.locator('input[placeholder="必填，如 /system/xxx"]').fill(TEST_PAGE_PATH)
     // perms 选填留空提交
     const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/menu') && r.request().method() === 'POST', { timeout: 15000 })
     await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
     const resp = await respP
     const body = await resp.json()
+    const reqBody = resp.request().postDataJSON()
     log(`  新增菜单接口: HTTP ${resp.status()} code=${body.code} data=${body.data}`)
+    log(`  提交体: ${JSON.stringify(reqBody)}`)
     assertEq(resp.status(), 200, '契约：HTTP 恒 200')
     assertEq(body.code, 200, '新增业务码应为 200')
+    // 契约 §5.2 v2：path 随新增提交；icon 未填提交空串
+    assertEq(reqBody.path, TEST_PAGE_PATH, 'C 态提交 path 应为测试路由路径')
+    assertEq(reqBody.icon, '', 'C 态 icon 未填应提交空串')
     await waitToast(page, '新增成功')
     await waitDialogGone(page, '新增菜单')
     const cRow = await findMenuRow(TEST_PAGE)
@@ -359,8 +372,9 @@ try {
     const wrapperText = (await dlg.locator('.el-select__wrapper').innerText()).trim()
     log(`  上级回显: "${wrapperText}"`)
     assert(wrapperText.includes(TEST_DIR), `上级选择器应回显当前父 ${TEST_DIR}，实际 "${wrapperText}"`)
-    // 名称/perms 回显
+    // 名称/perms/path 回显（path 为契约 §5.1 v2 additive 字段，M3 提交值应回显）
     assertEq(await dlg.locator('input[placeholder="请输入菜单名称"]').inputValue(), TEST_PAGE, '名称应回显原值')
+    assertEq(await dlg.locator('input[placeholder="必填，如 /system/xxx"]').inputValue(), TEST_PAGE_PATH, '路由路径应回显 M3 提交值')
     await shot(page, 'm4-edit-echo.png')
     // 改名 + 停用
     await dlg.locator('input[placeholder="请输入菜单名称"]').fill(TEST_PAGE_V2)
@@ -373,11 +387,13 @@ try {
     log(`  编辑接口: HTTP ${resp.status()} code=${body.code}`)
     assertEq(resp.status(), 200, '契约：HTTP 恒 200')
     assertEq(body.code, 200, '编辑业务码应为 200')
-    // 全量提交六写字段 + id（契约 §2.3 部分更新语义规避）
+    // 全量提交八字段 + id（契约 §2.3 部分更新语义规避；§5.2 v2 追加 path/icon）
     const keys = Object.keys(reqBody).sort()
-    assertEq(keys.join(','), 'id,name,parentId,perms,sort,status,type', `编辑应全量提交六写字段+id，实际 ${JSON.stringify(keys)}`)
+    assertEq(keys.join(','), 'icon,id,name,parentId,path,perms,sort,status,type', `编辑应全量提交八字段+id，实际 ${JSON.stringify(keys)}`)
     assertEq(reqBody.name, TEST_PAGE_V2, '编辑提交 name 应为新名')
     assertEq(reqBody.status, 1, '编辑提交 status 应为 1（停用）')
+    assertEq(reqBody.path, TEST_PAGE_PATH, '编辑提交 path 应保持回显值（未改）')
+    assertEq(reqBody.icon, '', '编辑提交 icon 应为空串')
     await waitToast(page, '保存成功')
     await waitDialogGone(page, '编辑菜单')
     const rowV2 = await findMenuRow(TEST_PAGE_V2)

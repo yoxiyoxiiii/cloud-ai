@@ -82,5 +82,26 @@ export interface MenuTreeNode {
   updateBy: string | null
   /** 更新时间（契约 v2 §3 新增）：未更新过为 null */
   updateTime: string | null
+  /** 路由路径（契约 v2 增补 §5.1）：C 为 / 开头或空串；M/F 通常空串（前端约定不采编） */
+  path: string
+  /** 图标名（契约 v2 增补 §5.1）：@element-plus/icons-vue 组件名，空串 = 默认图标 */
+  icon: string
   children: MenuTreeNode[]
+}
+
+/**
+ * 当前用户导航树节点（契约 2026-10-07-menu-nav-api §2/§7）：user-nav 端点出参
+ * - type 只含 'M' 目录 / 'C' 菜单（F 按钮与空 path 的 C 在 SQL 层已排除）
+ * - M 的 path 恒空串；进入本树的 C 恒有 / 开头的 path（空串 = 绑而不可导航，不进树）
+ * - 孤儿 C 提升根级后 parentId 保留原值；叶子 children 恒为空数组 []（非 null）
+ */
+export interface UserNavNode {
+  id: string
+  parentId: string
+  name: string
+  type: 'M' | 'C'
+  path: string
+  icon: string
+  sort: number
+  children: UserNavNode[]
 }

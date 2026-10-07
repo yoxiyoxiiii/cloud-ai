@@ -27,6 +27,12 @@ public class SysMenu extends BaseEntity {
     /** M目录 C菜单 F按钮 */
     private String type;
 
+    /** 前端路由路径，C 型有效（以/开头），空串=不进导航 */
+    private String path;
+
+    /** 图标名（@element-plus/icons-vue 组件名），空串=默认图标 */
+    private String icon;
+
     private Integer sort;
 
     /** 0正常 1停用 */

@@ -94,6 +94,9 @@ try {
     await page.locator('.sidebar-brand').waitFor({ state: 'visible', timeout: 10000 })
     const brand = (await page.locator('.sidebar-brand').innerText()).trim()
     assert(brand.includes(APP_TITLE), `.sidebar-brand 应含 "${APP_TITLE}"，实际 "${brand}"`)
+    // 动态路由 D5 后登录落点为 /dashboard（原 '/'→/system/user 重定向已撤），显式进入用户页断言标题联动
+    await page.goto(`${BASE}/system/user`, { waitUntil: 'domcontentloaded' })
+    await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })
     await waitTableIdle(page)
     await assertEq(await page.title(), `用户管理 - ${APP_TITLE}`, '/system/user 文档标题')
   })
@@ -300,9 +303,10 @@ try {
     await logoutViaUi(page)
     const r = await login(page, 'admin', 'admin123')
     assert(r.ok, `重新登录应成功，实际 ${JSON.stringify(r)}`)
-    await waitTableIdle(page)
+    await sleep(600) // 等落点页（/dashboard）标题落定
     await assertEq(await tagCount(), 1, '重登后应仅 1 签（上一会话页签已清，D4）')
-    assert((await activeTagText()).includes('用户管理'), `落点签应为用户管理（/ → redirect），实际 "${await activeTagText()}"`)
+    // 动态路由 D5：'/' redirect 已改 /dashboard，重登落点签为 工作台（原断言用户管理随 D5 更新）
+    assert((await activeTagText()).includes('工作台'), `落点签应为工作台（/ → /dashboard，D5），实际 "${await activeTagText()}"`)
   })
 
   // ================= T-VERIFY 证据核验 =================

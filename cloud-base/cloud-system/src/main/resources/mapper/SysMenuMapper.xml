@@ -4,7 +4,7 @@
 
     <!-- 逻辑删除/审计显式维护，语义说明见 SysUserMapper.xml -->
     <sql id="allColumns">
-        id, parent_id, name, perms, type, sort, status,
+        id, parent_id, name, perms, type, path, icon, sort, status,
         create_by, create_time, update_by, update_time, deleted
     </sql>
 
@@ -27,6 +27,22 @@
          WHERE parent_id = #{parentId} AND deleted = 0
     </select>
 
+    <!-- 当前用户导航聚合（契约 2026-10-07-menu-nav-api.md §2，范式同 listPermsByAccount）：
+         user → user_role → 启用未删角色 → role_menu → 启用未删菜单，DISTINCT 多角色共享菜单去重；
+         排除规则 1：F 型按钮不进导航（只留目录 M 或带 path 的 C）；
+         排除规则 2：空 path 的 C"绑而不可导航"（如种子 21 在线用户，页面未开发） -->
+    <select id="listNavByAccount" resultType="com.cloudai.system.entity.SysMenu">
+        SELECT DISTINCT m.id, m.parent_id, m.name, m.type, m.path, m.icon, m.sort
+          FROM sys_user u
+          JOIN sys_user_role ur ON ur.user_id = u.id
+          JOIN sys_role r ON r.id = ur.role_id AND r.status = 0 AND r.deleted = 0
+          JOIN sys_role_menu rm ON rm.role_id = r.id
+          JOIN sys_menu m ON m.id = rm.menu_id AND m.status = 0 AND m.deleted = 0
+                           AND (m.type = 'M' OR m.path != '')
+         WHERE u.account = #{account} AND u.deleted = 0
+         ORDER BY m.sort, m.id
+    </select>
+
     <!-- 动态列等价原 insert 的 NOT_NULL 字段策略：业务列 null 时省略、交由列默认值 -->
     <insert id="save" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_menu
@@ -42,6 +58,12 @@
             </if>
             <if test="type != null">
                 type,
+            </if>
+            <if test="path != null">
+                path,
+            </if>
+            <if test="icon != null">
+                icon,
             </if>
             <if test="sort != null">
                 sort,
@@ -63,6 +85,12 @@
             </if>
             <if test="type != null">
                 #{type},
+            </if>
+            <if test="path != null">
+                #{path},
+            </if>
+            <if test="icon != null">
+                #{icon},
             </if>
             <if test="sort != null">
                 #{sort},
@@ -89,6 +117,12 @@
             </if>
             <if test="type != null">
                 type = #{type},
+            </if>
+            <if test="path != null">
+                path = #{path},
+            </if>
+            <if test="icon != null">
+                icon = #{icon},
             </if>
             <if test="sort != null">
                 sort = #{sort},

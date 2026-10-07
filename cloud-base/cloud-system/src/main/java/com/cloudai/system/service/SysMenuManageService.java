@@ -5,6 +5,8 @@ import com.cloudai.common.security.util.SecurityUtils;
 import com.cloudai.system.entity.SysMenu;
 import com.cloudai.system.mapper.SysMenuMapper;
 import com.cloudai.system.mapper.SysRoleMenuMapper;
+import com.cloudai.system.util.NavTreeBuilder;
+import com.cloudai.system.vo.UserNavVo;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,6 +23,16 @@ public class SysMenuManageService {
 
     public List<SysMenu> listAll() {
         return menuMapper.listAll();
+    }
+
+    /** 当前用户导航树（实时查库按角色聚合，非登录快照）；account 空/空白是防御路径（网关注入缺失时不至于 NPE），返回空列表 */
+    public List<UserNavVo> listUserNav() {
+        String account = SecurityUtils.currentAccount();
+        if (account == null || account.isBlank()) {
+            return List.of();
+        }
+        List<SysMenu> menus = menuMapper.listNavByAccount(account);
+        return NavTreeBuilder.build(menus);
     }
 
     public Long save(SysMenu menu) {
