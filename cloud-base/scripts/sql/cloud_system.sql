@@ -9,6 +9,8 @@ DROP TABLE IF EXISTS sys_role_menu;
 DROP TABLE IF EXISTS sys_user;
 DROP TABLE IF EXISTS sys_role;
 DROP TABLE IF EXISTS sys_menu;
+DROP TABLE IF EXISTS sys_dict_data;
+DROP TABLE IF EXISTS sys_dict_type;
 
 -- 用户
 CREATE TABLE sys_user (
@@ -61,6 +63,38 @@ CREATE TABLE sys_menu (
     KEY idx_parent_id (parent_id)
 ) ENGINE = InnoDB COMMENT = '菜单权限表';
 
+-- 字典类型/字典项（数据字典管理，2026-10-07；与增量脚本 2026-10-07-dict-mgmt.sql 同步落同一份定义）
+CREATE TABLE sys_dict_type (
+    id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '字典类型ID',
+    dict_name   VARCHAR(30) NOT NULL COMMENT '字典名称，如：用户状态',
+    dict_key    VARCHAR(50) NOT NULL COMMENT '字典键，全库唯一，如：user_status',
+    status      TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
+    create_by   VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
+    create_time DATETIME     DEFAULT NULL COMMENT '创建时间',
+    update_by   VARCHAR(30)  DEFAULT NULL COMMENT '更新人',
+    update_time DATETIME     DEFAULT NULL COMMENT '更新时间',
+    deleted     TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_dict_key (dict_key)
+) ENGINE = InnoDB COMMENT = '字典类型表';
+
+-- (dict_type_id, value) 类型内唯一；最左前缀兼作项列表索引，不另建 idx；value 非保留关键字可裸用
+CREATE TABLE sys_dict_data (
+    id           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '字典项ID',
+    dict_type_id BIGINT      NOT NULL COMMENT '所属字典类型ID（sys_dict_type.id，引用完整性由服务层维护，无外键）',
+    label        VARCHAR(50) NOT NULL COMMENT '展示标签，如：启用',
+    value        VARCHAR(50) NOT NULL COMMENT '存库值，同类型内唯一，如：0',
+    sort         INT         NOT NULL DEFAULT 0 COMMENT '排序（同类型内升序）',
+    status       TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
+    create_by    VARCHAR(30)  DEFAULT NULL COMMENT '创建人',
+    create_time  DATETIME     DEFAULT NULL COMMENT '创建时间',
+    update_by    VARCHAR(30)  DEFAULT NULL COMMENT '更新人',
+    update_time  DATETIME     DEFAULT NULL COMMENT '更新时间',
+    deleted      TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_type_value (dict_type_id, value)
+) ENGINE = InnoDB COMMENT = '字典项表';
+
 CREATE TABLE sys_user_role (
     id          BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     user_id     BIGINT   NOT NULL COMMENT '用户ID',
@@ -104,7 +138,13 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, create
 (133, 13, '菜单删除', 'system:menu:remove', 'F', '',             '',           3, NOW()),
 (20, 0, '认证管理',   '',                   'M', '',             'Lock',       2, NOW()),
 (21, 20, '在线用户',  'sso:online:list',    'C', '',             '',           1, NOW()),
-(211, 21, '强制下线', 'sso:online:kick',    'F', '',             '',           1, NOW());
+(211, 21, '强制下线', 'sso:online:kick',    'F', '',             '',           1, NOW()),
+-- 字典管理菜单（种子分段 14x；与增量脚本 2026-10-07-dict-mgmt.sql 语义等价，
+-- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定）
+(14, 10, '字典管理',  'system:dict:list',   'C', '/system/dict', 'Files',      4, NOW()),
+(141, 14, '字典新增', 'system:dict:add',    'F', '',             '',           1, NOW()),
+(142, 14, '字典修改', 'system:dict:edit',   'F', '',             '',           2, NOW()),
+(143, 14, '字典删除', 'system:dict:remove', 'F', '',             '',           3, NOW());
 
 -- admin 账号（密码 admin123）
 INSERT INTO sys_user (id, account, nickname, password, create_time) VALUES

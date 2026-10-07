@@ -1,0 +1,557 @@
+/**
+ * 数据字典管理 e2e（契约 2026-10-07-dict-api；D0-D4 + CLEANUP + D-VERIFY；harness 复用 lib/harness.mjs）
+ *
+ * 运行前提：后端 gateway 18080 / sso 9201 / system 9202（含 /system/dict/** 端点版本）已启动；前端 dev 5173 已启动
+ * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 npm run e2e:dict）
+ * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码
+ * 测试数据（删净纪律最高优先）：
+ * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；字典域无种子数据（契约 §6：无种子保护），仍不碰库内非本脚本数据
+ * - 结束清扫全部 e2e 前缀类型（先删项后删类型，D5 禁删约束）并断言左表无 e2e 残留
+ * 核心断言（契约 §2 §3 §5）：
+ * - D0 侧边 字典管理 位于 菜单管理 之后 + 面包屑 首页/字典管理 + admin 重登快照含 dict 权限（新增类型按钮可见）
+ * - D1 主从空态：左表 4 列/共 0 条；右表 9 列标题"字典项"/el-empty"请在左侧选择字典类型"/新增字典项 disabled
+ * - D2 类型闭环：空提交 0 请求 → 新增（提交恰三字段）→ 行选中高亮 + 右标题 `字典项：{名}（{键}）`
+ *   → 编辑改名+停用（全量三字段+id、tag danger、选中保持右标题跟随）→ 同 dictKey 重提 3009 toast 弹窗保持
+ * - D3 项闭环：空提交 0 请求 → 新增（提交恰五字段、typeId 对齐选中类型）→ 同 value 重提 3012 toast 弹窗保持
+ *   → 编辑改 label/sort（全量五字段+id、行内更新、审计更新人 admin）
+ * - D4 删除约束：有项删类型 3011 toast 行保留 → 删净项 → 删类型（确认框含类型名）→ 左行消失右栏回空态
+ */
+import { chromium } from 'playwright'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { createHarness } from './lib/harness.mjs'
+
+const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173'
+const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), 'artifacts')
+
+const h = createHarness({ base: BASE, artDir: ART })
+const { log, sleep, step, assert, assertEq, shot, waitToast, waitDialogGone, waitTableIdle, breadcrumbTexts, login, rowCells } = h
+
+// ---------- 测试数据（e2e 前缀+时间戳；字典域无种子，仅作用于本脚本数据） ----------
+const ts = new Date()
+const pad = (n) => String(n).padStart(2, '0')
+const stamp = `${pad(ts.getMonth() + 1)}${pad(ts.getDate())}${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`
+const TEST_KEY = `e2edict${stamp}` // 类型 dictKey（唯一锚点）
+const TEST_NAME = `E2E字典${stamp}`
+const TEST_NAME_V2 = `E2E字典v2${stamp}` // 编辑改名后
+const TEST_NAME_DUP = `E2E字典重复${stamp}` // 3009 探针（正常路径不落库）
+const ITEM_VALUE = `e2e_on_${stamp}`
+const ITEM_LABEL = `E2E启用${stamp}`
+const ITEM_LABEL_V2 = `E2E启用v2${stamp}` // 编辑改 label 后
+const ITEM_LABEL_B = `E2E重复${stamp}` // 3012 探针（正常路径不落库）
+
+const DICT_PATH = '/system/dict'
+
+// ---------- 主流程（默认有头 + slowMo 300，与其余五脚本一致） ----------
+const HEADLESS = process.env.E2E_HEADLESS === '1' || process.argv.includes('--headless')
+log(`浏览器模式: ${HEADLESS ? 'headless' : 'headed + slowMo(300ms)'}`)
+const browser = await chromium.launch({ channel: 'chrome', headless: HEADLESS, slowMo: HEADLESS ? 0 : 300 })
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } })
+const page = await ctx.newPage()
+h.state.ctx = ctx
+h.state.page = page
+h.attachListeners(page)
+
+/** 非 /api/ 资产的 404 清单（favicon 环境噪音甄别用，M-VERIFY 同款） */
+const asset404 = []
+page.on('response', (r) => {
+  if (r.status() === 404 && !r.url().includes('/api/')) asset404.push(r.url().replace(BASE, ''))
+})
+
+/** waitForResponse 的 URL 匹配：r.url() 是含 origin 的完整地址，须比 pathname */
+const apiPath = (url, pathname) => new URL(url).pathname === pathname
+
+/** 类型 POST 计数（D2 空提交 0 请求断言用） */
+const typePostCount = () => h.state.apiCalls.filter((c) => c.url === '/api/system/dict/type' && c.method === 'POST').length
+/** 项 POST 计数（D3 空提交 0 请求断言用） */
+const dataPostCount = () => h.state.apiCalls.filter((c) => c.url === '/api/system/dict/data' && c.method === 'POST').length
+
+// ---------- 面板 scoped 助手（一页双表，harness 通用找行不能直接用） ----------
+
+/** 打开字典页并等左表首屏落定（返回类型分页响应 promise 的等待句柄由调用方自行 waitForResponse） */
+async function loadDictPage() {
+  const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/type/page'), { timeout: 15000 })
+  await page.goto(`${BASE}${DICT_PATH}`, { waitUntil: 'domcontentloaded' })
+  await respP
+  await waitTableIdle(page)
+  await sleep(300)
+}
+
+/** 左表（类型）按 dictKey 列精确找行：跨页全量检索（新增 id 倒序置顶，残留可能在任意页） */
+async function findTypeRowByKey(dictKey, { reload = true } = {}) {
+  if (reload) await loadDictPage()
+  for (let guard = 0; guard < 30; guard++) {
+    const rows = page.locator('.type-pane .el-table__row')
+    const n = await rows.count()
+    for (let i = 0; i < n; i++) {
+      const cells = await rowCells(rows.nth(i))
+      if (cells[1] === dictKey) return rows.nth(i)
+    }
+    const next = page.locator('.type-pane .el-pagination .btn-next')
+    if ((await next.count()) === 0 || !(await next.isEnabled())) return null
+    await next.click()
+    await waitTableIdle(page)
+    await sleep(300)
+  }
+  return null
+}
+
+/** 点击左表行选中并等右栏首屏数据加载完成（current-change → data/page 第 1 页） */
+async function selectTypeRow(row) {
+  const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/data/page'), { timeout: 15000 })
+  await row.click()
+  await respP
+  await waitTableIdle(page)
+  await sleep(300)
+}
+
+/** 右栏标题文案（无选中 = "字典项"；有选中 = "字典项：{名}（{键}）"）。
+ *  必须 > span 直接子级：el-button 内部也包一层 span（"新增字典项"文字），裸后代选择器会 strict violation */
+async function dataPaneTitle() {
+  return (await page.locator('.data-pane .pane-header > span').innerText()).trim()
+}
+
+/** 弹窗内收集全部校验错误文本 */
+async function formErrors(dlg) {
+  const errs = dlg.locator('.el-form-item__error')
+  const texts = []
+  const n = await errs.count()
+  for (let i = 0; i < n; i++) texts.push((await errs.nth(i).innerText()).trim())
+  return texts
+}
+
+/** 删除确认框：断言文案含 expected 后点确定（返回完整文案供日志） */
+async function confirmDelete(expected) {
+  const box = page.locator('.el-message-box')
+  await box.waitFor({ state: 'visible', timeout: 8000 })
+  const boxText = (await box.innerText()).trim().replace(/\n/g, ' | ')
+  assert(boxText.includes(expected), `确认框文案应含 "${expected}"，实际 "${boxText}"`)
+  await box.locator('.el-message-box__btns .el-button--primary').click()
+  return boxText
+}
+
+/** 删净右栏当前选中类型的全部字典项（逐行首项删，含确认框文案断言；页大小 10 场景足够） */
+async function deleteAllDataItems() {
+  for (let guard = 0; guard < 100; guard++) {
+    const rows = page.locator('.data-pane .el-table__row')
+    if ((await rows.count()) === 0) {
+      const total = (await page.locator('.data-pane .el-pagination__total').innerText()).trim()
+      if (total.includes('共 0 条')) return
+      // 行未渲染完（翻页边界）：稍候重试
+      await sleep(400)
+      if ((await rows.count()) === 0) return
+    }
+    const cells = await rowCells(rows.first())
+    await rows.first().getByRole('button', { name: '删除' }).click()
+    await confirmDelete(`确定删除字典项 "${cells[0]}"`)
+    await waitToast(page, '删除成功')
+    await waitTableIdle(page)
+    await sleep(300)
+  }
+  throw new Error('删净字典项超过护栏轮数（100）')
+}
+
+try {
+  // ================= D0 前置：无 token 直访被拦 → admin 登录回跳 + 侧边序 + 面包屑 =================
+  await step('D0', '无 token 直访 /system/dict → 拦截跳登录（带 redirect）→ admin 登录回跳 + 侧边 字典管理 在 菜单管理 后', async () => {
+    await page.goto(`${BASE}${DICT_PATH}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    await page.waitForURL('**/login**', { timeout: 10000 })
+    const url = new URL(page.url())
+    assertEq(url.searchParams.get('redirect'), DICT_PATH, 'redirect 参数应为 /system/dict')
+    // admin 重登 = 全新权限快照（含 system:dict:*，按钮级权限可见性即快照证据）
+    const r = await login(page, 'admin', 'admin123')
+    assert(r.ok, `admin 登录应成功: ${r.msg || ''}`)
+    await page.waitForURL(`**${DICT_PATH}`, { timeout: 15000 })
+    await waitTableIdle(page)
+    log(`  登录回跳: ${page.url()}`)
+    // 侧边菜单顺序（动态路由种子 14 字典管理插在 菜单管理 后）
+    const items = page.locator('.el-menu .el-menu-item')
+    const n = await items.count()
+    const labels = []
+    for (let i = 0; i < n; i++) labels.push((await items.nth(i).innerText()).trim())
+    log(`  菜单项: ${JSON.stringify(labels)}`)
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→工作台')
+    const active = (await page.locator('.el-menu-item.is-active').innerText()).trim()
+    assertEq(active, '字典管理', '/system/dict 下字典管理应高亮')
+    const bc = await breadcrumbTexts(page)
+    log(`  面包屑: ${JSON.stringify(bc)}`)
+    assertEq(bc.join('/'), '首页/字典管理', '面包屑应为 首页/字典管理')
+    // 新权限已进登录快照（v-perms 未摘除按钮）
+    assertEq(await page.locator('.type-pane .pane-header button', { hasText: '新增类型' }).count(), 1, '左栏"新增类型"按钮应可见（admin 快照含 system:dict:add）')
+    await shot(page, 'd0-enter.png')
+  })
+
+  // ================= D1 主从空态：左 4 列/共 0 条；右 9 列/空态三件套 =================
+  await step('D1', '主从空态：左表 4 列 + 共 0 条；右表 9 列 + 标题"字典项" + el-empty"请在左侧选择字典类型" + 新增字典项 disabled', async () => {
+    // 左表 4 列精确序
+    const ths = page.locator('.type-pane .el-table__header-wrapper th')
+    const tn = await ths.count()
+    const headers = []
+    for (let i = 0; i < tn; i++) headers.push(((await ths.nth(i).innerText()) || '').trim())
+    log(`  左表头(${tn}): ${JSON.stringify(headers)}`)
+    assertEq(headers.join(','), '字典名称,字典键,状态,操作', `左表头应为 4 列精确序，实际 ${JSON.stringify(headers)}`)
+    // 左表空 + 分页 total（字典域无种子数据）
+    const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
+    log(`  左表分页: ${leftTotal}`)
+    assertEq(leftTotal, '共 0 条', `左表分页应为 共 0 条，实际 "${leftTotal}"`)
+    // 右表 9 列精确序
+    const dhs = page.locator('.data-pane .el-table__header-wrapper th')
+    const dn = await dhs.count()
+    const dHeaders = []
+    for (let i = 0; i < dn; i++) dHeaders.push(((await dhs.nth(i).innerText()) || '').trim())
+    log(`  右表头(${dn}): ${JSON.stringify(dHeaders)}`)
+    assertEq(
+      dHeaders.join(','),
+      '标签,值,排序,状态,创建人,创建时间,更新人,更新时间,操作',
+      `右表头应为 9 列精确序，实际 ${JSON.stringify(dHeaders)}`,
+    )
+    // 右栏空态三件套：纯标题 / el-empty 文案 / 新增字典项 disabled
+    assertEq(await dataPaneTitle(), '字典项', '未选中类型时右栏标题应为纯 "字典项"')
+    const emptyDesc = (await page.locator('.data-pane .el-empty__description').innerText()).trim()
+    assertEq(emptyDesc, '请在左侧选择字典类型', `右栏空态文案应为 请在左侧选择字典类型，实际 "${emptyDesc}"`)
+    const addDataBtn = page.locator('.data-pane .pane-header button', { hasText: '新增字典项' })
+    assert(await addDataBtn.isDisabled(), '未选中类型时"新增字典项"应 disabled')
+    await shot(page, 'd1-empty-state.png')
+  })
+
+  // ================= D2 类型闭环：空提交 → 新增选中联动 → 编辑 → 3009 =================
+  await step('D2', '类型闭环：空提交必填错误（0 请求）→ 新增（三字段）→ 行选中高亮+右标题联动 → 编辑改名停用 → 同键 3009 弹窗保持', async () => {
+    log(`  测试类型: ${TEST_NAME}（dictKey ${TEST_KEY}）`)
+    // ---- 2a. 空提交：必填错误 + 0 请求 ----
+    await page.locator('.type-pane .pane-header button', { hasText: '新增类型' }).click()
+    const dlg = page.locator('.el-dialog', { hasText: '新增字典类型' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    await shot(page, 'd2-type-dialog.png')
+    const before = typePostCount()
+    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    await sleep(500)
+    const errs = await formErrors(dlg)
+    log(`  空提交错误: ${JSON.stringify(errs)}`)
+    assert(errs.includes('请输入字典名称'), `空提交应报"请输入字典名称"，实际 ${JSON.stringify(errs)}`)
+    assert(errs.includes('请输入字典键'), `空提交应报"请输入字典键"，实际 ${JSON.stringify(errs)}`)
+    assertEq(typePostCount(), before, '空提交不应发出新增类型请求')
+    // ---- 2b. 填表提交：恰三字段 + id 倒序置顶 + 点击选中联动 ----
+    await dlg.locator('input[placeholder="请输入字典名称，如：用户状态"]').fill(TEST_NAME)
+    await dlg.locator('input[placeholder="字母开头，如：user_status"]').fill(TEST_KEY)
+    const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/type') && r.request().method() === 'POST', { timeout: 15000 })
+    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const resp = await respP
+    const body = await resp.json()
+    const reqBody = resp.request().postDataJSON()
+    log(`  新增类型接口: HTTP ${resp.status()} code=${body.code} data=${body.data}`)
+    log(`  提交体: ${JSON.stringify(reqBody)}`)
+    assertEq(resp.status(), 200, '契约：HTTP 恒 200')
+    assertEq(body.code, 200, '新增业务码应为 200')
+    assert(typeof body.data === 'string' && body.data.length > 0, '新增响应应返回新类型 id（字符串，Long→String）')
+    const typeId = body.data
+    assertEq(Object.keys(reqBody).sort().join(','), 'dictKey,dictName,status', `新增应恰提交三字段，实际 ${JSON.stringify(reqBody)}`)
+    assertEq(reqBody.status, 0, '新增默认状态应为 0（正常）')
+    await waitToast(page, '新增成功')
+    await waitDialogGone(page, '新增字典类型')
+    // 新行 id 倒序在第 1 页置顶：等重渲染后的 DOM 出现新行（勿 goto——会丢页面内存态）
+    await page.locator('.type-pane .el-table__row', { hasText: TEST_KEY }).first().waitFor({ state: 'visible', timeout: 10000 })
+    await waitTableIdle(page)
+    const row = await findTypeRowByKey(TEST_KEY, { reload: false })
+    assert(row, `左表应出现新类型行 ${TEST_KEY}`)
+    const cells = await rowCells(row)
+    log(`  新类型行: ${JSON.stringify(cells)}`)
+    assertEq(cells[0], TEST_NAME, '新行字典名称应为提交值')
+    assertEq(cells[2], '正常', '新行状态应为 正常')
+    // 点击选中：current-row 高亮 + 右标题 `字典项：{名}（{键}）` + 空项表
+    await selectTypeRow(row)
+    const rowClass = (await row.getAttribute('class')) || ''
+    assert(rowClass.includes('current-row'), `选中行应带 current-row 高亮，实际 "${rowClass}"`)
+    assertEq(await dataPaneTitle(), `字典项：${TEST_NAME}（${TEST_KEY}）`, '右栏标题应为 字典项：{名}（{键}）')
+    const emptyDesc = (await page.locator('.data-pane .el-empty__description').innerText()).trim()
+    assertEq(emptyDesc, '暂无字典项', `新类型无项时右栏应为 暂无字典项，实际 "${emptyDesc}"`)
+    const addDataBtn = page.locator('.data-pane .pane-header button', { hasText: '新增字典项' })
+    assert(!(await addDataBtn.isDisabled()), '选中类型后"新增字典项"应可用')
+    await shot(page, 'd2-type-selected.png')
+    // ---- 2c. 编辑：回显 → 改名 + 停用 → 全量三字段+id → 行/右标题跟随且选中保持 ----
+    await row.getByRole('button', { name: '编辑' }).click()
+    const editDlg = page.locator('.el-dialog', { hasText: '编辑字典类型' }).last()
+    await editDlg.waitFor({ state: 'visible', timeout: 8000 })
+    assertEq(await editDlg.locator('input[placeholder="请输入字典名称，如：用户状态"]').inputValue(), TEST_NAME, '编辑应回显原字典名称')
+    assertEq(await editDlg.locator('input[placeholder="字母开头，如：user_status"]').inputValue(), TEST_KEY, '编辑应回显原字典键（dictKey 可改非锁定）')
+    await editDlg.locator('input[placeholder="请输入字典名称，如：用户状态"]').fill(TEST_NAME_V2)
+    await editDlg.locator('.el-radio', { hasText: '停用' }).click()
+    const putP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/type') && r.request().method() === 'PUT', { timeout: 15000 })
+    await editDlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const put = await putP
+    const putBody = await put.json()
+    const putReq = put.request().postDataJSON()
+    log(`  编辑类型接口: HTTP ${put.status()} code=${putBody.code}`)
+    log(`  编辑提交体: ${JSON.stringify(putReq)}`)
+    assertEq(put.status(), 200, '契约：HTTP 恒 200')
+    assertEq(putBody.code, 200, '编辑业务码应为 200')
+    assertEq(Object.keys(putReq).sort().join(','), 'dictKey,dictName,id,status', `编辑应全量提交三字段+id，实际 ${JSON.stringify(putReq)}`)
+    assertEq(putReq.dictName, TEST_NAME_V2, '编辑提交 dictName 应为新名')
+    assertEq(putReq.status, 1, '编辑提交 status 应为 1（停用）')
+    await waitToast(page, '保存成功')
+    await waitDialogGone(page, '编辑字典类型')
+    // loadTypePage(当前页) 原地刷新：等行内出现新名（勿 goto——选中态与右标题联动要保持在内存态验证）
+    await page.locator('.type-pane .el-table__row', { hasText: TEST_NAME_V2 }).first().waitFor({ state: 'visible', timeout: 10000 })
+    await waitTableIdle(page)
+    await sleep(300)
+    const rowV2 = await findTypeRowByKey(TEST_KEY, { reload: false })
+    assert(rowV2, '编辑后应仍能按 dictKey 定位类型行')
+    const cellsV2 = await rowCells(rowV2)
+    log(`  编辑后类型行: ${JSON.stringify(cellsV2)}`)
+    assertEq(cellsV2[0], TEST_NAME_V2, '行内字典名称应更新为新名')
+    assertEq(cellsV2[2], '停用', '行内状态应更新为 停用')
+    const statusTag = rowV2.locator('.el-tag').first()
+    assert(((await statusTag.getAttribute('class')) || '').includes('el-tag--danger'), `停用状态 tag 应为 danger，实际 ${await statusTag.getAttribute('class')}`)
+    // row-key 重对齐：选中保持 + 右标题跟随新名（id 不变不重查右栏）
+    const rowV2Class = (await rowV2.getAttribute('class')) || ''
+    assert(rowV2Class.includes('current-row'), '数据刷新后选中行应保持 current-row 高亮（row-key 重对齐）')
+    assertEq(await dataPaneTitle(), `字典项：${TEST_NAME_V2}（${TEST_KEY}）`, '右栏标题应跟随新字典名')
+    await shot(page, 'd2-type-edited.png')
+    // ---- 2d. 同 dictKey 再新增 → 3009 toast + 弹窗保持打开 ----
+    await page.locator('.type-pane .pane-header button', { hasText: '新增类型' }).click()
+    const dupDlg = page.locator('.el-dialog', { hasText: '新增字典类型' }).last()
+    await dupDlg.waitFor({ state: 'visible', timeout: 8000 })
+    await dupDlg.locator('input[placeholder="请输入字典名称，如：用户状态"]').fill(TEST_NAME_DUP)
+    await dupDlg.locator('input[placeholder="字母开头，如：user_status"]').fill(TEST_KEY)
+    const dupP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/type') && r.request().method() === 'POST', { timeout: 15000 })
+    await dupDlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const dup = await dupP
+    const dupBody = await dup.json()
+    log(`  重复 dictKey 接口: HTTP ${dup.status()} code=${dupBody.code} msg="${dupBody.msg}"`)
+    assertEq(dup.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(dupBody.code, 3009, `同 dictKey 新增应 body 3009，实际 ${dupBody.code}`)
+    const toastText = await waitToast(page, '字典键已存在', 'error')
+    log(`  3009 toast: "${toastText}"`)
+    assert(await dupDlg.isVisible(), '3009 后弹窗应保持打开（可改后重提）')
+    await dupDlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
+    await waitDialogGone(page, '新增字典类型')
+    const dupRow = await findTypeRowByKey(TEST_KEY, { reload: false })
+    assert((await rowCells(dupRow))[0] === TEST_NAME_V2, '3009 拦截后原类型行应保持不变')
+  })
+
+  // ================= D3 项闭环：空提交 → 新增 → 3012 → 编辑 =================
+  await step('D3', '项闭环：空提交必填错误（0 请求）→ 新增（五字段、typeId 对齐）→ 同 value 3012 弹窗保持 → 编辑 label/sort 行内更新', async () => {
+    // ---- 3a. 空提交：必填错误 + 0 请求 ----
+    await page.locator('.data-pane .pane-header button', { hasText: '新增字典项' }).click()
+    const dlg = page.locator('.el-dialog', { hasText: '新增字典项' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    await shot(page, 'd3-data-dialog.png')
+    const before = dataPostCount()
+    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    await sleep(500)
+    const errs = await formErrors(dlg)
+    log(`  空提交错误: ${JSON.stringify(errs)}`)
+    assert(errs.includes('请输入标签'), `空提交应报"请输入标签"，实际 ${JSON.stringify(errs)}`)
+    assert(errs.includes('请输入字典值'), `空提交应报"请输入字典值"，实际 ${JSON.stringify(errs)}`)
+    assertEq(dataPostCount(), before, '空提交不应发出新增字典项请求')
+    // ---- 3b. 填表提交：恰五字段（typeId 注入当前选中类型）→ 行出现（sort/id 升序） ----
+    await dlg.locator('input[placeholder="请输入展示标签，如：启用"]').fill(ITEM_LABEL)
+    await dlg.locator('input[placeholder="存库值，如：0"]').fill(ITEM_VALUE)
+    const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/data') && r.request().method() === 'POST', { timeout: 15000 })
+    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const resp = await respP
+    const body = await resp.json()
+    const reqBody = resp.request().postDataJSON()
+    log(`  新增字典项接口: HTTP ${resp.status()} code=${body.code} data=${body.data}`)
+    log(`  提交体: ${JSON.stringify(reqBody)}`)
+    assertEq(resp.status(), 200, '契约：HTTP 恒 200')
+    assertEq(body.code, 200, '新增业务码应为 200')
+    assert(typeof body.data === 'string' && body.data.length > 0, '新增响应应返回新项 id（字符串）')
+    assertEq(Object.keys(reqBody).sort().join(','), 'label,sort,status,typeId,value', `新增应恰提交五字段，实际 ${JSON.stringify(reqBody)}`)
+    assert(typeof reqBody.typeId === 'string' && reqBody.typeId.length > 0, `typeId 应为非空字符串（Long→String），实际 ${JSON.stringify(reqBody.typeId)}`)
+    assertEq(reqBody.sort, 0, '排序默认应为 0')
+    await waitToast(page, '新增成功')
+    await waitDialogGone(page, '新增字典项')
+    await waitTableIdle(page)
+    await sleep(300)
+    // 右栏行出现 + 审计四值（create 与 update 同值：插入四值 = create 值，契约 §2.2 同款）
+    const rows = page.locator('.data-pane .el-table__row')
+    assertEq(await rows.count(), 1, `右栏应恰 1 行，实际 ${await rows.count()}`)
+    const cells = await rowCells(rows.first())
+    log(`  新字典项行: ${JSON.stringify(cells)}`)
+    assertEq(cells[0], ITEM_LABEL, '行内标签应为提交值')
+    assertEq(cells[1], ITEM_VALUE, '行内值应为提交值')
+    assertEq(cells[2], '0', '行内排序应为 0')
+    assertEq(cells[3], '正常', '行内状态应为 正常')
+    assertEq(cells[4], 'admin', '创建人应为 admin（审计透传，契约 §3）')
+    assertEq(cells[6], 'admin', '更新人应为 admin（插入时 update 值 = create 值）')
+    assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(cells[5]), `创建时间应为 yyyy-MM-dd HH:mm:ss，实际 "${cells[5]}"`)
+    // ---- 3c. 同 value 再新增 → 3012 toast + 弹窗保持 ----
+    await page.locator('.data-pane .pane-header button', { hasText: '新增字典项' }).click()
+    const dupDlg = page.locator('.el-dialog', { hasText: '新增字典项' }).last()
+    await dupDlg.waitFor({ state: 'visible', timeout: 8000 })
+    await dupDlg.locator('input[placeholder="请输入展示标签，如：启用"]').fill(ITEM_LABEL_B)
+    await dupDlg.locator('input[placeholder="存库值，如：0"]').fill(ITEM_VALUE)
+    const dupP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/data') && r.request().method() === 'POST', { timeout: 15000 })
+    await dupDlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const dup = await dupP
+    const dupBody = await dup.json()
+    log(`  重复 value 接口: HTTP ${dup.status()} code=${dupBody.code} msg="${dupBody.msg}"`)
+    assertEq(dup.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(dupBody.code, 3012, `同 value 新增应 body 3012，实际 ${dupBody.code}`)
+    const toastText = await waitToast(page, '字典项值已存在', 'error')
+    log(`  3012 toast: "${toastText}"`)
+    assert(await dupDlg.isVisible(), '3012 后弹窗应保持打开（可改后重提）')
+    await dupDlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
+    await waitDialogGone(page, '新增字典项')
+    assertEq(await page.locator('.data-pane .el-table__row').count(), 1, '3012 拦截后右栏应仍恰 1 行')
+    // ---- 3d. 编辑：回显 → 改 label + sort=5 → 全量五字段+id → 行内更新 ----
+    await rows.first().getByRole('button', { name: '编辑' }).click()
+    const editDlg = page.locator('.el-dialog', { hasText: '编辑字典项' }).last()
+    await editDlg.waitFor({ state: 'visible', timeout: 8000 })
+    assertEq(await editDlg.locator('input[placeholder="请输入展示标签，如：启用"]').inputValue(), ITEM_LABEL, '编辑应回显原标签')
+    assertEq(await editDlg.locator('input[placeholder="存库值，如：0"]').inputValue(), ITEM_VALUE, '编辑应回显原字典值')
+    await editDlg.locator('input[placeholder="请输入展示标签，如：启用"]').fill(ITEM_LABEL_V2)
+    await editDlg.locator('.el-input-number input').fill('5')
+    const putP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/data') && r.request().method() === 'PUT', { timeout: 15000 })
+    await editDlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    const put = await putP
+    const putBody = await put.json()
+    const putReq = put.request().postDataJSON()
+    log(`  编辑字典项接口: HTTP ${put.status()} code=${putBody.code}`)
+    log(`  编辑提交体: ${JSON.stringify(putReq)}`)
+    assertEq(put.status(), 200, '契约：HTTP 恒 200')
+    assertEq(putBody.code, 200, '编辑业务码应为 200')
+    assertEq(Object.keys(putReq).sort().join(','), 'id,label,sort,status,typeId,value', `编辑应全量提交五字段+id，实际 ${JSON.stringify(putReq)}`)
+    assertEq(putReq.label, ITEM_LABEL_V2, '编辑提交 label 应为新标签')
+    assertEq(putReq.sort, 5, '编辑提交 sort 应为 5')
+    assertEq(putReq.typeId, reqBody.typeId, '编辑提交 typeId 应与新增一致（归属不变）')
+    await waitToast(page, '保存成功')
+    await waitDialogGone(page, '编辑字典项')
+    await waitTableIdle(page)
+    await sleep(300)
+    const cellsV2 = await rowCells(rows.first())
+    log(`  编辑后字典项行: ${JSON.stringify(cellsV2)}`)
+    assertEq(cellsV2[0], ITEM_LABEL_V2, '行内标签应更新为新标签')
+    assertEq(cellsV2[2], '5', '行内排序应更新为 5')
+    assertEq(cellsV2[6], 'admin', '编辑后更新人应为 admin（审计透传）')
+    assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(cellsV2[7]), `更新时间应为 yyyy-MM-dd HH:mm:ss，实际 "${cellsV2[7]}"`)
+    await shot(page, 'd3-item-edited.png')
+  })
+
+  // ================= D4 删除约束：3011 禁删 → 删净项 → 删类型 → 空态回归 =================
+  await step('D4', '删除约束：有项删类型 3011 toast 行保留 → 删净字典项 → 删类型（确认框含类型名）→ 左行消失右栏回空态', async () => {
+    // ---- 4a. 有项删类型 → 3011（先重选行恢复右栏联动——find 默认 goto 会丢内存选中态） ----
+    const row = await findTypeRowByKey(TEST_KEY)
+    assert(row, '应能定位测试类型行')
+    await selectTypeRow(row)
+    await row.getByRole('button', { name: '删除' }).click()
+    const box = page.locator('.el-message-box')
+    await box.waitFor({ state: 'visible', timeout: 8000 })
+    const boxText = (await box.innerText()).trim().replace(/\n/g, ' | ')
+    log(`  删除类型确认框: ${boxText}`)
+    assert(boxText.includes(`确定删除字典类型 "${TEST_NAME_V2}"`), `确认框文案应含 确定删除字典类型 "${TEST_NAME_V2}"，实际 "${boxText}"`)
+    await shot(page, 'd4-delete-confirm.png')
+    const delP = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/dict/type/'), { timeout: 15000 })
+    await box.locator('.el-message-box__btns .el-button--primary').click()
+    const del = await delP
+    const delBody = await del.json()
+    log(`  删除类型接口: HTTP ${del.status()} code=${delBody.code} msg="${delBody.msg}"`)
+    assertEq(del.status(), 200, '契约：HTTP 恒 200（3011 在 body）')
+    assertEq(delBody.code, 3011, `有项删类型应 body 3011，实际 ${delBody.code}`)
+    const toastText = await waitToast(page, '先删除字典项', 'error')
+    log(`  3011 toast: "${toastText}"`)
+    await shot(page, 'd4-3011-toast.png')
+    // 3011 行保留复查必须原地（reload:false）——goto 会丢内存选中态导致右栏被清空、后续删项空转
+    const still = await findTypeRowByKey(TEST_KEY, { reload: false })
+    assert(still !== null, '3011 拦截后类型行应保留（无级联删除）')
+    log('  3011 行保留 ✔')
+    // ---- 4b. 删净字典项（确认框逐项含标签） ----
+    await deleteAllDataItems()
+    assertEq(await page.locator('.data-pane .el-table__row').count(), 0, '字典项应已删净')
+    log('  字典项删净 ✔')
+    // ---- 4c. 删类型成功 → 左行消失 + 右栏回空态三件套（勿 goto——空态回归靠 row-key 重对齐在内存态发生） ----
+    const rowAgain = await findTypeRowByKey(TEST_KEY, { reload: false })
+    assert(rowAgain, '删净项后应仍能定位类型行')
+    await rowAgain.getByRole('button', { name: '删除' }).click()
+    const box2 = page.locator('.el-message-box')
+    await box2.waitFor({ state: 'visible', timeout: 8000 })
+    const box2Text = (await box2.innerText()).trim().replace(/\n/g, ' | ')
+    assert(box2Text.includes(`确定删除字典类型 "${TEST_NAME_V2}"`), `确认框文案应含类型名，实际 "${box2Text}"`)
+    const delP2 = page.waitForResponse((r) => r.request().method() === 'DELETE' && new URL(r.url()).pathname.startsWith('/api/system/dict/type/'), { timeout: 15000 })
+    await box2.locator('.el-message-box__btns .el-button--primary').click()
+    const del2 = await delP2
+    const del2Body = await del2.json()
+    log(`  删除类型接口: HTTP ${del2.status()} code=${del2Body.code}`)
+    assertEq(del2Body.code, 200, '删净项后删类型业务码应为 200')
+    await waitToast(page, '删除成功')
+    // 左表 loadTypePage 原地刷新 + row-key 找不到 id → current-change(null) → 右栏清空回空态
+    await page.locator('.type-pane .el-table__row', { hasText: TEST_KEY }).first().waitFor({ state: 'hidden', timeout: 10000 })
+    await sleep(500)
+    assertEq(await page.locator('.type-pane .el-table__row', { hasText: TEST_KEY }).count(), 0, `删除后左表不应再有 ${TEST_KEY}`)
+    // 选中行消失 → row-key 找不到 id → current-change(null) → 右栏自动清空回空态
+    assertEq(await dataPaneTitle(), '字典项', '选中类型被删后右栏标题应回纯 "字典项"')
+    const emptyDesc = (await page.locator('.data-pane .el-empty__description').innerText()).trim()
+    assertEq(emptyDesc, '请在左侧选择字典类型', `右栏应回空态文案，实际 "${emptyDesc}"`)
+    assert(await page.locator('.data-pane .pane-header button', { hasText: '新增字典项' }).isDisabled(), '右栏"新增字典项"应回 disabled')
+    await shot(page, 'd4-after-type-delete.png')
+  })
+
+  // ================= CLEANUP 删净（兜底清扫全部 e2e 前缀类型：先删项后删类型） =================
+  await step('CLEANUP', '删净：清扫全部 e2e 前缀字典类型（先删项后删类型）→ 断言左表无 e2e 残留', async () => {
+    await loadDictPage()
+    for (let guard = 0; guard < 100; guard++) {
+      const rows = page.locator('.type-pane .el-table__row')
+      const n = await rows.count()
+      let target = null
+      let targetKey = ''
+      for (let i = 0; i < n; i++) {
+        const cells = await rowCells(rows.nth(i))
+        if (cells[1].startsWith('e2e')) {
+          target = rows.nth(i)
+          targetKey = cells[1]
+          break
+        }
+      }
+      if (target) {
+        // 删一个类型 = 结构性变化：先删净其字典项（D5 禁删约束）再删类型，然后回第 1 页重扫
+        log(`  [清扫] 发现残留类型 ${targetKey}，先删净其字典项`)
+        await selectTypeRow(target)
+        await deleteAllDataItems()
+        await target.getByRole('button', { name: '删除' }).click()
+        await confirmDelete('确定删除字典类型')
+        await waitToast(page, '删除成功')
+        await sleep(800)
+        await loadDictPage()
+        continue
+      }
+      // 本页无残留：向后翻页继续找（残留类型 id 倒序可能在后续页；此处不 goto——避免回第 1 页死循环）
+      const next = page.locator('.type-pane .el-pagination .btn-next')
+      if ((await next.count()) > 0 && (await next.isEnabled())) {
+        await next.click()
+        await waitTableIdle(page)
+        await sleep(300)
+        continue
+      }
+      break // 全部页扫完无 e2e 残留
+    }
+    await loadDictPage()
+    const residue = await page.locator('.type-pane .el-table__row', { hasText: 'e2e' }).count()
+    log(`  e2e 残留类型行数: ${residue}`)
+    assertEq(residue, 0, `清理后左表不应残留任何 e2e 前缀类型行，实际 ${residue}`)
+    const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
+    log(`  清理后左表分页: ${leftTotal}`)
+    assertEq(leftTotal, '共 0 条', `清理后左表应回 共 0 条，实际 "${leftTotal}"`)
+    await shot(page, 'cleanup-final.png')
+  })
+
+  // ================= 证据核验：无 console error / pageerror / >=400 / 网络失败 =================
+  await step('D-VERIFY', '证据核验：无 console error / pageerror / >=400 响应 / 网络失败（3009/3011/3012 错误码在 body，HTTP 恒 200）', async () => {
+    const NOISE_404 = /^Failed to load resource: the server responded with a status of 404/
+    const realConsole = h.state.consoleErrors.filter((e) => !NOISE_404.test(e.text))
+    assertEq(realConsole.length, 0, `不应有 console error（favicon 404 噪音除外），实际 ${JSON.stringify(realConsole)}`)
+    const noiseFree404 = asset404.filter((u) => !u.includes('favicon'))
+    assertEq(noiseFree404.length, 0, `非 favicon 的资产 404 不应存在，实际 ${JSON.stringify(asset404)}`)
+    assertEq(h.state.pageErrors.length, 0, `不应有未捕获异常，实际 ${JSON.stringify(h.state.pageErrors)}`)
+    assertEq(h.state.badResponses.length, 0, `不应有 >=400 的 /api 响应（HTTP 恒 200；错误码在 body），实际 ${JSON.stringify(h.state.badResponses)}`)
+    assertEq(h.state.requestFailures.length, 0, `不应有网络失败，实际 ${JSON.stringify(h.state.requestFailures)}`)
+  })
+} finally {
+  // ---------- 汇总 ----------
+  h.summary({
+    extras: [
+      `\n测试数据: 类型 ${TEST_KEY}（${TEST_NAME}→${TEST_NAME_V2}）/ 项 ${ITEM_VALUE}（${ITEM_LABEL}→${ITEM_LABEL_V2}）/ 3009 探针 ${TEST_NAME_DUP} / 3012 探针 ${ITEM_LABEL_B}（应均已在 D4/CLEANUP 删净或从未落库）`,
+      '字典域无种子数据（契约 §6）；admin 未做任何种子外数据写操作',
+    ],
+  })
+  await browser.close()
+}

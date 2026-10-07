@@ -10,6 +10,7 @@ import type { Component } from 'vue'
 import UserManageView from '../views/system/user/index.vue'
 import RoleManageView from '../views/system/role/index.vue'
 import MenuManageView from '../views/system/menu/index.vue'
+import DictManageView from '../views/system/dict/index.vue'
 import NotFoundView from '../views/error/NotFound.vue'
 
 /** path → 组件注册表（静态 import，键 = sys_menu.path 约定值） */
@@ -17,6 +18,7 @@ export const VIEW_REGISTRY: Record<string, Component> = {
   '/system/user': UserManageView,
   '/system/role': RoleManageView,
   '/system/menu': MenuManageView,
+  '/system/dict': DictManageView,
 }
 
 /** 按 path 解析视图组件：未注册 → NotFound 兜底（不报错，设计 D5） */

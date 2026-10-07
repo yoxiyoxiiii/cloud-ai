@@ -189,13 +189,13 @@ try {
     assertEq(root.icon, 'Setting', `根节点 icon 应为 Setting，实际 "${root.icon}"`)
     assertEq(root.parentId, '0', '根节点 parentId 应为 "0"')
     assert(typeof root.sort === 'number', 'sort 字段应为数值')
-    // 3 个 C 子级：path 依次 /system/user /system/role /system/menu（种子 11/12/13 顺序）
-    assertEq(root.children.length, 3, `系统管理子级应恰 3 个，实际 ${root.children.length}`)
+    // 4 个 C 子级：path 依次 /system/user /system/role /system/menu /system/dict（种子 11/12/13/14 顺序）
+    assertEq(root.children.length, 4, `系统管理子级应恰 4 个，实际 ${root.children.length}`)
     const cPaths = root.children.map((c) => c.path)
     const cNames = root.children.map((c) => c.name)
     log(`  C 子级: ${JSON.stringify(root.children.map((c) => ({ name: c.name, type: c.type, path: c.path, icon: c.icon })))}`)
-    assertEq(cPaths.join(','), '/system/user,/system/role,/system/menu', `C 子级 path 应依次三页，实际 ${JSON.stringify(cPaths)}`)
-    assertEq(cNames.join(','), '用户管理,角色管理,菜单管理', `C 子级名称应依次，实际 ${JSON.stringify(cNames)}`)
+    assertEq(cPaths.join(','), '/system/user,/system/role,/system/menu,/system/dict', `C 子级 path 应依次四页，实际 ${JSON.stringify(cPaths)}`)
+    assertEq(cNames.join(','), '用户管理,角色管理,菜单管理,字典管理', `C 子级名称应依次，实际 ${JSON.stringify(cNames)}`)
     for (const c of root.children) {
       assertEq(c.type, 'C', `子级 type 应为 C，实际 "${c.type}"`)
       assert(typeof c.icon === 'string' && c.icon.length > 0, `C 节点 icon 应非空，实际 "${c.icon}"`)
@@ -217,7 +217,7 @@ try {
     // 侧边精确串（M1 同款断言复核动态源：sub-menu 子项 + 工作台尾挂 + default-openeds 展开）
     const labels = await menuLabels()
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→工作台')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→工作台')
     // 嵌套结构证据：根 M 渲染为 el-sub-menu（侧边栏嵌套布局）
     assert((await page.locator('.el-menu .el-sub-menu').count()) >= 1, '根目录 M 应渲染为 el-sub-menu')
     await sleep(800) // 落定窗口内不应有额外 me（守卫并行门只拉一次，无重复请求）
@@ -414,13 +414,13 @@ try {
   })
 
   // ================= N6 登出清态 + admin 恢复 =================
-  await step('N6', '登出清态：新用户登出 → admin 登录侧边恢复全量四项 + 角色页按钮全显（三件套清态重建）', async () => {
+  await step('N6', '登出清态：新用户登出 → admin 登录侧边恢复全量五项 + 角色页按钮全显（三件套清态重建）', async () => {
     await logoutViaUi(page)
     const r = await login(page, 'admin', 'admin123')
     assert(r.ok, `admin 重新登录应成功: ${r.msg || ''}`)
     const labels = await menuLabels()
     log(`  admin 恢复菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,工作台', 'admin 重登应恢复全量四项（登录页 reset 清态 + 守卫按新账号重建）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,工作台', 'admin 重登应恢复全量五项（登录页 reset 清态 + 守卫按新账号重建）')
     // 按钮级权限回归（perms-api §4：admin 全量快照 → 全显；受限快照零残留——三件套 reset 生效证据）
     await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
     await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })

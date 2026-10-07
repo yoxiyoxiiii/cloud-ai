@@ -137,14 +137,14 @@ try {
   })
 
   // ================= M1 列表加载：菜单顺序/面包屑/树全展开/表头 10 列/三色 tag/无分页 =================
-  await step('M1', '菜单管理页加载：菜单顺序 用户→角色→菜单→工作台/面包屑/树表全展开/10 列/类型三色 tag/无分页', async () => {
-    // 侧边菜单项与顺序（静态表 F3：用户管理 → 角色管理 → 菜单管理 → 工作台）
+  await step('M1', '菜单管理页加载：菜单顺序 用户→角色→菜单→字典→工作台/面包屑/树表全展开/10 列/类型三色 tag/无分页', async () => {
+    // 侧边菜单项与顺序（动态路由种子：用户管理 → 角色管理 → 菜单管理 → 字典管理 → 工作台）
     const menuItems = page.locator('.el-menu .el-menu-item')
     const count = await menuItems.count()
     const labels = []
     for (let i = 0; i < count; i++) labels.push((await menuItems.nth(i).innerText()).trim())
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→工作台')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→工作台')
     await page.locator('.el-menu-item', { hasText: '菜单管理' }).click()
     await page.waitForURL(`**${MENU_PATH}`, { timeout: 8000 })
     await waitTableIdle(page)

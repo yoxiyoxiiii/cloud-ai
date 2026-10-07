@@ -115,3 +115,70 @@ export interface UserNavNode {
   sort: number
   children: UserNavNode[]
 }
+
+/**
+ * 字典类型 VO（契约 2026-10-07-dict-api §4.1/§7）：status 语义 0=正常 1=停用（两级各自独立）；
+ * dict_key 全库唯一、可修改；审计四字段可空（yyyy-MM-dd HH:mm:ss 或 null）；不含 deleted（VO 隔离）
+ */
+export interface SysDictTypeVo {
+  id: string
+  dictName: string
+  dictKey: string
+  status: number
+  createBy: string | null
+  createTime: string | null
+  updateBy: string | null
+  updateTime: string | null
+}
+
+/**
+ * 字典项 VO（契约 2026-10-07-dict-api §4.2/§7）：经 typeId（数值 id 的字符串）归属类型——
+ * dict_key 不冗余进项表；value 同类型内唯一（消费键），label 类型内不唯一；sort 恒有值（DDL 默认 0）
+ */
+export interface SysDictDataVo {
+  id: string
+  typeId: string
+  label: string
+  value: string
+  sort: number
+  status: number
+  createBy: string | null
+  createTime: string | null
+  updateBy: string | null
+  updateTime: string | null
+}
+
+/** 字典类型分页入参（契约 2026-10-07-dict-api §7）：无搜索参数（契约现状） */
+export interface DictTypePageQuery {
+  pageNum: number
+  pageSize: number
+}
+
+/** 新增字典类型入参（契约 2026-10-07-dict-api §7，字段表 §2.2）：dictKey 重复得 3009 */
+export interface SaveDictTypePayload {
+  dictName: string
+  dictKey: string
+  status: number
+}
+
+/** 修改字典类型入参（契约 2026-10-07-dict-api §7）：PUT 部分更新语义（null 不更新），前端全量提交三写字段规避 */
+export type UpdateDictTypePayload = SaveDictTypePayload & { id: string }
+
+/** 字典项分页入参（契约 2026-10-07-dict-api §7）：typeId 必传（项经 typeId 归属类型，§3.1） */
+export interface DictDataPageQuery {
+  typeId: string
+  pageNum: number
+  pageSize: number
+}
+
+/** 新增字典项入参（契约 2026-10-07-dict-api §7，字段表 §3.2）：同类型 value 重复得 3012 */
+export interface SaveDictDataPayload {
+  typeId: string
+  label: string
+  value: string
+  sort: number
+  status: number
+}
+
+/** 修改字典项入参（契约 2026-10-07-dict-api §7）：前端全量提交五写字段 + id（typeId 亦提交，§3.3） */
+export type UpdateDictDataPayload = SaveDictDataPayload & { id: string }
