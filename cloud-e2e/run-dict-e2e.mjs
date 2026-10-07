@@ -5,13 +5,15 @@
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 npm run e2e:dict）
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码
  * 测试数据（删净纪律最高优先）：
- * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；user_status/common_status 为内置种子（翻译契约 §0.3/§8.3）——零放行触碰；
+ * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；内置种子零放行触碰——SEED_KEYS 四类型（user_status/common_status
+ *   翻译契约 §0.3/§8.3 + bpmn_leave_status/bpmn_leave_type 契约 2026-10-07-bpmn-leave-api §6，is_builtin=1 自动落入 3015/3016 保护）；
  *   D5b 内置保护：user_status 行徽标/禁用面 + 直连 3015/3016 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
- * - 结束清扫全部 e2e 前缀类型（含 D5 的 e2econs；先删项后删类型，3011 禁删约束）并断言左表无 e2e 残留、仅剩种子
+ * - 结束清扫全部 e2e 前缀类型（含 D5 的 e2econs；先删项后删类型，3011 禁删约束）并断言左表无 e2e 残留、残留 ⊇ SEED_KEYS（宽松，不锁上限）
  * 核心断言（契约 §2 §3 §5；界面重构后字典项管理在弹框内——2026-10-07-dict-ui-list-dialog plan D4）：
  * - D0 侧边 字典管理 位于 菜单管理 之后 + 面包屑 首页/字典管理 + admin 重登快照含 dict 权限（新增类型按钮可见）
- * - D1 全宽类型表：4 列/恰 2 行（user_status + common_status 内置种子，契约 2026-10-07-translation-api §0.3/§8.3）；
- *   种子行"字典项"弹框：标题 `字典项：用户状态（user_status）`、5 列精确序、种子 2 行（正常/停用）、共 2 条
+ * - D1 全宽类型表：4 列/跨页行数 ≥ SEED_KEYS.length 且 seenKeys ⊇ SEED_KEYS（E1 候选②宽松语义——不锁上限，
+ *   后续加内置字典种子只改 SEED_KEYS/SEED_TYPE_NAMES 两常量），各行带「内置」徽标+状态列正常；
+ *   种子行"字典项"弹框：标题 `字典项：用户状态（user_status）`、5 列精确序、种子 2 行（正常/停用）、共 2 条（user_status 自身面，零改动）
  * - D2 类型闭环：空提交 0 请求 → 新增（提交恰三字段）→ 编辑改名+停用（全量三字段+id、tag danger）
  *   → 重开弹框标题跟随新名 → 同 dictKey 重提 3009 toast 弹窗保持
  * - D3 项闭环（全在弹框作用域）：空提交 0 请求 → 新增（提交恰五字段、typeId 对齐行类型）
@@ -20,7 +22,8 @@
  * - D4 删除约束：有项删类型 3011 toast 行保留 → 弹框内删净项 → 删类型（确认框含类型名）→ 类型行消失
  * - D5 消费端点（契约 2026-10-07-translation-api §2.1/§8.3）：造 e2econs 类型+3 项（sort 3/1/2，1 项停用）→
  *   消费断言停用过滤/长度 2/sort 升序/字段恰 value-label-sort；未知 dictKey → 200 data:[]；
- *   无 token 直调网关 401；种子 user_status/common_status 消费回归各恰 2 项（CLEANUP 一并删 e2econs，种子零触碰）
+ *   无 token 直调网关 401；种子 user_status/common_status 消费回归各恰 2 项 + bpmn_leave_status 恰 4 项
+ *   （value "0"-"3" 文案断言，契约 bpmn-leave-api §6；CLEANUP 一并删 e2econs，种子零触碰）
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -49,6 +52,11 @@ const ITEM_LABEL_V2 = `E2E启用v2${stamp}` // 编辑改 label 后
 const ITEM_LABEL_B = `E2E重复${stamp}` // 3012 探针（正常路径不落库）
 const CONS_KEY = `e2econs${stamp}` // D5 消费端点测试类型 dictKey（CLEANUP 随 e2e 前缀一并清扫）
 const CONS_NAME = `E2E消费${stamp}`
+
+/** 内置字典种子清单（E1 候选②宽松断言锚点）：后续加内置字典种子只改这两行——D1/CLEANUP 的 ⊇ 断言随之覆盖新键；
+ *  互指义务：菜单侧种子清单见 run-menu-e2e.mjs / run-role-e2e.mjs 的 SEED_MENU_IDS（改种子段时 grep 各脚本） */
+const SEED_KEYS = ['user_status', 'common_status', 'bpmn_leave_status', 'bpmn_leave_type']
+const SEED_TYPE_NAMES = { user_status: '用户状态', common_status: '通用状态', bpmn_leave_status: '请假状态', bpmn_leave_type: '请假类型' }
 
 const DICT_PATH = '/system/dict'
 
@@ -104,6 +112,42 @@ async function findTypeRowByKey(dictKey, { reload = true } = {}) {
     await sleep(300)
   }
   return null
+}
+
+/** 跨页扫描类型表：就地断言每个内置种子行（名称徽标剥离后/状态列 正常/内联徽标存在），返回跨页总行数与命中的种子键——
+ *  id 倒序下新类型置顶、种子可能落在任意页，须整表走查（E1 候选②：只断言 ⊇ 与下限，不锁上限） */
+async function scanSeedTypeRows() {
+  let total = 0
+  const seen = []
+  for (let guard = 0; guard < 30; guard++) {
+    const rows = page.locator('.type-pane .el-table__row')
+    const n = await rows.count()
+    total += n
+    for (let i = 0; i < n; i++) {
+      const cells = await rowCells(rows.nth(i))
+      if (!SEED_TYPE_NAMES[cells[1]]) continue
+      seen.push(cells[1])
+      log(`  种子行[${cells[1]}]: ${JSON.stringify(cells)}`)
+      assertEq(stripBadge(cells[0]), SEED_TYPE_NAMES[cells[1]], `种子行 ${cells[1]} 字典名称应为 ${SEED_TYPE_NAMES[cells[1]]}（徽标剥离后）`)
+      assertEq(cells[2], '正常', `种子行 ${cells[1]} 状态列应为 正常（statusLabel 译文/降级链同文案）`)
+      assert((await rows.nth(i).locator('.builtin-badge').count()) === 1, `种子行 ${cells[1]} 名称格应有内联「内置」徽标（el-tag）`)
+    }
+    const next = page.locator('.type-pane .el-pagination .btn-next')
+    if ((await next.count()) === 0 || !(await next.isEnabled())) break
+    await next.click()
+    await waitTableIdle(page)
+    await sleep(300)
+  }
+  return { total, seen }
+}
+
+/** 宽松断言套件（E1 候选②）：跨页行数 ≥ SEED_KEYS.length 且 seenKeys ⊇ SEED_KEYS——后续加内置字典种子零适配 */
+async function assertSeedSuperset(where) {
+  const { total, seen } = await scanSeedTypeRows()
+  assert(total >= SEED_KEYS.length, `${where}：类型表跨页行数应 ≥ ${SEED_KEYS.length}，实际 ${total}`)
+  const missing = SEED_KEYS.filter((k) => !seen.includes(k))
+  assertEq(missing.length, 0, `${where}：seenKeys 应 ⊇ SEED_KEYS，缺 ${JSON.stringify(missing)}，实际 ${JSON.stringify(seen)}`)
+  return seen
 }
 
 /** 字典项管理弹框定位器（标题以 "字典项：" 开头，与二层表单弹框"新增/编辑字典项"无子串冲突；
@@ -206,13 +250,13 @@ try {
     await page.waitForURL(`**${DICT_PATH}`, { timeout: 15000 })
     await waitTableIdle(page)
     log(`  登录回跳: ${page.url()}`)
-    // 侧边菜单顺序（动态路由种子 14 字典管理插在 菜单管理 后）
+    // 侧边菜单顺序（动态路由种子：系统管理 4 项 + 流程管理 3 项 + 工作台——B7 30 段菜单种子后新形态，E1 迁移）
     const items = page.locator('.el-menu .el-menu-item')
     const n = await items.count()
     const labels = []
     for (let i = 0; i < n; i++) labels.push((await items.nth(i).innerText()).trim())
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→工作台')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,我的申请,待办任务,流程定义,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→我的申请→待办任务→流程定义→工作台')
     const active = (await page.locator('.el-menu-item.is-active').innerText()).trim()
     assertEq(active, '字典管理', '/system/dict 下字典管理应高亮')
     const bc = await breadcrumbTexts(page)
@@ -224,7 +268,7 @@ try {
   })
 
   // ================= D1 全宽类型表 + 种子行"字典项"弹框 =================
-  await step('D1', '全宽类型表：4 列 + 恰 2 行（user_status + common_status 种子，均带徽标）；种子行弹框：标题/5 列精确序/种子 2 行（正常/停用）/共 2 条', async () => {
+  await step('D1', '全宽类型表：4 列 + 内置种子行 ⊇ SEED_KEYS（4 类型，均带徽标+状态正常，宽松不锁上限）；种子行弹框：标题/5 列精确序/种子 2 行（正常/停用）/共 2 条', async () => {
     // 类型表 4 列精确序
     const ths = page.locator('.type-pane .el-table__header-wrapper th')
     const tn = await ths.count()
@@ -232,28 +276,17 @@ try {
     for (let i = 0; i < tn; i++) headers.push(((await ths.nth(i).innerText()) || '').trim())
     log(`  类型表头(${tn}): ${JSON.stringify(headers)}`)
     assertEq(headers.join(','), '字典名称,字典键,状态,操作', `类型表头应为 4 列精确序，实际 ${JSON.stringify(headers)}`)
-    // 类型表：恰 2 行内置种子（user_status §0.3 + common_status §8.3 本轮新增，管理页可见可操作）——
-    // E2 种子计数迁移：两行均断言徽标与状态列「正常」，名称/键逐行锁定（顺序不依赖 id 倒序）
-    const seedRows = page.locator('.type-pane .el-table__row')
-    assertEq(await seedRows.count(), 2, `类型表应恰 2 行（user_status + common_status 种子），实际 ${await seedRows.count()}`)
-    const SEED_TYPE_NAMES = { user_status: '用户状态', common_status: '通用状态' }
-    let userStatusRow = null
-    const seenKeys = []
-    for (let i = 0; i < 2; i++) {
-      const r = seedRows.nth(i)
-      const c = await rowCells(r)
-      seenKeys.push(c[1])
-      log(`  种子行[${i}]: ${JSON.stringify(c)}`)
-      assertEq(stripBadge(c[0]), SEED_TYPE_NAMES[c[1]] || '', `种子行 ${c[1]} 字典名称应为 ${SEED_TYPE_NAMES[c[1]] || '?'}（徽标剥离后）`)
-      assertEq(c[2], '正常', `种子行 ${c[1]} 状态列应为 正常（statusLabel 译文/降级链同文案）`)
-      assert((await r.locator('.builtin-badge').count()) === 1, `种子行 ${c[1]} 名称格应有内联「内置」徽标（el-tag）`)
-      if (c[1] === 'user_status') userStatusRow = r
-    }
-    assertEq(seenKeys.sort().join(','), 'common_status,user_status', `两行应恰为 user_status 与 common_status，实际 ${JSON.stringify(seenKeys)}`)
+    // 类型表种子行（E1 候选②迁移）：跨页行数 ≥ SEED_KEYS.length 且 seenKeys ⊇ SEED_KEYS——
+    // scanSeedTypeRows 就地断言各行徽标与状态列「正常」、名称逐键锁定（bpmn 两类型契约 bpmn-leave-api §6）
+    const seenKeys = await assertSeedSuperset('D1')
     const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
     log(`  类型表分页: ${leftTotal}`)
-    assertEq(leftTotal, '共 2 条', `类型表分页应为 共 2 条（两枚种子），实际 "${leftTotal}"`)
+    const leftTotalN = parseInt((leftTotal.match(/\d+/) || ['0'])[0], 10)
+    assert(leftTotalN >= SEED_KEYS.length, `类型表分页总数应 ≥ 共 ${SEED_KEYS.length} 条（宽松不锁上限），实际 "${leftTotal}"`)
     // 种子行"字典项"弹框：标题（原右栏标题格式平移）+ 5 列精确序 + 种子 2 项 + 共 2 条
+    // （user_status 自身面零改动；scanSeedTypeRows 走查后可能停在后页，reload 回第 1 页再跨页定位）
+    const userStatusRow = await findTypeRowByKey('user_status')
+    assert(userStatusRow, '应能定位 user_status 种子类型行（弹框场景载体）')
     const dlg = await openDataDialog(userStatusRow)
     assertEq(await dataDialogTitle(), '字典项：用户状态（user_status）', `弹框标题应为 字典项：用户状态（user_status），实际 "${await dataDialogTitle()}"`)
     const dhs = dlg.locator('.el-table__header-wrapper th')
@@ -556,7 +589,7 @@ try {
   })
 
   // ================= D5 消费端点（契约 2026-10-07-translation-api §2.1，D4 后 CLEANUP 前） =================
-  await step('D5', '消费端点：e2econs 停用过滤 + sort 升序 + 字段恰 value/label/sort；未知键 200 空数组；无 token 直调网关 401；种子 user_status/common_status 回归各 2 项', async () => {
+  await step('D5', '消费端点：e2econs 停用过滤 + sort 升序 + 字段恰 value/label/sort；未知键 200 空数组；无 token 直调网关 401；种子 user_status/common_status 各 2 项 + bpmn_leave_status 恰 4 项', async () => {
     // ---- 5a. 造数（页内 fetch，admin 会话）：类型 + 3 项（sort 3/1/2 乱序，其中 1 项停用）----
     const made = await page.evaluate(async (args) => {
       const { dictName, dictKey } = args
@@ -645,6 +678,21 @@ try {
     assertEq(common.data[0].value, '0', 'common_status 首项 value 应为 "0"')
     assertEq(common.data[1].label, '停用', 'common_status 次项应为 停用（sort 2）')
     assertEq(common.data[1].value, '1', 'common_status 次项 value 应为 "1"')
+    // ---- 5f. bpmn_leave_status 消费回归（E1 补：契约 2026-10-07-bpmn-leave-api §6——恰 4 项，value "0"-"3" 文案断言）----
+    const bpmnStatus = await page.evaluate(async () => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const res = await fetch('/api/system/dict/data/type/bpmn_leave_status', { headers: { Authorization: `Bearer ${token}` } })
+      return await res.json()
+    })
+    log(`  bpmn_leave_status 种子消费: ${JSON.stringify(bpmnStatus)}`)
+    assertEq(bpmnStatus.code, 200, 'bpmn_leave_status 消费业务码应为 200')
+    assert(Array.isArray(bpmnStatus.data), `bpmn_leave_status data 应为数组，实际 ${typeof bpmnStatus.data}`)
+    assertEq(bpmnStatus.data.length, 4, `bpmn_leave_status 种子应恰 4 项，实际 ${JSON.stringify(bpmnStatus.data)}`)
+    const BPMN_STATUS_LABELS = { 0: '审批中', 1: '已通过', 2: '已拒绝', 3: '已撤销' }
+    for (let i = 0; i < 4; i++) {
+      assertEq(bpmnStatus.data[i].value, String(i), `bpmn_leave_status 第 ${i + 1} 项 value 应为 "${i}"（sort 升序），实际 ${JSON.stringify(bpmnStatus.data[i])}`)
+      assertEq(bpmnStatus.data[i].label, BPMN_STATUS_LABELS[i], `bpmn_leave_status value "${i}" 文案应为 ${BPMN_STATUS_LABELS[i]}，实际 "${bpmnStatus.data[i].label}"`)
+    }
   })
 
   // ================= D5b 内置字典保护（契约 2026-10-07-builtin-protection §2/§7.2-§7.3：徽标+禁用面 UI 断言 + 直连 3015/3016 API 断言，种子零变更） =================
@@ -705,7 +753,7 @@ try {
   })
 
   // ================= CLEANUP 删净（兜底清扫全部 e2e 前缀类型：先删项后删类型；D5 的 e2econs 含在内） =================
-  await step('CLEANUP', '删净：清扫全部 e2e 前缀字典类型（含 D5 e2econs，先删项后删类型）→ 断言左表无 e2e 残留、残留集合恰 {user_status, common_status}', async () => {
+  await step('CLEANUP', '删净：清扫全部 e2e 前缀字典类型（含 D5 e2econs，先删项后删类型）→ 断言左表无 e2e 残留、残留 ⊇ SEED_KEYS（宽松，不锁上限）', async () => {
     await loadDictPage()
     for (let guard = 0; guard < 100; guard++) {
       const rows = page.locator('.type-pane .el-table__row')
@@ -749,19 +797,11 @@ try {
     assertEq(residue, 0, `清理后左表不应残留任何 e2e 前缀类型行，实际 ${residue}`)
     const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
     log(`  清理后左表分页: ${leftTotal}`)
-    assertEq(leftTotal, '共 2 条', `清理后左表应仅剩两枚内置种子（共 2 条），实际 "${leftTotal}"`)
-    // 种子零触碰终检：残留集合恰 {user_status, common_status}（名称/状态原样）
-    const finalRows = page.locator('.type-pane .el-table__row')
-    assertEq(await finalRows.count(), 2, `清理后左表应恰 2 行（种子），实际 ${await finalRows.count()}`)
-    const FINAL_SEED_NAMES = { user_status: '用户状态', common_status: '通用状态' }
-    const finalKeys = []
-    for (let i = 0; i < 2; i++) {
-      const c = await rowCells(finalRows.nth(i))
-      finalKeys.push(c[1])
-      assertEq(stripBadge(c[0]), FINAL_SEED_NAMES[c[1]] || '', `残留种子 ${c[1]} 名称应原样 ${FINAL_SEED_NAMES[c[1]] || '?'}（徽标剥离后）`)
-      assertEq(c[2], '正常', `残留种子 ${c[1]} 状态应原样 正常`)
-    }
-    assertEq(finalKeys.sort().join(','), 'common_status,user_status', `残留 dictKey 集合应恰为 {{user_status, common_status}}，实际 ${JSON.stringify(finalKeys)}`)
+    const leftTotalN = parseInt((leftTotal.match(/\d+/) || ['0'])[0], 10)
+    assert(leftTotalN >= SEED_KEYS.length, `清理后左表分页总数应 ≥ 共 ${SEED_KEYS.length} 条（宽松不锁上限），实际 "${leftTotal}"`)
+    // 种子零触碰终检（E1 迁移）：残留 ⊇ SEED_KEYS 且各行名称/状态/徽标原样（scanSeedTypeRows 就地断言）
+    const finalSeen = await assertSeedSuperset('CLEANUP')
+    log(`  残留种子键: ${JSON.stringify(finalSeen)}`)
     await shot(page, 'cleanup-final.png')
   })
 
@@ -781,7 +821,7 @@ try {
   h.summary({
     extras: [
       `\n测试数据: 类型 ${TEST_KEY}（${TEST_NAME}→${TEST_NAME_V2}）/ 项 ${ITEM_VALUE}（${ITEM_LABEL}→${ITEM_LABEL_V2}）/ 3009 探针 ${TEST_NAME_DUP} / 3012 探针 ${ITEM_LABEL_B} / D5 消费类型 ${CONS_KEY}（${CONS_NAME}，含 3 项）——应均已在 D4/CLEANUP 删净或从未落库`,
-      'user_status/common_status 内置种子（翻译契约 §0.3/§8.3）全程零触碰；admin 未做任何种子外数据写操作',
+      'user_status/common_status/bpmn_leave_status/bpmn_leave_type 内置种子（SEED_KEYS 四类型）全程零触碰；admin 未做任何种子外数据写操作',
     ],
   })
   await browser.close()

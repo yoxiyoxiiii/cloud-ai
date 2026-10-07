@@ -252,3 +252,150 @@ export interface SaveDictDataPayload {
 
 /** 修改字典项入参（契约 2026-10-07-dict-api §7）：前端全量提交五写字段 + id（typeId 亦提交，§3.3） */
 export type UpdateDictDataPayload = SaveDictDataPayload & { id: string }
+
+/* ============ bpmn 域（契约 2026-10-07-bpmn-leave-api §10，additive） ============ */
+
+/**
+ * 请假单 VO（契约 §2.2）：列表与详情共用主体。
+ * - leaveType/status 契约形态为字符串（对齐字典 value 与 Long→String 惯例，DB TINYINT 出参 String 化）
+ * - 译文字段随 translation-api §8 体系（必返但值可 null）：展示走降级链
+ *   （statusLabel ?? LEAVE_STATUS_MAP[status] ?? status；*Name ?? 原account），
+ *   业务判断（tag 颜色/撤销按钮显隐）永远用原字段，原字段永不因翻译被覆盖（契约 §1 红线）
+ * - 状态语义（字典 bpmn_leave_status）：0=审批中 1=已通过 2=已拒绝 3=已撤销；
+ *   类型语义（字典 bpmn_leave_type）：1=事假 2=病假 3=年假
+ */
+export interface LeaveVo {
+  id: string
+  title: string
+  leaveType: string
+  /** 类型译文（字典 bpmn_leave_type）；null 时降级 LEAVE_TYPE_MAP[leaveType] */
+  leaveTypeLabel: string | null
+  startDate: string
+  endDate: string
+  reason: string | null
+  status: string
+  /** 状态译文（字典 bpmn_leave_status）；null 时降级 LEAVE_STATUS_MAP[status] */
+  statusLabel: string | null
+  applyUser: string
+  /** 申请人昵称译文；null 时降级显示 applyUser */
+  applyUserName: string | null
+  approver: string
+  /** 审批人昵称译文；null 时降级显示 approver */
+  approverName: string | null
+  /** 流程实例 id；撤销后实例已删 → null */
+  processInstanceId: string | null
+  createTime: string
+  updateTime: string | null
+}
+
+/**
+ * 审批时间线步骤 VO（契约 §2.3）：stepKey 枚举 'apply' 发起 / 'approval' 审批意见 / 'end' 流程结束；
+ * steps 按时间升序；result 仅 end 步骤有值（已通过/已拒绝/已撤销，与 statusLabel 同文案）
+ */
+export interface ApprovalStepVo {
+  stepKey: string
+  title: string
+  operator: string | null
+  /** 操作人昵称译文；null 时降级显示 operator */
+  operatorName: string | null
+  comment: string | null
+  time: string | null
+  result: string | null
+}
+
+/** 请假单详情 VO（契约 §2.3）：leave 主体 + 时间线步骤（升序） */
+export interface LeaveDetailVo {
+  leave: LeaveVo
+  steps: ApprovalStepVo[]
+}
+
+/**
+ * 待办任务 VO（契约 §3.1）：数据源 ACT_RU_TASK + businessKey 回查请假单；
+ * 不分页（个人待办量级小——契约现状）；leaveType/leaveTypeLabel 原值-译文成对
+ * （契约 §3.1 实现期修正注记：@DictTrans 注解源字段补列，同 §2.2 成对模式）
+ */
+export interface TaskVo {
+  taskId: string
+  leaveId: string
+  leaveTitle: string
+  /** 类型原值（@DictTrans 注解源字段，成对模式同 §2.2） */
+  leaveType: string
+  /** 类型译文（字典 bpmn_leave_type）；null 时降级 LEAVE_TYPE_MAP[leaveType] ?? leaveType */
+  leaveTypeLabel: string | null
+  applyUser: string
+  /** 申请人昵称译文；null 时降级显示 applyUser */
+  applyUserName: string | null
+  createTime: string
+}
+
+/**
+ * 已办任务 VO（契约 §3.2 = TaskVo 全字段 + 五字段）：approve 为 "true"/"false" 字符串
+ * （办理结果，tag 颜色判断用原字段）；leaveStatus/leaveStatusLabel 原值-译文成对（注记补列）
+ */
+export interface TaskDoneVo extends TaskVo {
+  endTime: string | null
+  approve: string | null
+  comment: string | null
+  /** 请假单当前状态原值（@DictTrans 注解源字段）；译文缺位时降级 LEAVE_STATUS_MAP[leaveStatus] */
+  leaveStatus: string
+  /** 请假单当前状态译文 */
+  leaveStatusLabel: string | null
+}
+
+/**
+ * 流程定义 VO（契约 §4.1）：latestVersion 过滤，key 升序；只读域
+ * （无部署/删除/挂起端点——契约 §4 只读语义）；version 为 int 字符串化
+ */
+export interface DefinitionVo {
+  id: string
+  key: string
+  name: string | null
+  version: string
+  deploymentTime: string | null
+}
+
+/**
+ * 审批人投影 VO（契约 §2.5）：id/account/nickname 三字段，源自 system /inner/user/all 直通；
+ * 含停用账号（UserEntry 无状态字段——宽松语义记档，发起侧仅校验存在性 4004）
+ */
+export interface UserOptionVo {
+  id: string
+  account: string
+  nickname: string
+}
+
+/** 发起请假入参（契约 §2.1）：leaveType 为字典 bpmn_leave_type 的 value（"1"-"3"）；reason 可空 */
+export interface LeaveCreatePayload {
+  title: string
+  leaveType: string
+  startDate: string
+  endDate: string
+  reason?: string
+  /** 审批人 account（须在用户投影内，否则 4004） */
+  approver: string
+}
+
+/** 办理任务入参（契约 §3.3）：approve 为 "true"/"false" 字符串；comment 可空（同意/拒绝均不强制） */
+export interface TaskCompletePayload {
+  taskId: string
+  approve: string
+  comment?: string
+}
+
+/**
+ * 请假状态本地降级映射（契约 §7 降级链样板 / §10）：status 值 → 中文文案，
+ * 仅作 statusLabel 缺位时的展示兜底（防翻译链路抖动）；tag 颜色映射用原 status 字段
+ */
+export const LEAVE_STATUS_MAP: Record<string, string> = {
+  '0': '审批中',
+  '1': '已通过',
+  '2': '已拒绝',
+  '3': '已撤销',
+}
+
+/** 请假类型本地降级映射（契约 §7 / §10）：leaveType 值 → 中文文案，leaveTypeLabel 缺位兜底 */
+export const LEAVE_TYPE_MAP: Record<string, string> = {
+  '1': '事假',
+  '2': '病假',
+  '3': '年假',
+}

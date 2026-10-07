@@ -125,7 +125,8 @@ onMounted(() => {
       </div>
     </template>
 
-    <el-table v-loading="typeLoading" :data="typeRows">
+    <!-- row-key：无 key 时 el-table 按 index 原地 patch，新增行会瞬时残留上一行 el-tag 节点（E3 dict D2 渲染竞态实锤） -->
+    <el-table v-loading="typeLoading" :data="typeRows" row-key="id">
       <el-table-column label="字典名称" min-width="140">
         <template #default="{ row }">
           <span>{{ typeRowOf(row).dictName }}</span>

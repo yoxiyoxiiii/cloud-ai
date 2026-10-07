@@ -30,6 +30,7 @@
         <jjwt.version>0.12.6</jjwt.version>
         <springdoc.version>2.6.0</springdoc.version>
         <hutool.version>5.8.32</hutool.version>
+        <flowable.version>7.2.0</flowable.version>
     </properties>
 
     <!-- 所有子模块继承：Lombok 与测试依赖 -->
@@ -132,6 +133,12 @@
                 <groupId>cn.hutool</groupId>
                 <artifactId>hutool-all</artifactId>
                 <version>${hutool.version}</version>
+            </dependency>
+            <!-- Flowable 7.2 仅 Process 引擎（不带 CMMN/DMN/App/REST）——阶段4 设计 D1 -->
+            <dependency>
+                <groupId>org.flowable</groupId>
+                <artifactId>flowable-spring-boot-starter-process</artifactId>
+                <version>${flowable.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

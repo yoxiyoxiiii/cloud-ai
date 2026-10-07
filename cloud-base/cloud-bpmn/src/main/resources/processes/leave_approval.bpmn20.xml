@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xmlns:flowable="http://flowable.org/bpmn"
+             targetNamespace="http://www.flowable.org/processdef">
+
+    <!-- 请假审批（阶段4 设计 D7）：单人审批线性流 + 排他网关二分支。
+         流程变量：leaveId/applyUser/approver/title（发起注入），approve(Boolean)（办理注入）。
+         结束态判定按 endActivityId：endApprove→已通过 / endReject→已拒绝。
+         部署：classpath resources/processes 目录随启动自动部署（内容 hash 未变不重复部署）。 -->
+    <process id="leave_approval" name="请假审批" isExecutable="true">
+
+        <startEvent id="start" name="发起申请"/>
+
+        <sequenceFlow id="flowStart" sourceRef="start" targetRef="approval"/>
+
+        <userTask id="approval" name="审批" flowable:assignee="${approver}"/>
+
+        <sequenceFlow id="flowApproval" sourceRef="approval" targetRef="decision"/>
+
+        <exclusiveGateway id="decision" name="审批分支"/>
+
+        <sequenceFlow id="flowApprove" sourceRef="decision" targetRef="endApprove">
+            <conditionExpression xsi:type="tFormalExpression">${approve == true}</conditionExpression>
+        </sequenceFlow>
+
+        <sequenceFlow id="flowReject" sourceRef="decision" targetRef="endReject">
+            <conditionExpression xsi:type="tFormalExpression">${approve == false}</conditionExpression>
+        </sequenceFlow>
+
+        <endEvent id="endApprove" name="审批通过"/>
+
+        <endEvent id="endReject" name="审批拒绝"/>
+
+    </process>
+
+</definitions>

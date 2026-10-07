@@ -288,19 +288,21 @@ try {
   })
 
   // ================= R5 分配权限：admin 存量绑定（直连）+ 测试角色树勾选/保存/回显/清空 =================
-  await step('R5', '分配权限：admin 存量绑定（直连 23 id 全量含父目录）+ 测试角色勾选→保存→重开回显一致（父半选）→清空回显空', async () => {
+  await step('R5', '分配权限：admin 存量绑定（直连 30 id 全量含父目录）+ 测试角色勾选→保存→重开回显一致（父半选）→清空回显空', async () => {
     // ---- 5a. admin 存量绑定改直连 GET（E2：admin 行「分配权限」已禁用，语义本体保留且更精确——
-    //      断言库里存的就是 23 个种子菜单 id 全量，含父目录 id（10/20 等），叶子过滤/全选推导由此推导而来）----
-    const SEED_MENU_IDS = ['10', '11', '12', '13', '111', '112', '113', '114', '115', '121', '122', '123', '124', '131', '132', '133', '14', '141', '142', '143', '20', '21', '211']
+    //      断言库里存的就是 30 个种子菜单 id 全量（既有 23 + 30 段 bpmn 7 行，契约 bpmn-leave-api §9），含父目录 id（10/20/30 等）；
+    //      E1 扩容：admin 绑定是封闭集（基线 INSERT...SELECT 全量式），保持全量精确不宽松——非清单断言）----
+    // 互指义务：与 run-menu-e2e.mjs CLEANUP 的 SEED_MENU_IDS 各自维护、改菜单种子段时 grep 两脚本同步改（计划 E1 共享常量决策）
+    const SEED_MENU_IDS = ['10', '11', '12', '13', '111', '112', '113', '114', '115', '121', '122', '123', '124', '131', '132', '133', '14', '141', '142', '143', '20', '21', '211', '30', '31', '32', '33', '311', '312', '321']
     const bound = await directApi('GET', '/system/role/1/menus')
     log(`  直连 GET /system/role/1/menus: HTTP ${bound.httpStatus} code=${bound.body.code} data=${JSON.stringify(bound.body.data)}`)
     assertEq(bound.httpStatus, 200, '契约：HTTP 恒 200')
     assertEq(bound.body.code, 200, '角色菜单绑定查询业务码应为 200')
     assert(Array.isArray(bound.body.data), `data 应为数组，实际 ${typeof bound.body.data}`)
-    assertEq(bound.body.data.length, 23, `admin 绑定应恰 23 个种子菜单 id 全量，实际 ${bound.body.data.length}`)
+    assertEq(bound.body.data.length, 30, `admin 绑定应恰 30 个种子菜单 id 全量，实际 ${bound.body.data.length}`)
     const boundIds = bound.body.data.map(String)
-    assertEq([...boundIds].sort().join(','), [...SEED_MENU_IDS].sort().join(','), `admin 绑定应为 23 个种子菜单 id 全量（含父目录），实际 ${JSON.stringify(boundIds)}`)
-    for (const pid of ['10', '20', '11', '111']) {
+    assertEq([...boundIds].sort().join(','), [...SEED_MENU_IDS].sort().join(','), `admin 绑定应为 30 个种子菜单 id 全量（含父目录），实际 ${JSON.stringify(boundIds)}`)
+    for (const pid of ['10', '20', '30', '11', '111']) {
       assert(boundIds.includes(pid), `绑定应含父目录/菜单 id ${pid}（存量绑定含父目录语义）`)
     }
     await shot(page, 'r5-admin-bindings.png')

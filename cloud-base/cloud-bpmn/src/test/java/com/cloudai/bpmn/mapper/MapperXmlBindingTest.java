@@ -1,0 +1,50 @@
+package com.cloudai.bpmn.mapper;
+
+import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import org.apache.ibatis.builder.xml.XMLMapperBuilder;
+import org.apache.ibatis.io.Resources;
+import org.apache.ibatis.session.SqlSessionFactory;
+import org.apache.ibatis.session.SqlSessionFactoryBuilder;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Collection;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Mapper XML 绑定冒烟：1 个 XML 可解析且 4 个语句与接口一一绑定。
+ * resultType 写错/命名空间错位在编译期无捕获（Maven 不校验 XML 语义），此测试封住该回归面。
+ * 不连库：直接以 XMLMapperBuilder 解析 XML 构建 SqlSessionFactory（配置与生产一致：MP MybatisConfiguration
+ * + mapUnderscoreToCamelCase=true，见 application.yml 显式声明）；沿 system 版同款。
+ */
+class MapperXmlBindingTest {
+
+    private static final String[] XML_LOCATIONS = {
+            "mapper/BpmnLeaveMapper.xml"
+    };
+
+    @Test
+    void allXmlStatementsBound() throws IOException {
+        MybatisConfiguration configuration = new MybatisConfiguration();
+        configuration.setMapUnderscoreToCamelCase(true);
+        for (String location : XML_LOCATIONS) {
+            try (InputStream in = Resources.getResourceAsStream(location)) {
+                new XMLMapperBuilder(in, configuration, location, configuration.getSqlFragments()).parse();
+            }
+        }
+        SqlSessionFactory factory = new SqlSessionFactoryBuilder().build(configuration);
+
+        Collection<String> mappings = factory.getConfiguration().getMappedStatementNames();
+        // 1(Leave：findById/pageList/save/updateStatusById) = 4 —— 语句计数算式，新增语句须同步
+        assertThat(mappings.stream().filter(n -> n.startsWith("com.cloudai.bpmn.mapper")).count())
+                .isEqualTo(4);
+        // 全量点名校（4 语句本域全量，防 id 漂移）
+        assertThat(mappings).contains(
+                "com.cloudai.bpmn.mapper.BpmnLeaveMapper.findById",
+                "com.cloudai.bpmn.mapper.BpmnLeaveMapper.pageList",
+                "com.cloudai.bpmn.mapper.BpmnLeaveMapper.save",
+                "com.cloudai.bpmn.mapper.BpmnLeaveMapper.updateStatusById");
+    }
+}

@@ -26,9 +26,10 @@ import {
   Connection,
   Key,
   Link,
+  Tickets,
 } from '@element-plus/icons-vue'
 
-/** 图标字典（唯一来源）：16 个具名导入，存在性已逐一验证（2026-10-07） */
+/** 图标字典（唯一来源）：17 个具名导入，存在性已逐一验证（2026-10-07，Tickets 为 bpmn 阶段 4 增量） */
 export const ICON_MAP: Record<string, Component> = {
   Setting: markRaw(Setting),
   User: markRaw(User),
@@ -46,6 +47,7 @@ export const ICON_MAP: Record<string, Component> = {
   Connection: markRaw(Connection),
   Key: markRaw(Key),
   Link: markRaw(Link),
+  Tickets: markRaw(Tickets),
 }
 
 /** 按名解析图标组件：未知名/空 → Menu 兜底（零 console 输出） */

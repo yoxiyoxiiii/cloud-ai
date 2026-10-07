@@ -11,6 +11,9 @@ import UserManageView from '../views/system/user/index.vue'
 import RoleManageView from '../views/system/role/index.vue'
 import MenuManageView from '../views/system/menu/index.vue'
 import DictManageView from '../views/system/dict/index.vue'
+import LeaveManageView from '../views/bpmn/leave/index.vue'
+import TaskManageView from '../views/bpmn/task/index.vue'
+import DefinitionManageView from '../views/bpmn/definition/index.vue'
 import NotFoundView from '../views/error/NotFound.vue'
 
 /** path → 组件注册表（静态 import，键 = sys_menu.path 约定值） */
@@ -19,6 +22,10 @@ export const VIEW_REGISTRY: Record<string, Component> = {
   '/system/role': RoleManageView,
   '/system/menu': MenuManageView,
   '/system/dict': DictManageView,
+  // bpmn 域三页（契约 2026-10-07-bpmn-leave-api §9 菜单 30 段 C 节点 path）
+  '/bpmn/leave': LeaveManageView,
+  '/bpmn/task': TaskManageView,
+  '/bpmn/definition': DefinitionManageView,
 }
 
 /** 按 path 解析视图组件：未注册 → NotFound 兜底（不报错，设计 D5） */

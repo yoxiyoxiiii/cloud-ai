@@ -6,10 +6,11 @@
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 npm run e2e:nav）
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码
  * 测试数据（删净纪律最高优先）：
- * - 角色/用户/角色标识全部 e2e 前缀+时间戳；绝不改 admin/种子账号；种子菜单（10/11/12/13/111…20/21/211）零触碰
+ * - 角色/用户/角色标识全部 e2e 前缀+时间戳；绝不改 admin/种子账号；种子菜单（10/11/12/13/111…20/21/211 与 30 段 30/31/32/33/311/312/321）零触碰
  * - 结束删除测试用户与测试角色并断言删净（含 N5 意外落库兜底删除）
  * 核心断言（设计 D10 / 契约 §2 §3 + perms-api §4 §6）：
- * - N1 admin user-nav 形状逐字段（根 M 系统管理 + 3 个 C 带 path/icon；无 F；20/21 被剪）+ me 形状与恰 1 次
+ * - N1 admin user-nav 形状逐字段（E1 迁移后根级恰 2：M 系统管理 icon Setting 4 C + M 流程管理 icon Tickets 3 C——
+ *   30 段种子契约 bpmn-leave-api §9；无 F；20/21 被剪）+ me 形状与恰 1 次
  * - N2 RBAC 闭环：角色仅绑"角色管理"分支 → 新用户侧边恰 '角色管理,工作台' 且角色页可加载
  * - N2f 按钮粒度：受限用户（快照 list+edit）表头新增/行内分配权限·删除隐藏、编辑可见
  * - N4 F5 刷新：路由/菜单/高亮保持 + user-nav 与 me 各恰 +1 + 按钮隐藏保持
@@ -153,7 +154,7 @@ try {
     log(`  user-nav 接口: HTTP ${resp.status()} code=${body.code}`)
     assertEq(resp.status(), 200, '契约：HTTP 恒 200')
     assertEq(body.code, 200, 'user-nav 业务码应为 200')
-    // me 形状（契约 perms-api §2）：account=admin + 全量快照（17 项：user6+role5+menu4+sso2）
+    // me 形状（契约 perms-api §2）：account=admin + 全量快照（24 项：user6+role5+menu4+sso2 + bpmn 7——30 段种子后）
     const meBody = await meResp.json()
     log(`  me 接口: HTTP ${meResp.status()} code=${meBody.code} account=${meBody.data.account} perms=${meBody.data.permissions.length} 项`)
     assertEq(meResp.status(), 200, 'me：HTTP 恒 200')
@@ -164,22 +165,38 @@ try {
     assert(meBody.data.permissions.includes('sso:online:list'), 'admin 快照应含 sso:online:list')
     const nav = body.data
     assert(Array.isArray(nav), `data 应为数组，实际 ${typeof nav}`)
-    // 根级恰 1 节点：M 系统管理（icon Setting——契约 §2 示例）
-    assertEq(nav.length, 1, `admin 根级应恰 1 节点，实际 ${nav.length}`)
-    const root = nav[0]
-    assertEq(root.type, 'M', `根节点 type 应为 M，实际 "${root.type}"`)
-    assertEq(root.name, '系统管理', `根节点名称应为 系统管理，实际 "${root.name}"`)
-    assertEq(root.icon, 'Setting', `根节点 icon 应为 Setting，实际 "${root.icon}"`)
-    assertEq(root.parentId, '0', '根节点 parentId 应为 "0"')
-    assert(typeof root.sort === 'number', 'sort 字段应为数值')
+    // 根级恰 2 节点（E1 迁移：B7 30 段菜单种子后新形态，契约 bpmn-leave-api §9）：
+    // M 系统管理（icon Setting）+ M 流程管理（icon Tickets）
+    assertEq(nav.length, 2, `admin 根级应恰 2 节点（系统管理+流程管理），实际 ${nav.length}`)
+    const sysRoot = nav.find((n) => n.name === '系统管理')
+    const bpmnRoot = nav.find((n) => n.name === '流程管理')
+    assert(sysRoot && bpmnRoot, `根级应为 系统管理+流程管理，实际 ${JSON.stringify(nav.map((n) => n.name))}`)
+    // —— M 系统管理：icon Setting，子级 4 C 逐字段（原断言原样平移）——
+    assertEq(sysRoot.type, 'M', `系统管理 type 应为 M，实际 "${sysRoot.type}"`)
+    assertEq(sysRoot.name, '系统管理', `根节点名称应为 系统管理，实际 "${sysRoot.name}"`)
+    assertEq(sysRoot.icon, 'Setting', `系统管理 icon 应为 Setting，实际 "${sysRoot.icon}"`)
+    assertEq(sysRoot.parentId, '0', '根节点 parentId 应为 "0"')
+    assert(typeof sysRoot.sort === 'number', 'sort 字段应为数值')
     // 4 个 C 子级：path 依次 /system/user /system/role /system/menu /system/dict（种子 11/12/13/14 顺序）
-    assertEq(root.children.length, 4, `系统管理子级应恰 4 个，实际 ${root.children.length}`)
-    const cPaths = root.children.map((c) => c.path)
-    const cNames = root.children.map((c) => c.name)
-    log(`  C 子级: ${JSON.stringify(root.children.map((c) => ({ name: c.name, type: c.type, path: c.path, icon: c.icon })))}`)
+    assertEq(sysRoot.children.length, 4, `系统管理子级应恰 4 个，实际 ${sysRoot.children.length}`)
+    const cPaths = sysRoot.children.map((c) => c.path)
+    const cNames = sysRoot.children.map((c) => c.name)
+    log(`  系统管理 C 子级: ${JSON.stringify(sysRoot.children.map((c) => ({ name: c.name, type: c.type, path: c.path, icon: c.icon })))}`)
     assertEq(cPaths.join(','), '/system/user,/system/role,/system/menu,/system/dict', `C 子级 path 应依次四页，实际 ${JSON.stringify(cPaths)}`)
     assertEq(cNames.join(','), '用户管理,角色管理,菜单管理,字典管理', `C 子级名称应依次，实际 ${JSON.stringify(cNames)}`)
-    for (const c of root.children) {
+    // —— M 流程管理（E1 新增，契约 bpmn-leave-api §9）：icon Tickets，子级 3 C 依次 我的申请/待办任务/流程定义 ——
+    assertEq(bpmnRoot.type, 'M', `流程管理 type 应为 M，实际 "${bpmnRoot.type}"`)
+    assertEq(bpmnRoot.name, '流程管理', `根节点名称应为 流程管理，实际 "${bpmnRoot.name}"`)
+    assertEq(bpmnRoot.icon, 'Tickets', `流程管理 icon 应为 Tickets，实际 "${bpmnRoot.icon}"`)
+    assertEq(bpmnRoot.parentId, '0', '流程管理 parentId 应为 "0"')
+    assert(typeof bpmnRoot.sort === 'number', 'sort 字段应为数值')
+    assertEq(bpmnRoot.children.length, 3, `流程管理子级应恰 3 个，实际 ${bpmnRoot.children.length}`)
+    const bPaths = bpmnRoot.children.map((c) => c.path)
+    const bNames = bpmnRoot.children.map((c) => c.name)
+    log(`  流程管理 C 子级: ${JSON.stringify(bpmnRoot.children.map((c) => ({ name: c.name, type: c.type, path: c.path, icon: c.icon })))}`)
+    assertEq(bPaths.join(','), '/bpmn/leave,/bpmn/task,/bpmn/definition', `流程管理 C 子级 path 应依次三页，实际 ${JSON.stringify(bPaths)}`)
+    assertEq(bNames.join(','), '我的申请,待办任务,流程定义', `流程管理 C 子级名称应依次，实际 ${JSON.stringify(bNames)}`)
+    for (const c of [...sysRoot.children, ...bpmnRoot.children]) {
       assertEq(c.type, 'C', `子级 type 应为 C，实际 "${c.type}"`)
       assert(typeof c.icon === 'string' && c.icon.length > 0, `C 节点 icon 应非空，实际 "${c.icon}"`)
       assert(Array.isArray(c.children) && c.children.length === 0, 'C 叶子节点 children 应为空数组（契约 §2）')
@@ -197,10 +214,11 @@ try {
     walk(nav)
     assert(allTypes.every((t) => t === 'M' || t === 'C'), `导航树不应含 F 节点，实际 ${JSON.stringify([...new Set(allTypes)])}`)
     assert(!allNames.includes('认证管理') && !allNames.includes('在线用户'), `无 path 的 C 与剪空 M 不应出现（20/21），实际 ${JSON.stringify(allNames)}`)
-    // 侧边精确串（M1 同款断言复核动态源：sub-menu 子项 + 工作台尾挂 + default-openeds 展开）
+    // 侧边精确串（M1 同款断言复核动态源：sub-menu 子项 + 工作台尾挂 + default-openeds 展开；
+    // E1 迁移：B7 流程管理种子后新形态——两目录子项 + 工作台共 8 项）
     const labels = await menuLabels()
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→工作台')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,我的申请,待办任务,流程定义,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→我的申请→待办任务→流程定义→工作台')
     // 嵌套结构证据：根 M 渲染为 el-sub-menu（侧边栏嵌套布局）
     assert((await page.locator('.el-menu .el-sub-menu').count()) >= 1, '根目录 M 应渲染为 el-sub-menu')
     await sleep(800) // 落定窗口内不应有额外 me（守卫并行门只拉一次，无重复请求）
@@ -403,7 +421,7 @@ try {
     assert(r.ok, `admin 重新登录应成功: ${r.msg || ''}`)
     const labels = await menuLabels()
     log(`  admin 恢复菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,工作台', 'admin 重登应恢复全量五项（登录页 reset 清态 + 守卫按新账号重建）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,我的申请,待办任务,流程定义,工作台', 'admin 重登应恢复全量导航（系统管理 4 项 + 流程管理 3 项 + 工作台——E1 迁移后新形态；登录页 reset 清态 + 守卫按新账号重建）')
     // 按钮级权限回归（perms-api §4：admin 全量快照 → 全显；受限快照零残留——三件套 reset 生效证据）
     await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
     await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })

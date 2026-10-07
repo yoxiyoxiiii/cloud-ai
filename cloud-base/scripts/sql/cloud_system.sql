@@ -150,7 +150,16 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (14, 10, '字典管理',  'system:dict:list',   'C', '/system/dict', 'Files',      4, 1, NOW()),
 (141, 14, '字典新增', 'system:dict:add',    'F', '',             '',           1, 1, NOW()),
 (142, 14, '字典修改', 'system:dict:edit',   'F', '',             '',           2, 1, NOW()),
-(143, 14, '字典删除', 'system:dict:remove', 'F', '',             '',           3, 1, NOW());
+(143, 14, '字典删除', 'system:dict:remove', 'F', '',             '',           3, 1, NOW()),
+-- 流程管理菜单（30 段；与增量脚本 2026-10-07-bpmn-menus.sql 语义等价——契约 2026-10-07-bpmn-leave-api §9；
+-- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定）
+(30,  0,  '流程管理', '',                    'M', '',               'Tickets',   3, 1, NOW()),
+(31,  30, '我的申请', 'bpmn:leave:list',     'C', '/bpmn/leave',     'Document',  1, 1, NOW()),
+(32,  30, '待办任务', 'bpmn:task:list',      'C', '/bpmn/task',      'Bell',      2, 1, NOW()),
+(33,  30, '流程定义', 'bpmn:definition:list','C', '/bpmn/definition','Files',     3, 1, NOW()),
+(311, 31, '发起申请', 'bpmn:leave:add',      'F', '', '', 1, 1, NOW()),
+(312, 31, '撤销申请', 'bpmn:leave:cancel',   'F', '', '', 2, 1, NOW()),
+(321, 32, '办理任务', 'bpmn:task:complete',  'F', '', '', 1, 1, NOW());
 
 -- admin 账号（密码 admin123）
 INSERT INTO sys_user (id, account, nickname, password, is_builtin, create_time) VALUES
@@ -178,3 +187,19 @@ INSERT INTO sys_dict_type (id, dict_name, dict_key, status, is_builtin, create_b
 INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
 (3, 2, '正常', '0', 1, 0, 1, 'system', NOW(), 'system', NOW()),
 (4, 2, '停用', '1', 2, 0, 1, 'system', NOW(), 'system', NOW());
+
+-- 内置字典种子 bpmn_leave_status/bpmn_leave_type（契约 2026-10-07-bpmn-leave-api §6；与增量脚本
+-- 2026-10-07-bpmn-leave-seed.sql 语义等价；基线显式 id=3/4 与 5-11 仅为重建环境自洽，id 非契约内容——
+-- 存量环境 AUTO_INCREMENT 分配，内置保护按 is_builtin 判定与 id 无关）
+INSERT INTO sys_dict_type (id, dict_name, dict_key, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
+(3, '请假状态', 'bpmn_leave_status', 0, 1, 'system', NOW(), 'system', NOW()),
+(4, '请假类型', 'bpmn_leave_type',   0, 1, 'system', NOW(), 'system', NOW());
+
+INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
+(5,  3, '审批中', '0', 1, 0, 1, 'system', NOW(), 'system', NOW()),
+(6,  3, '已通过', '1', 2, 0, 1, 'system', NOW(), 'system', NOW()),
+(7,  3, '已拒绝', '2', 3, 0, 1, 'system', NOW(), 'system', NOW()),
+(8,  3, '已撤销', '3', 4, 0, 1, 'system', NOW(), 'system', NOW()),
+(9,  4, '事假',   '1', 1, 0, 1, 'system', NOW(), 'system', NOW()),
+(10, 4, '病假',   '2', 2, 0, 1, 'system', NOW(), 'system', NOW()),
+(11, 4, '年假',   '3', 3, 0, 1, 'system', NOW(), 'system', NOW());
