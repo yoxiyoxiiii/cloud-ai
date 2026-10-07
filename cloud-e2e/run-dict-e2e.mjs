@@ -7,15 +7,16 @@
  * 测试数据（删净纪律最高优先）：
  * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；user_status 为内置种子（翻译契约 §0.3，当前无防删保护）——零触碰，仍不碰库内非本脚本数据
  * - 结束清扫全部 e2e 前缀类型（含 D5 的 e2econs；先删项后删类型，3011 禁删约束）并断言左表无 e2e 残留、仅剩种子
- * 核心断言（契约 §2 §3 §5）：
+ * 核心断言（契约 §2 §3 §5；界面重构后字典项管理在弹框内——2026-10-07-dict-ui-list-dialog plan D4）：
  * - D0 侧边 字典管理 位于 菜单管理 之后 + 面包屑 首页/字典管理 + admin 重登快照含 dict 权限（新增类型按钮可见）
- * - D1 主从空态：左表 4 列/恰 1 行（user_status 内置种子，契约 2026-10-07-translation-api §0.3）；
- *   右表 9 列标题"字典项"/el-empty"请在左侧选择字典类型"/新增字典项 disabled
- * - D2 类型闭环：空提交 0 请求 → 新增（提交恰三字段）→ 行选中高亮 + 右标题 `字典项：{名}（{键}）`
- *   → 编辑改名+停用（全量三字段+id、tag danger、选中保持右标题跟随）→ 同 dictKey 重提 3009 toast 弹窗保持
- * - D3 项闭环：空提交 0 请求 → 新增（提交恰五字段、typeId 对齐选中类型）→ 同 value 重提 3012 toast 弹窗保持
- *   → 编辑改 label/sort（全量五字段+id、行内更新、审计更新人 admin）
- * - D4 删除约束：有项删类型 3011 toast 行保留 → 删净项 → 删类型（确认框含类型名）→ 左行消失右栏回空态
+ * - D1 全宽类型表：4 列/恰 1 行（user_status 内置种子，契约 2026-10-07-translation-api §0.3）；
+ *   种子行"字典项"弹框：标题 `字典项：用户状态（user_status）`、5 列精确序、种子 2 行（正常/停用）、共 2 条
+ * - D2 类型闭环：空提交 0 请求 → 新增（提交恰三字段）→ 编辑改名+停用（全量三字段+id、tag danger）
+ *   → 重开弹框标题跟随新名 → 同 dictKey 重提 3009 toast 弹窗保持
+ * - D3 项闭环（全在弹框作用域）：空提交 0 请求 → 新增（提交恰五字段、typeId 对齐行类型）
+ *   → 审计断言改页内 fetch（createBy/updateBy=admin、createTime 格式——UI 已减审计列，契约 VO 仍返回）
+ *   → 同 value 重提 3012 toast 弹窗保持 → 编辑改 label/sort（全量五字段+id、弹框行内更新）
+ * - D4 删除约束：有项删类型 3011 toast 行保留 → 弹框内删净项 → 删类型（确认框含类型名）→ 类型行消失
  * - D5 消费端点（契约 2026-10-07-translation-api §2.1）：造 e2econs 类型+3 项（sort 3/1/2，1 项停用）→
  *   消费断言停用过滤/长度 2/sort 升序/字段恰 value-label-sort；未知 dictKey → 200 data:[]；
  *   无 token 直调网关 401；种子 user_status 消费回归恰 2 项（CLEANUP 一并删 e2econs，种子零触碰）
@@ -104,19 +105,35 @@ async function findTypeRowByKey(dictKey, { reload = true } = {}) {
   return null
 }
 
-/** 点击左表行选中并等右栏首屏数据加载完成（current-change → data/page 第 1 页） */
-async function selectTypeRow(row) {
+/** 字典项管理弹框定位器（标题以 "字典项：" 开头，与二层表单弹框"新增/编辑字典项"无子串冲突；
+ *  el-dialog 关闭是 display:none 留存 DOM——断言前先确认 visible，必要时重建定位器） */
+const dataDialog = () => page.locator('.el-dialog').filter({ has: page.locator('.el-dialog__title', { hasText: '字典项：' }) }).last()
+
+/** 按标题文本定位弹框（表单弹框 append-to-body 在 body 尾部，.last() 兜底多节点留存） */
+const dialogByTitle = (title) =>
+  page.locator('.el-dialog').filter({ has: page.locator('.el-dialog__title', { hasText: title }) }).last()
+
+/** 弹框标题文案（联动断言锚点：字典项：{名}（{键}）） */
+async function dataDialogTitle() {
+  return (await dataDialog().locator('.el-dialog__title').innerText()).trim()
+}
+
+/** 点击类型行"字典项"按钮打开弹框，并等首屏数据加载完成（data/page 第 1 页）；返回弹框定位器 */
+async function openDataDialog(row) {
   const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/data/page'), { timeout: 15000 })
-  await row.click()
+  await row.getByRole('button', { name: '字典项' }).click()
+  await dataDialog().waitFor({ state: 'visible', timeout: 8000 })
   await respP
   await waitTableIdle(page)
   await sleep(300)
+  return dataDialog()
 }
 
-/** 右栏标题文案（无选中 = "字典项"；有选中 = "字典项：{名}（{键}）"）。
- *  必须 > span 直接子级：el-button 内部也包一层 span（"新增字典项"文字），裸后代选择器会 strict violation */
-async function dataPaneTitle() {
-  return (await page.locator('.data-pane .pane-header > span').innerText()).trim()
+/** 关闭字典项弹框（点头部 X）并等隐藏（EP 关闭是 display:none 而非移除 DOM） */
+async function closeDataDialog() {
+  await dataDialog().locator('.el-dialog__headerbtn').click()
+  await dataDialog().waitFor({ state: 'hidden', timeout: 8000 })
+  await sleep(300)
 }
 
 /** 弹窗内收集全部校验错误文本 */
@@ -138,12 +155,13 @@ async function confirmDelete(expected) {
   return boxText
 }
 
-/** 删净右栏当前选中类型的全部字典项（逐行首项删，含确认框文案断言；页大小 10 场景足够） */
+/** 删净弹框内当前类型的全部字典项（逐行首项删，含确认框文案断言；页大小 10 场景足够） */
 async function deleteAllDataItems() {
+  const dlg = dataDialog()
   for (let guard = 0; guard < 100; guard++) {
-    const rows = page.locator('.data-pane .el-table__row')
+    const rows = dlg.locator('.el-table__row')
     if ((await rows.count()) === 0) {
-      const total = (await page.locator('.data-pane .el-pagination__total').innerText()).trim()
+      const total = (await dlg.locator('.el-pagination__total').innerText()).trim()
       if (total.includes('共 0 条')) return
       // 行未渲染完（翻页边界）：稍候重试
       await sleep(400)
@@ -189,49 +207,51 @@ try {
     await shot(page, 'd0-enter.png')
   })
 
-  // ================= D1 主从空态：左 4 列/共 0 条；右 9 列/空态三件套 =================
-  await step('D1', '主从空态：左表 4 列 + 恰 1 行（user_status 种子）；右表 9 列 + 标题"字典项" + el-empty"请在左侧选择字典类型" + 新增字典项 disabled', async () => {
-    // 左表 4 列精确序
+  // ================= D1 全宽类型表 + 种子行"字典项"弹框 =================
+  await step('D1', '全宽类型表：4 列 + 恰 1 行（user_status 种子）；种子行弹框：标题/5 列精确序/种子 2 行（正常/停用）/共 2 条', async () => {
+    // 类型表 4 列精确序
     const ths = page.locator('.type-pane .el-table__header-wrapper th')
     const tn = await ths.count()
     const headers = []
     for (let i = 0; i < tn; i++) headers.push(((await ths.nth(i).innerText()) || '').trim())
-    log(`  左表头(${tn}): ${JSON.stringify(headers)}`)
-    assertEq(headers.join(','), '字典名称,字典键,状态,操作', `左表头应为 4 列精确序，实际 ${JSON.stringify(headers)}`)
-    // 左表：仅剩 user_status 内置种子（契约 2026-10-07-translation-api §0.3 本轮新增，管理页可见可操作）——
+    log(`  类型表头(${tn}): ${JSON.stringify(headers)}`)
+    assertEq(headers.join(','), '字典名称,字典键,状态,操作', `类型表头应为 4 列精确序，实际 ${JSON.stringify(headers)}`)
+    // 类型表：仅剩 user_status 内置种子（契约 2026-10-07-translation-api §0.3 本轮新增，管理页可见可操作）——
     // 原"共 0 条"断言随种子落地失真，改为锁定种子行内容（名称/键/状态）与总数恰 1
     const seedRows = page.locator('.type-pane .el-table__row')
-    assertEq(await seedRows.count(), 1, `左表应恰 1 行（user_status 种子），实际 ${await seedRows.count()}`)
+    assertEq(await seedRows.count(), 1, `类型表应恰 1 行（user_status 种子），实际 ${await seedRows.count()}`)
     const seedCells = await rowCells(seedRows.first())
     log(`  种子行: ${JSON.stringify(seedCells)}`)
     assertEq(seedCells[0], '用户状态', '种子行字典名称应为 用户状态')
     assertEq(seedCells[1], 'user_status', '种子行字典键应为 user_status')
     assertEq(seedCells[2], '正常', '种子行状态应为 正常')
     const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
-    log(`  左表分页: ${leftTotal}`)
-    assertEq(leftTotal, '共 1 条', `左表分页应为 共 1 条（仅种子），实际 "${leftTotal}"`)
-    // 右表 9 列精确序
-    const dhs = page.locator('.data-pane .el-table__header-wrapper th')
+    log(`  类型表分页: ${leftTotal}`)
+    assertEq(leftTotal, '共 1 条', `类型表分页应为 共 1 条（仅种子），实际 "${leftTotal}"`)
+    // 种子行"字典项"弹框：标题（原右栏标题格式平移）+ 5 列精确序 + 种子 2 项 + 共 2 条
+    const dlg = await openDataDialog(seedRows.first())
+    assertEq(await dataDialogTitle(), '字典项：用户状态（user_status）', `弹框标题应为 字典项：用户状态（user_status），实际 "${await dataDialogTitle()}"`)
+    const dhs = dlg.locator('.el-table__header-wrapper th')
     const dn = await dhs.count()
     const dHeaders = []
     for (let i = 0; i < dn; i++) dHeaders.push(((await dhs.nth(i).innerText()) || '').trim())
-    log(`  右表头(${dn}): ${JSON.stringify(dHeaders)}`)
-    assertEq(
-      dHeaders.join(','),
-      '标签,值,排序,状态,创建人,创建时间,更新人,更新时间,操作',
-      `右表头应为 9 列精确序，实际 ${JSON.stringify(dHeaders)}`,
-    )
-    // 右栏空态三件套：纯标题 / el-empty 文案 / 新增字典项 disabled
-    assertEq(await dataPaneTitle(), '字典项', '未选中类型时右栏标题应为纯 "字典项"')
-    const emptyDesc = (await page.locator('.data-pane .el-empty__description').innerText()).trim()
-    assertEq(emptyDesc, '请在左侧选择字典类型', `右栏空态文案应为 请在左侧选择字典类型，实际 "${emptyDesc}"`)
-    const addDataBtn = page.locator('.data-pane .pane-header button', { hasText: '新增字典项' })
-    assert(await addDataBtn.isDisabled(), '未选中类型时"新增字典项"应 disabled')
-    await shot(page, 'd1-empty-state.png')
+    log(`  弹框表头(${dn}): ${JSON.stringify(dHeaders)}`)
+    assertEq(dHeaders.join(','), '标签,值,排序,状态,操作', `弹框表头应为 5 列精确序（审计 4 列已减），实际 ${JSON.stringify(dHeaders)}`)
+    const itemRows = dlg.locator('.el-table__row')
+    assertEq(await itemRows.count(), 2, `种子弹框应恰 2 行（正常/停用），实际 ${await itemRows.count()}`)
+    const itemCellsA = await rowCells(itemRows.nth(0))
+    const itemCellsB = await rowCells(itemRows.nth(1))
+    log(`  种子项行: ${JSON.stringify(itemCellsA)} / ${JSON.stringify(itemCellsB)}`)
+    assertEq(itemCellsA[0], '正常', '种子第 1 行标签应为 正常（sort 1）')
+    assertEq(itemCellsB[0], '停用', '种子第 2 行标签应为 停用（sort 2）')
+    const dlgTotal = (await dlg.locator('.el-pagination__total').innerText()).trim()
+    assertEq(dlgTotal, '共 2 条', `弹框分页应为 共 2 条，实际 "${dlgTotal}"`)
+    await shot(page, 'd1-seed-dialog.png')
+    await closeDataDialog()
   })
 
   // ================= D2 类型闭环：空提交 → 新增选中联动 → 编辑 → 3009 =================
-  await step('D2', '类型闭环：空提交必填错误（0 请求）→ 新增（三字段）→ 行选中高亮+右标题联动 → 编辑改名停用 → 同键 3009 弹窗保持', async () => {
+  await step('D2', '类型闭环：空提交必填错误（0 请求）→ 新增（三字段）→ 编辑改名停用 → 重开弹框标题跟随新名 → 同键 3009 弹窗保持', async () => {
     log(`  测试类型: ${TEST_NAME}（dictKey ${TEST_KEY}）`)
     // ---- 2a. 空提交：必填错误 + 0 请求 ----
     await page.locator('.type-pane .pane-header button', { hasText: '新增类型' }).click()
@@ -273,17 +293,8 @@ try {
     log(`  新类型行: ${JSON.stringify(cells)}`)
     assertEq(cells[0], TEST_NAME, '新行字典名称应为提交值')
     assertEq(cells[2], '正常', '新行状态应为 正常')
-    // 点击选中：current-row 高亮 + 右标题 `字典项：{名}（{键}）` + 空项表
-    await selectTypeRow(row)
-    const rowClass = (await row.getAttribute('class')) || ''
-    assert(rowClass.includes('current-row'), `选中行应带 current-row 高亮，实际 "${rowClass}"`)
-    assertEq(await dataPaneTitle(), `字典项：${TEST_NAME}（${TEST_KEY}）`, '右栏标题应为 字典项：{名}（{键}）')
-    const emptyDesc = (await page.locator('.data-pane .el-empty__description').innerText()).trim()
-    assertEq(emptyDesc, '暂无字典项', `新类型无项时右栏应为 暂无字典项，实际 "${emptyDesc}"`)
-    const addDataBtn = page.locator('.data-pane .pane-header button', { hasText: '新增字典项' })
-    assert(!(await addDataBtn.isDisabled()), '选中类型后"新增字典项"应可用')
-    await shot(page, 'd2-type-selected.png')
-    // ---- 2c. 编辑：回显 → 改名 + 停用 → 全量三字段+id → 行/右标题跟随且选中保持 ----
+    await shot(page, 'd2-type-created.png')
+    // ---- 2c. 编辑：回显 → 改名 + 停用 → 全量三字段+id → 行内更新 + 弹框标题跟随新名 ----
     await row.getByRole('button', { name: '编辑' }).click()
     const editDlg = page.locator('.el-dialog', { hasText: '编辑字典类型' }).last()
     await editDlg.waitFor({ state: 'visible', timeout: 8000 })
@@ -305,7 +316,7 @@ try {
     assertEq(putReq.status, 1, '编辑提交 status 应为 1（停用）')
     await waitToast(page, '保存成功')
     await waitDialogGone(page, '编辑字典类型')
-    // loadTypePage(当前页) 原地刷新：等行内出现新名（勿 goto——选中态与右标题联动要保持在内存态验证）
+    // loadTypePage(当前页) 原地刷新：等行内出现新名（勿 goto——保持行定位器与页面内存态，2e 重开弹框断言标题跟随）
     await page.locator('.type-pane .el-table__row', { hasText: TEST_NAME_V2 }).first().waitFor({ state: 'visible', timeout: 10000 })
     await waitTableIdle(page)
     await sleep(300)
@@ -317,11 +328,11 @@ try {
     assertEq(cellsV2[2], '停用', '行内状态应更新为 停用')
     const statusTag = rowV2.locator('.el-tag').first()
     assert(((await statusTag.getAttribute('class')) || '').includes('el-tag--danger'), `停用状态 tag 应为 danger，实际 ${await statusTag.getAttribute('class')}`)
-    // row-key 重对齐：选中保持 + 右标题跟随新名（id 不变不重查右栏）
-    const rowV2Class = (await rowV2.getAttribute('class')) || ''
-    assert(rowV2Class.includes('current-row'), '数据刷新后选中行应保持 current-row 高亮（row-key 重对齐）')
-    assertEq(await dataPaneTitle(), `字典项：${TEST_NAME_V2}（${TEST_KEY}）`, '右栏标题应跟随新字典名')
+    // 联动价值平移：重开"字典项"弹框断言标题跟随新名（原右栏标题联动断言的替代）
+    await openDataDialog(rowV2)
+    assertEq(await dataDialogTitle(), `字典项：${TEST_NAME_V2}（${TEST_KEY}）`, '弹框标题应跟随新字典名')
     await shot(page, 'd2-type-edited.png')
+    await closeDataDialog()
     // ---- 2d. 同 dictKey 再新增 → 3009 toast + 弹窗保持打开 ----
     await page.locator('.type-pane .pane-header button', { hasText: '新增类型' }).click()
     const dupDlg = page.locator('.el-dialog', { hasText: '新增字典类型' }).last()
@@ -344,26 +355,30 @@ try {
     assert((await rowCells(dupRow))[0] === TEST_NAME_V2, '3009 拦截后原类型行应保持不变')
   })
 
-  // ================= D3 项闭环：空提交 → 新增 → 3012 → 编辑 =================
-  await step('D3', '项闭环：空提交必填错误（0 请求）→ 新增（五字段、typeId 对齐）→ 同 value 3012 弹窗保持 → 编辑 label/sort 行内更新', async () => {
-    // ---- 3a. 空提交：必填错误 + 0 请求 ----
-    await page.locator('.data-pane .pane-header button', { hasText: '新增字典项' }).click()
-    const dlg = page.locator('.el-dialog', { hasText: '新增字典项' }).last()
-    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+  // ================= D3 项闭环（弹框作用域）：空提交 → 新增 → 3012 → 编辑 =================
+  await step('D3', '项闭环：空提交必填错误（0 请求）→ 新增（五字段、typeId 对齐）→ 同 value 3012 弹窗保持 → 编辑 label/sort 弹框行内更新', async () => {
+    // ---- 3a. 打开"字典项"弹框 → 新增表单空提交：必填错误 + 0 请求 ----
+    const typeRow = await findTypeRowByKey(TEST_KEY, { reload: false })
+    assert(typeRow, '应能定位测试类型行')
+    const dlg = await openDataDialog(typeRow)
+    assertEq(await dataDialogTitle(), `字典项：${TEST_NAME_V2}（${TEST_KEY}）`, '弹框标题应为 字典项：{名}（{键}）')
+    await dlg.getByRole('button', { name: '新增字典项' }).click()
+    const formDlg = dialogByTitle('新增字典项')
+    await formDlg.waitFor({ state: 'visible', timeout: 8000 })
     await shot(page, 'd3-data-dialog.png')
     const before = dataPostCount()
-    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    await formDlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
     await sleep(500)
-    const errs = await formErrors(dlg)
+    const errs = await formErrors(formDlg)
     log(`  空提交错误: ${JSON.stringify(errs)}`)
     assert(errs.includes('请输入标签'), `空提交应报"请输入标签"，实际 ${JSON.stringify(errs)}`)
     assert(errs.includes('请输入字典值'), `空提交应报"请输入字典值"，实际 ${JSON.stringify(errs)}`)
     assertEq(dataPostCount(), before, '空提交不应发出新增字典项请求')
-    // ---- 3b. 填表提交：恰五字段（typeId 注入当前选中类型）→ 行出现（sort/id 升序） ----
-    await dlg.locator('input[placeholder="请输入展示标签，如：启用"]').fill(ITEM_LABEL)
-    await dlg.locator('input[placeholder="存库值，如：0"]').fill(ITEM_VALUE)
+    // ---- 3b. 填表提交：恰五字段（typeId 注入行类型）→ 弹框内行出现 ----
+    await formDlg.locator('input[placeholder="请输入展示标签，如：启用"]').fill(ITEM_LABEL)
+    await formDlg.locator('input[placeholder="存库值，如：0"]').fill(ITEM_VALUE)
     const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/data') && r.request().method() === 'POST', { timeout: 15000 })
-    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
+    await formDlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
     const resp = await respP
     const body = await resp.json()
     const reqBody = resp.request().postDataJSON()
@@ -379,21 +394,30 @@ try {
     await waitDialogGone(page, '新增字典项')
     await waitTableIdle(page)
     await sleep(300)
-    // 右栏行出现 + 审计四值（create 与 update 同值：插入四值 = create 值，契约 §2.2 同款）
-    const rows = page.locator('.data-pane .el-table__row')
-    assertEq(await rows.count(), 1, `右栏应恰 1 行，实际 ${await rows.count()}`)
+    // 弹框内行出现（5 列精简：标签/值/排序/状态/操作——审计列已减）
+    const rows = dlg.locator('.el-table__row')
+    assertEq(await rows.count(), 1, `弹框内应恰 1 行，实际 ${await rows.count()}`)
     const cells = await rowCells(rows.first())
     log(`  新字典项行: ${JSON.stringify(cells)}`)
     assertEq(cells[0], ITEM_LABEL, '行内标签应为提交值')
     assertEq(cells[1], ITEM_VALUE, '行内值应为提交值')
     assertEq(cells[2], '0', '行内排序应为 0')
     assertEq(cells[3], '正常', '行内状态应为 正常')
-    assertEq(cells[4], 'admin', '创建人应为 admin（审计透传，契约 §3）')
-    assertEq(cells[6], 'admin', '更新人应为 admin（插入时 update 值 = create 值）')
-    assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(cells[5]), `创建时间应为 yyyy-MM-dd HH:mm:ss，实际 "${cells[5]}"`)
-    // ---- 3c. 同 value 再新增 → 3012 toast + 弹窗保持 ----
-    await page.locator('.data-pane .pane-header button', { hasText: '新增字典项' }).click()
-    const dupDlg = page.locator('.el-dialog', { hasText: '新增字典项' }).last()
+    // ---- 3b-audit. 审计断言改页内 fetch（UI 已减审计列，契约 §4.2 VO 仍返回——黑盒锁定平移） ----
+    const audited = await page.evaluate(async (typeId) => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const res = await fetch(`/api/system/dict/data/page?typeId=${typeId}&pageNum=1&pageSize=10`, { headers: { Authorization: `Bearer ${token}` } })
+      return await res.json()
+    }, reqBody.typeId)
+    assertEq(audited.code, 200, '项分页 fetch 业务码应为 200')
+    assertEq(audited.data.rows.length, 1, `fetch 应恰 1 行（当前类型仅新增的 1 项），实际 ${audited.data.rows.length}`)
+    log(`  审计 fetch: createBy=${audited.data.rows[0].createBy} updateBy=${audited.data.rows[0].updateBy} createTime=${audited.data.rows[0].createTime}`)
+    assertEq(audited.data.rows[0].createBy, 'admin', '创建人应为 admin（审计透传，契约 VO 仍返回）')
+    assertEq(audited.data.rows[0].updateBy, 'admin', '更新人应为 admin（插入时 update 值 = create 值）')
+    assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(audited.data.rows[0].createTime), `创建时间应为 yyyy-MM-dd HH:mm:ss，实际 "${audited.data.rows[0].createTime}"`)
+    // ---- 3c. 同 value 再新增 → 3012 toast + 二层弹窗保持 ----
+    await dlg.getByRole('button', { name: '新增字典项' }).click()
+    const dupDlg = dialogByTitle('新增字典项')
     await dupDlg.waitFor({ state: 'visible', timeout: 8000 })
     await dupDlg.locator('input[placeholder="请输入展示标签，如：启用"]').fill(ITEM_LABEL_B)
     await dupDlg.locator('input[placeholder="存库值，如：0"]').fill(ITEM_VALUE)
@@ -409,10 +433,10 @@ try {
     assert(await dupDlg.isVisible(), '3012 后弹窗应保持打开（可改后重提）')
     await dupDlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
     await waitDialogGone(page, '新增字典项')
-    assertEq(await page.locator('.data-pane .el-table__row').count(), 1, '3012 拦截后右栏应仍恰 1 行')
-    // ---- 3d. 编辑：回显 → 改 label + sort=5 → 全量五字段+id → 行内更新 ----
+    assertEq(await dlg.locator('.el-table__row').count(), 1, '3012 拦截后弹框内应仍恰 1 行')
+    // ---- 3d. 编辑：回显 → 改 label + sort=5 → 全量五字段+id → 弹框行内更新 ----
     await rows.first().getByRole('button', { name: '编辑' }).click()
-    const editDlg = page.locator('.el-dialog', { hasText: '编辑字典项' }).last()
+    const editDlg = dialogByTitle('编辑字典项')
     await editDlg.waitFor({ state: 'visible', timeout: 8000 })
     assertEq(await editDlg.locator('input[placeholder="请输入展示标签，如：启用"]').inputValue(), ITEM_LABEL, '编辑应回显原标签')
     assertEq(await editDlg.locator('input[placeholder="存库值，如：0"]').inputValue(), ITEM_VALUE, '编辑应回显原字典值')
@@ -439,17 +463,24 @@ try {
     log(`  编辑后字典项行: ${JSON.stringify(cellsV2)}`)
     assertEq(cellsV2[0], ITEM_LABEL_V2, '行内标签应更新为新标签')
     assertEq(cellsV2[2], '5', '行内排序应更新为 5')
-    assertEq(cellsV2[6], 'admin', '编辑后更新人应为 admin（审计透传）')
-    assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(cellsV2[7]), `更新时间应为 yyyy-MM-dd HH:mm:ss，实际 "${cellsV2[7]}"`)
+    // 编辑后审计 fetch（更新人/更新时间——原 UI 列断言的平移）
+    const auditedV2 = await page.evaluate(async (typeId) => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const res = await fetch(`/api/system/dict/data/page?typeId=${typeId}&pageNum=1&pageSize=10`, { headers: { Authorization: `Bearer ${token}` } })
+      return await res.json()
+    }, reqBody.typeId)
+    assertEq(auditedV2.data.rows[0].updateBy, 'admin', `编辑后更新人应为 admin（审计透传），实际 "${auditedV2.data.rows[0].updateBy}"`)
+    assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(auditedV2.data.rows[0].updateTime), `更新时间应为 yyyy-MM-dd HH:mm:ss，实际 "${auditedV2.data.rows[0].updateTime}"`)
     await shot(page, 'd3-item-edited.png')
+    // 弹框留着开：D4 删净项直接在弹框内继续（删类型按钮在弹框外，先关再操作）
   })
 
-  // ================= D4 删除约束：3011 禁删 → 删净项 → 删类型 → 空态回归 =================
-  await step('D4', '删除约束：有项删类型 3011 toast 行保留 → 删净字典项 → 删类型（确认框含类型名）→ 左行消失右栏回空态', async () => {
-    // ---- 4a. 有项删类型 → 3011（先重选行恢复右栏联动——find 默认 goto 会丢内存选中态） ----
-    const row = await findTypeRowByKey(TEST_KEY)
+  // ================= D4 删除约束：3011 禁删 → 弹框内删净项 → 删类型 → 行消失 =================
+  await step('D4', '删除约束：有项删类型 3011 toast 行保留 → 弹框内删净字典项 → 删类型（确认框含类型名）→ 类型行消失', async () => {
+    // ---- 4a. 有项删类型 → 3011（先关 D3 留开的弹框——删类型按钮在弹框外，modal 遮罩挡行操作） ----
+    await closeDataDialog()
+    const row = await findTypeRowByKey(TEST_KEY, { reload: false })
     assert(row, '应能定位测试类型行')
-    await selectTypeRow(row)
     await row.getByRole('button', { name: '删除' }).click()
     const box = page.locator('.el-message-box')
     await box.waitFor({ state: 'visible', timeout: 8000 })
@@ -467,15 +498,17 @@ try {
     const toastText = await waitToast(page, '先删除字典项', 'error')
     log(`  3011 toast: "${toastText}"`)
     await shot(page, 'd4-3011-toast.png')
-    // 3011 行保留复查必须原地（reload:false）——goto 会丢内存选中态导致右栏被清空、后续删项空转
+    // 3011 行保留复查原地（reload:false，页面内存态无选中语义可丢）
     const still = await findTypeRowByKey(TEST_KEY, { reload: false })
     assert(still !== null, '3011 拦截后类型行应保留（无级联删除）')
     log('  3011 行保留 ✔')
-    // ---- 4b. 删净字典项（确认框逐项含标签） ----
+    // ---- 4b. 弹框内删净字典项（确认框逐项含标签） ----
+    const dlg = await openDataDialog(still)
     await deleteAllDataItems()
-    assertEq(await page.locator('.data-pane .el-table__row').count(), 0, '字典项应已删净')
+    assertEq(await dlg.locator('.el-table__row').count(), 0, '弹框内字典项应已删净')
     log('  字典项删净 ✔')
-    // ---- 4c. 删类型成功 → 左行消失 + 右栏回空态三件套（勿 goto——空态回归靠 row-key 重对齐在内存态发生） ----
+    await closeDataDialog()
+    // ---- 4c. 删类型成功 → 类型行消失 ----
     const rowAgain = await findTypeRowByKey(TEST_KEY, { reload: false })
     assert(rowAgain, '删净项后应仍能定位类型行')
     await rowAgain.getByRole('button', { name: '删除' }).click()
@@ -490,15 +523,10 @@ try {
     log(`  删除类型接口: HTTP ${del2.status()} code=${del2Body.code}`)
     assertEq(del2Body.code, 200, '删净项后删类型业务码应为 200')
     await waitToast(page, '删除成功')
-    // 左表 loadTypePage 原地刷新 + row-key 找不到 id → current-change(null) → 右栏清空回空态
+    // 类型表 loadTypePage 原地刷新：行消失即可（主从右栏语义已不存在）
     await page.locator('.type-pane .el-table__row', { hasText: TEST_KEY }).first().waitFor({ state: 'hidden', timeout: 10000 })
     await sleep(500)
-    assertEq(await page.locator('.type-pane .el-table__row', { hasText: TEST_KEY }).count(), 0, `删除后左表不应再有 ${TEST_KEY}`)
-    // 选中行消失 → row-key 找不到 id → current-change(null) → 右栏自动清空回空态
-    assertEq(await dataPaneTitle(), '字典项', '选中类型被删后右栏标题应回纯 "字典项"')
-    const emptyDesc = (await page.locator('.data-pane .el-empty__description').innerText()).trim()
-    assertEq(emptyDesc, '请在左侧选择字典类型', `右栏应回空态文案，实际 "${emptyDesc}"`)
-    assert(await page.locator('.data-pane .pane-header button', { hasText: '新增字典项' }).isDisabled(), '右栏"新增字典项"应回 disabled')
+    assertEq(await page.locator('.type-pane .el-table__row', { hasText: TEST_KEY }).count(), 0, `删除后类型表不应再有 ${TEST_KEY}`)
     await shot(page, 'd4-after-type-delete.png')
   })
 
@@ -597,10 +625,11 @@ try {
         }
       }
       if (target) {
-        // 删一个类型 = 结构性变化：先删净其字典项（D5 禁删约束）再删类型，然后回第 1 页重扫
+        // 删一个类型 = 结构性变化：弹框内删净其字典项（3011 禁删约束）→ 关弹框 → 删类型，然后回第 1 页重扫
         log(`  [清扫] 发现残留类型 ${targetKey}，先删净其字典项`)
-        await selectTypeRow(target)
+        await openDataDialog(target)
         await deleteAllDataItems()
+        await closeDataDialog()
         await target.getByRole('button', { name: '删除' }).click()
         await confirmDelete('确定删除字典类型')
         await waitToast(page, '删除成功')
