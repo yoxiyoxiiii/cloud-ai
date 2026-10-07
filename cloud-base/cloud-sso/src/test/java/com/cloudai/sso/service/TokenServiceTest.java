@@ -6,6 +6,7 @@ import com.cloudai.common.security.constant.SecurityConstants;
 import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.sso.client.SystemUserClient;
 import com.cloudai.sso.domain.OnlineSession;
+import com.cloudai.sso.dto.CurrentUserVo;
 import com.cloudai.sso.dto.LoginResult;
 import com.cloudai.sso.dto.LoginUserDTO;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -237,5 +238,48 @@ class TokenServiceTest {
         tokenService.logout(token);
         verify(stringRedisTemplate).delete("sso:online:jti-1");
         verify(stringRedisTemplate).delete("sso:refresh:1");
+    }
+
+    @Test
+    void findCurrentUser_returnsAccountAndPermissions() throws Exception {
+        injectSecret();
+        String token = com.cloudai.common.security.util.JwtUtil.createToken(TEST_SECRET, 1L, "admin", "jti-me", 7200);
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        OnlineSession session = new OnlineSession();
+        session.setTokenId("jti-me");
+        session.setUserId(1L);
+        session.setAccount("admin");
+        session.setPermissions(List.of("system:user:list", "system:user:add"));
+        session.setLoginTime(1L);
+        session.setIp("127.0.0.1");
+        when(valueOps.get(startsWith("sso:online:"))).thenReturn(sessionJson(session));
+
+        CurrentUserVo vo = tokenService.findCurrentUser(token);
+
+        assertThat(vo.getAccount()).isEqualTo("admin");
+        assertThat(vo.getPermissions()).containsExactly("system:user:list", "system:user:add");
+    }
+
+    @Test
+    void findCurrentUser_missingRedisSessionThrows401() throws Exception {
+        injectSecret();
+        String token = com.cloudai.common.security.util.JwtUtil.createToken(TEST_SECRET, 1L, "admin", "jti-gone", 7200);
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get(startsWith("sso:online:"))).thenReturn(null);
+
+        assertThatThrownBy(() -> tokenService.findCurrentUser(token))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getCode()).isEqualTo(401))
+                .hasMessageContaining("会话已失效");
+    }
+
+    @Test
+    void findCurrentUser_invalidTokenThrows401() throws Exception {
+        injectSecret();
+
+        assertThatThrownBy(() -> tokenService.findCurrentUser("not-a-jwt"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getCode()).isEqualTo(401))
+                .hasMessageContaining("会话已失效");
     }
 }

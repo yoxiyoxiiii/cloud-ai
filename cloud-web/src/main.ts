@@ -4,6 +4,7 @@ import './style.css'
 import App from './App.vue'
 import router from './router'
 import { getAppPrefs } from './utils/storage'
+import { vPerms } from './directives/perms'
 
 // Element Plus 按需引入（前端规范）：模板组件由 unplugin-vue-components 自动解析，
 // 不在此全量 app.use(ElementPlus)；函数式 API（ElMessage/ElMessageBox）在使用处显式 import，
@@ -26,5 +27,9 @@ const app = createApp(App)
 
 app.use(createPinia())
 app.use(router)
+
+// v-perms 按钮级权限指令全局注册（契约 perms-api §4）：不命中快照即移除 DOM，
+// 任意页面模板直接 v-perms="'system:user:add'"（main.ts 注册点，避免每页局部注册样板）
+app.directive('perms', vPerms)
 
 app.mount('#app')

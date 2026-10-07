@@ -97,7 +97,7 @@ onMounted(() => {
     <template #header>
       <div class="table-header">
         <span>菜单管理</span>
-        <el-button type="primary" @click="openAdd">新增菜单</el-button>
+        <el-button v-perms="'system:menu:add'" type="primary" @click="openAdd">新增菜单</el-button>
       </div>
     </template>
 
@@ -143,8 +143,16 @@ onMounted(() => {
       </el-table-column>
       <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(rowOf(row))">编辑</el-button>
-          <el-button link type="danger" @click="handleDelete(rowOf(row))">删除</el-button>
+          <el-button v-perms="'system:menu:edit'" link type="primary" @click="openEdit(rowOf(row))"
+            >编辑</el-button
+          >
+          <el-button
+            v-perms="'system:menu:remove'"
+            link
+            type="danger"
+            @click="handleDelete(rowOf(row))"
+            >删除</el-button
+          >
         </template>
       </el-table-column>
     </el-table>

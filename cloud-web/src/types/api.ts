@@ -26,6 +26,16 @@ export interface LoginResult {
   expiresIn: string
 }
 
+/**
+ * 当前会话信息 VO（契约 2026-10-07-perms-api §2，/sso/auth/me 出参，additive 新端点）：
+ * permissions 为登录时权限快照（会话内不变，契约 §1；零角色/零绑定为 [] 合法态，按钮全隐）；
+ * 最小暴露面：不含 userId/ip/loginTime/tokenId（与 token 声明及网关执法同一 Redis 快照）
+ */
+export interface CurrentUserVo {
+  account: string
+  permissions: string[]
+}
+
 /** 用户 VO（契约 §6）：status 语义 0=正常 1=停用 */
 export interface SysUserVo {
   id: string

@@ -2,6 +2,7 @@ package com.cloudai.sso.controller;
 
 import com.cloudai.common.core.domain.R;
 import com.cloudai.sso.domain.OnlineSession;
+import com.cloudai.sso.dto.CurrentUserVo;
 import com.cloudai.sso.dto.LoginRequest;
 import com.cloudai.sso.dto.LoginResult;
 import com.cloudai.sso.dto.RefreshRequest;
@@ -48,6 +49,13 @@ public class AuthController {
     public R<Void> logout(@RequestHeader("Authorization") String authorization) {
         tokenService.logout(stripBearer(authorization));
         return R.ok();
+    }
+
+    /** 查询当前会话信息（账号与权限快照） */
+    @GetMapping("/me")
+    public R<CurrentUserVo> me(@RequestHeader("Authorization") String authorization) {
+        CurrentUserVo vo = tokenService.findCurrentUser(stripBearer(authorization));
+        return R.ok(vo);
     }
 
     /** 查询在线会话列表 */

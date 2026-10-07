@@ -8,12 +8,14 @@ import com.cloudai.common.security.util.JwtUtil;
 import com.cloudai.sso.client.SystemUserClient;
 import com.cloudai.sso.domain.OnlineSession;
 import com.cloudai.sso.domain.RefreshTokenValue;
+import com.cloudai.sso.dto.CurrentUserVo;
 import com.cloudai.sso.dto.LoginResult;
 import com.cloudai.sso.dto.LoginUserDTO;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -21,6 +23,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -158,6 +161,29 @@ public class TokenService {
 
     public void kick(String tokenId) {
         stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
+    }
+
+    public CurrentUserVo findCurrentUser(String accessToken) {
+        Claims claims;
+        try {
+            claims = JwtUtil.parseToken(jwtProperties.getSecret(), accessToken);
+        } catch (JwtException e) {
+            log.error("accessToken 解析失败", e);
+            throw new BusinessException(401, "会话已失效，请重新登录");
+        }
+        String tokenId = claims.getId();
+        String onlineJson = stringRedisTemplate.opsForValue()
+                .get(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
+        OnlineSession session = parseSession(onlineJson);
+        if (session == null) {
+            // 防御路径：网关刚放行而 Redis 会话竞态缺失（契约 §2 错误表，理论不达）
+            throw new BusinessException(401, "会话已失效，请重新登录");
+        }
+        CurrentUserVo vo = new CurrentUserVo();
+        vo.setAccount(session.getAccount());
+        // 旧格式会话残留无 permissions 字段时兜底空数组（契约必返 string[]）
+        vo.setPermissions(session.getPermissions() == null ? Collections.emptyList() : session.getPermissions());
+        return vo;
     }
 
     private LoginResult issueTokens(LoginUserDTO dto, String ip) {

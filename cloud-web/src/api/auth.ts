@@ -1,9 +1,10 @@
 /**
  * 认证接口（契约 §2，cloud-sso，网关前缀 /sso）
  * login 使用 skipErrorMessage：登录页内联展示后端 msg，不弹全局 toast
+ * getMe 为 additive 新端点（契约 2026-10-07-perms-api §2；pilot §2.1-2.5 与 LoginResult 零变化）
  */
 import { request } from '../utils/request'
-import type { LoginResult, OnlineSessionVo } from '../types/api'
+import type { CurrentUserVo, LoginResult, OnlineSessionVo } from '../types/api'
 
 export interface LoginPayload {
   account: string
@@ -42,4 +43,9 @@ export function listOnline(): Promise<OnlineSessionVo[]> {
 /** 强退会话（契约 §2.5，MVP 未消费） */
 export function kickOnline(tokenId: string): Promise<null> {
   return request<null>({ url: `/sso/auth/online/${tokenId}`, method: 'delete' })
+}
+
+/** 当前会话信息（契约 perms-api §2）：账号 + 权限快照（登录时快照，会话内不变） */
+export function getMe(): Promise<CurrentUserVo> {
+  return request<CurrentUserVo>({ url: '/sso/auth/me', method: 'get' })
 }

@@ -7,9 +7,11 @@
  * - 动态层：登录后守卫调 menuStore.ensureLoaded()，buildRoutes 对 user-nav 的 C 节点
  *   逐个 addRoute('Layout', ...)（stores/menu.ts 单一来源，系统管理三页自此按 RBAC 注册）
  * - 守卫流程（D6 防环）：MenuError 恒放行最前（失败跳 /login 会被登录页守卫弹回成环）→
- *   public → 未登录 → !loaded 则 await ensureLoaded()（失败按 §9 矩阵分流：401 已清态 →
- *   /login 带 redirect；其余失败落 MenuError；成功 return to.fullPath 重新匹配——
- *   刷新/直链深路径的关键）；token 签名/过期是网关职责
+ *   public → 未登录 → 菜单/权限任一未加载则 Promise.all 并行拉齐（按钮级权限设计 D3
+ *   并行原子门：menu=导航实时域 user-nav，perm=快照域 /sso/auth/me，两请求同批不叠时延；
+ *   失败按 §9 矩阵分流：401 已清态 → /login 带 redirect；其余失败落 MenuError；成功
+ *   return to.fullPath 重新匹配——刷新/直链深路径的关键，也是 v-perms 指令"组件挂载
+ *   先于 perms 就位"的时序保证）；token 签名/过期是网关职责
  * - 模块环说明：顶部 import stores/menu 与 store 顶部 import router 互为环，双方仅在
  *   函数体内使用对方（守卫回调运行时调用，设计 D7 论证），ESM live binding 安全
  */
@@ -22,6 +24,7 @@ import RedirectView from '../views/redirect/index.vue'
 import NotFoundView from '../views/error/NotFound.vue'
 import MenuErrorView from '../views/error/MenuError.vue'
 import { useMenuStore } from '../stores/menu'
+import { usePermStore } from '../stores/perm'
 import { getAuth } from '../utils/storage'
 import { APP_TITLE } from '../constants/app'
 
@@ -101,22 +104,27 @@ router.beforeEach(async (to) => {
   if (!logged) {
     return { path: '/login', query: { redirect: to.fullPath } }
   }
-  // 已登录但菜单未加载：等 user-nav + 动态路由注册完成再放行（首次认证导航/刷新/直链）
+  // 已登录但菜单或权限快照任一未加载：并行拉齐再放行（首次认证导航/刷新/直链）。
+  // 条件取"或"而非仅 menu（主控裁决 R2）：消除"menu 已 loaded 而 perm 未加载即放行"的
+  // 状态分叉类缺陷；Promise.all 幂等——已 loaded 的 store ensureLoaded() 立即返 true 不重发
   const menuStore = useMenuStore()
-  if (!menuStore.loaded) {
-    const ok = await menuStore.ensureLoaded()
+  const permStore = usePermStore()
+  if (!menuStore.loaded || !permStore.loaded) {
+    const [menuOk, permOk] = await Promise.all([menuStore.ensureLoaded(), permStore.ensureLoaded()])
+    const ok = menuOk && permOk
     if (!ok) {
-      // 401 区分（设计 §9 失败矩阵：user-nav 401 走 request.ts 既有清态跳登录）：
+      // 401 区分（设计 §9 失败矩阵：user-nav / me 的 401 走 request.ts 既有清态跳登录）：
       // 失败时若 token 已被 401 拦截器 clearAuth 清除（先于本守卫返回执行），
       // 补发 /login 重定向并携带原目标回跳——此刻已未登录，无 D6 成环风险；
-      // 其余失败（网络/5xx/旧后端 404，token 仍在）才落 MenuError 专用页
+      // 其余失败（网络/5xx，token 仍在）才落 MenuError 专用页
       // （不可跳 /login：已登录会被登录页守卫弹回成环，见文件头注释）
       if (!getAuth()?.accessToken) {
         return { path: '/login', query: { redirect: to.fullPath } }
       }
       return { name: 'MenuError', query: { redirect: to.fullPath } }
     }
-    // 动态路由已注册：以同路径重新发起导航触发重新匹配
+    // 动态路由已注册：以同路径重新发起导航触发重新匹配——组件挂载先于两个 store
+    // loaded 完成，v-perms 指令 mounted 读取时 perms 恒已就位（设计 D3 时序保证）
     return to.fullPath
   }
   return true

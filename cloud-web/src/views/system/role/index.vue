@@ -107,7 +107,7 @@ onMounted(() => {
     <template #header>
       <div class="table-header">
         <span>角色管理</span>
-        <el-button type="primary" @click="openAdd">新增角色</el-button>
+        <el-button v-perms="'system:role:add'" type="primary" @click="openAdd">新增角色</el-button>
       </div>
     </template>
 
@@ -135,9 +135,23 @@ onMounted(() => {
       </el-table-column>
       <el-table-column label="操作" width="200" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(rowOf(row))">编辑</el-button>
-          <el-button link type="primary" @click="openAssignMenu(rowOf(row))">分配权限</el-button>
-          <el-button link type="danger" @click="handleDelete(rowOf(row))">删除</el-button>
+          <el-button v-perms="'system:role:edit'" link type="primary" @click="openEdit(rowOf(row))"
+            >编辑</el-button
+          >
+          <el-button
+            v-perms="'system:role:assignMenu'"
+            link
+            type="primary"
+            @click="openAssignMenu(rowOf(row))"
+            >分配权限</el-button
+          >
+          <el-button
+            v-perms="'system:role:remove'"
+            link
+            type="danger"
+            @click="handleDelete(rowOf(row))"
+            >删除</el-button
+          >
         </template>
       </el-table-column>
     </el-table>

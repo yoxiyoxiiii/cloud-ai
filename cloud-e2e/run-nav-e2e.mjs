@@ -1,16 +1,21 @@
 /**
  * 业务动态路由 e2e（计划 2026-10-07 E2：N0-N6 + CLEANUP + N-VERIFY；harness 复用 lib/harness.mjs）
+ * 2026-10-07 按钮级权限改造（计划 E1 / 设计 D7）：N5 重设计 + N2f/N4/N6/N1 增补 + N3 微适配
  *
- * 运行前提：后端 gateway 18080 / sso 9201 / system 9202（v2 契约版含 user-nav）已启动；前端 dev 5173 已启动
+ * 运行前提：后端 gateway 18080 / sso 9201（须为含 /sso/auth/me 版本，契约 2026-10-07-perms-api）/ system 9202（v2 契约版含 user-nav）已启动；前端 dev 5173 已启动
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 npm run e2e:nav）
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码
  * 测试数据（删净纪律最高优先）：
  * - 角色/用户/角色标识全部 e2e 前缀+时间戳；绝不改 admin/种子账号；种子菜单（10/11/12/13/111…20/21/211）零触碰
  * - 结束删除测试用户与测试角色并断言删净（含 N5 意外落库兜底删除）
- * 核心断言（设计 D10 / 契约 §2 §3）：
- * - N1 admin user-nav 形状逐字段（根 M 系统管理 + 3 个 C 带 path/icon；无 F；20/21 被剪）
+ * 核心断言（设计 D10 / 契约 §2 §3 + perms-api §4 §6）：
+ * - N1 admin user-nav 形状逐字段（根 M 系统管理 + 3 个 C 带 path/icon；无 F；20/21 被剪）+ me 形状与恰 1 次
  * - N2 RBAC 闭环：角色仅绑"角色管理"分支 → 新用户侧边恰 '角色管理,工作台' 且角色页可加载
- * - N5 两维时效：可见≠可操作——按钮可见可点，提交被 @PreAuthorize 拒（HTTP 200 + body 403）
+ * - N2f 按钮粒度：受限用户（快照 list+edit）表头新增/行内分配权限·删除隐藏、编辑可见
+ * - N4 F5 刷新：路由/菜单/高亮保持 + user-nav 与 me 各恰 +1 + 按钮隐藏保持
+ * - N5 两维时效：按钮已随登录快照隐藏（v-perms，DOM 移除）+ page.request 直连仍 body 403
+ *   （服务层最终防线，双证据并存——防"前端隐藏"被绕过后无人兜底的回归）
+ * - N6 admin 重登恢复全量菜单 + 角色页按钮全显（全量快照回归零影响）
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -64,6 +69,9 @@ const apiPath = (url, pathname) => new URL(url).pathname === pathname
 
 /** user-nav 调用计数（N4 增量断言用） */
 const navCount = () => h.state.apiCalls.filter((c) => c.url === '/api/system/menu/user-nav').length
+
+/** /sso/auth/me 调用计数（N1/N4 增量断言用——守卫并行原子门，每次全新引导恰 1 次） */
+const meCount = () => h.state.apiCalls.filter((c) => c.url === '/api/sso/auth/me').length
 
 /** 读取侧边全部菜单项文本（el-menu-item；M 目录标题在 el-sub-menu__title 不入此域）。
  *  等待用 .sidebar-menu：el-sub-menu 的内层 ul.el-menu--inline 也带 .el-menu 类，
@@ -139,17 +147,6 @@ async function clickPermCheckBox(dlg, nodeText) {
   await box.click()
 }
 
-/** 等待任意错误 toast 出现并返回文本（N5：后端 403 msg 不逐码映射，出现即证据） */
-async function waitAnyErrorToast(timeout = 8000) {
-  const t0 = Date.now()
-  while (Date.now() - t0 < timeout) {
-    const t = page.locator('.el-message--error')
-    if ((await t.count()) > 0 && (await t.first().isVisible())) return (await t.first().innerText()).trim()
-    await sleep(150)
-  }
-  throw new Error('等待错误 toast 超时')
-}
-
 try {
   // ================= N0 前置：admin 登录 =================
   await step('N0', 'admin 登录（前置）', async () => {
@@ -160,16 +157,28 @@ try {
     log(`  登录落点: ${page.url()}`)
   })
 
-  // ================= N1 admin 全量可见 + user-nav API 形状（契约 §2） =================
-  await step('N1', 'admin user-nav 形状逐字段 + 侧边全量导航（M1 精确串复核动态源）', async () => {
-    // 重载触发全新守卫流程：内存态清空 → 守卫 ensureLoaded → user-nav（模拟刷新/直链路径）
+  // ================= N1 admin 全量可见 + user-nav API 形状（契约 §2）+ me 形状（perms-api §2） =================
+  await step('N1', 'admin user-nav 形状逐字段 + me 形状 + 侧边全量导航（M1 精确串复核动态源）', async () => {
+    // 重载触发全新守卫流程：内存态清空 → 守卫并行 ensureLoaded → user-nav + me（模拟刷新/直链路径）
     const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/menu/user-nav'), { timeout: 15000 })
+    const meRespP = page.waitForResponse((r) => apiPath(r.url(), '/api/sso/auth/me'), { timeout: 15000 })
+    const meBefore = meCount()
     await page.reload({ waitUntil: 'domcontentloaded' })
     const resp = await respP
+    const meResp = await meRespP
     const body = await resp.json()
     log(`  user-nav 接口: HTTP ${resp.status()} code=${body.code}`)
     assertEq(resp.status(), 200, '契约：HTTP 恒 200')
     assertEq(body.code, 200, 'user-nav 业务码应为 200')
+    // me 形状（契约 perms-api §2）：account=admin + 全量快照（17 项：user6+role5+menu4+sso2）
+    const meBody = await meResp.json()
+    log(`  me 接口: HTTP ${meResp.status()} code=${meBody.code} account=${meBody.data.account} perms=${meBody.data.permissions.length} 项`)
+    assertEq(meResp.status(), 200, 'me：HTTP 恒 200')
+    assertEq(meBody.code, 200, 'me 业务码应为 200')
+    assertEq(meBody.data.account, 'admin', 'me account 应为 admin')
+    assert(Array.isArray(meBody.data.permissions), `me permissions 应为数组，实际 ${typeof meBody.data.permissions}`)
+    assert(meBody.data.permissions.includes('system:role:add'), 'admin 快照应含 system:role:add')
+    assert(meBody.data.permissions.includes('sso:online:list'), 'admin 快照应含 sso:online:list')
     const nav = body.data
     assert(Array.isArray(nav), `data 应为数组，实际 ${typeof nav}`)
     // 根级恰 1 节点：M 系统管理（icon Setting——契约 §2 示例）
@@ -211,6 +220,8 @@ try {
     assertEq(labels.join(','), '用户管理,角色管理,菜单管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→工作台')
     // 嵌套结构证据：根 M 渲染为 el-sub-menu（侧边栏嵌套布局）
     assert((await page.locator('.el-menu .el-sub-menu').count()) >= 1, '根目录 M 应渲染为 el-sub-menu')
+    await sleep(800) // 落定窗口内不应有额外 me（守卫并行门只拉一次，无重复请求）
+    assertEq(meCount() - meBefore, 1, `本轮刷新 me 请求应恰 +1（与 user-nav 同批并行），实际 +${meCount() - meBefore}`)
     await shot(page, 'n1-admin-menu.png')
   })
 
@@ -319,6 +330,15 @@ try {
     const bc = await breadcrumbTexts(page)
     assertEq(bc.join('/'), '首页/角色管理', '面包屑应为 首页/角色管理')
     log('  受限用户角色页加载 ✔（表格行可见）')
+
+    // ---- 2f. 按钮级权限粒度（契约 perms-api §4/§6；设计 D7 N2f）：快照=list+edit ----
+    // 同页不同按钮不同显隐 = 粒度到按钮而非页面；绑定先于登录（两维同设，契约 §5 e2e 纪律允许断言）
+    await sleep(500) // 指令 mounted 移除落定
+    assertEq(await page.getByRole('button', { name: '新增角色' }).count(), 0, '表头"新增角色"应隐藏（system:role:add 不在快照，DOM 移除）')
+    assert((await page.locator('.el-table__row button', { hasText: '编辑' }).count()) > 0, '行内"编辑"应可见（system:role:edit 在快照）')
+    assertEq(await page.locator('.el-table__row button', { hasText: '分配权限' }).count(), 0, '行内"分配权限"应隐藏（system:role:assignMenu 不在快照）')
+    assertEq(await page.locator('.el-table__row button', { hasText: '删除' }).count(), 0, '行内"删除"应隐藏（system:role:remove 不在快照）')
+    await shot(page, 'n2f-perm-granularity.png')
   })
 
   // ================= N3 直链无权限兜底 =================
@@ -330,7 +350,8 @@ try {
     const subText = (await sub.innerText()).trim()
     log(`  兜底页文案: "${subText}"`)
     assert(subText.includes('页面不存在或无访问权限'), `兜底文案应含"页面不存在或无访问权限"，实际 "${subText}"`)
-    assert(!(await page.getByText('菜单加载失败').count()), '不应是菜单加载失败页（导航加载成功，只是无权限）')
+    // MenuError 文案改"菜单或权限加载失败"后原文本断言已失效（设计 D7 微适配）——语义更直接的 URL 判断
+    assert(!page.url().includes('menu-error'), `不应落 menu-error（导航加载成功，只是无权限），实际 ${page.url()}`)
     assertEq(new URL(page.url()).pathname, '/system/menu', 'URL 应保持 /system/menu（不重定向）')
     // Layout 兜底渲染证据：侧边仍是受限菜单
     const labels = await menuLabels()
@@ -342,11 +363,12 @@ try {
   })
 
   // ================= N4 F5 刷新保持 =================
-  await step('N4', 'F5 刷新保持：/system/role reload → 路由/菜单/高亮保持 + user-nav 恰 +1', async () => {
+  await step('N4', 'F5 刷新保持：/system/role reload → 路由/菜单/高亮保持 + user-nav/me 各恰 +1 + 按钮隐藏保持', async () => {
     await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
     await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })
     await waitTableIdle(page)
     const before = navCount()
+    const meBefore = meCount()
     const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/menu/user-nav'), { timeout: 15000 })
     await page.reload({ waitUntil: 'domcontentloaded' })
     await respP
@@ -359,46 +381,55 @@ try {
     assertEq(bc.join('/'), '首页/角色管理', '刷新后面包屑应保持')
     const labels = await menuLabels()
     assertEq(labels.join(','), '角色管理,工作台', '刷新后侧边菜单应保持')
-    await sleep(800) // 落定窗口内不应有额外 user-nav（无重复拉取）
+    await sleep(800) // 落定窗口内不应有额外 user-nav / me（无重复拉取）
     assertEq(navCount() - before, 1, `本轮刷新 user-nav 请求应恰 +1（内存态重建），实际 +${navCount() - before}`)
+    assertEq(meCount() - meBefore, 1, `本轮刷新 me 请求应恰 +1（快照重取，与 user-nav 同批并行），实际 +${meCount() - meBefore}`)
+    // 按钮隐藏保持（perms-api §4：F5 守卫重拉，快照语义不变——显隐不受刷新影响）
+    assertEq(await page.getByRole('button', { name: '新增角色' }).count(), 0, '刷新后表头"新增角色"应保持隐藏')
     await shot(page, 'n4-after-reload.png')
   })
 
-  // ================= N5 两维时效语义（可见 ≠ 可操作） =================
-  await step('N5', '两维时效：新用户点新增角色（按钮可见）→ HTTP 200 + body 403 → toast + 行不新增', async () => {
-    // 前端无按钮级权限（设计 §7 移交项）：按钮可见可开弹窗；提交被后端 @PreAuthorize 拒
-    await page.getByRole('button', { name: '新增角色' }).click()
-    const dlg = page.locator('.el-dialog', { hasText: '新增角色' }).last()
-    await dlg.waitFor({ state: 'visible', timeout: 8000 })
-    await dlg.locator('input[placeholder="请输入角色名称"]').fill(TEST_403_ROLE_NAME)
-    await dlg.locator('input[placeholder="字母开头，如 ops"]').fill(TEST_403_ROLE_KEY)
-    const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/role') && r.request().method() === 'POST', { timeout: 15000 })
-    await dlg.locator('.el-dialog__footer button', { hasText: '保存' }).click()
-    const resp = await respP
+  // ================= N5 两维时效语义（按钮随快照隐藏 + 后端 403 兜底，双证据） =================
+  await step('N5', '两维时效：受限用户"新增角色"按钮已隐藏（v-perms）+ 直连 API 仍 body 403（最终防线）', async () => {
+    // 前端证据：按钮随登录快照隐藏（perms-api §4：显隐=快照，DOM 移除；原"可见可点提交 403"路径已删）
+    await sleep(500) // 指令 mounted 移除落定
+    assertEq(await page.getByRole('button', { name: '新增角色' }).count(), 0, '表头"新增角色"应随快照隐藏（system:role:add 不在快照）')
+    // 后端证据：绕过 UI 直连 API（page.request 不经 page 网络事件，不污染 N-VERIFY 统计）——
+    // 前端隐藏不是防线本身，@PreAuthorize 403 兜底证据必须并存（缺一即回归，设计 D7）
+    const auth = await page.evaluate(() => JSON.parse(localStorage.getItem('cloud-web:auth') || 'null'))
+    assert(auth?.accessToken, '应能从 localStorage 取到受限用户 accessToken（浏览器态读取，黑盒纪律允许）')
+    const resp = await page.request.post(`${BASE}/api/system/role`, {
+      headers: { Authorization: `Bearer ${auth.accessToken}` },
+      data: { name: TEST_403_ROLE_NAME, roleKey: TEST_403_ROLE_KEY },
+    })
     const body = await resp.json()
-    log(`  新增接口: HTTP ${resp.status()} body.code=${body.code} msg="${body.msg}"`)
-    assertEq(resp.status(), 200, '契约：HTTP 恒 200（403 在 body，不入 ≥400 统计）')
-    assertEq(body.code, 403, '无 system:role:add 权限应 body 403（@PreAuthorize 拒绝语义）')
-    const toastText = await waitAnyErrorToast()
-    log(`  错误 toast: "${toastText}"`)
-    assert(toastText.length > 0, '应出现错误 toast（拦截器透传后端 msg）')
-    assert(await dlg.isVisible(), '提交被拒后弹窗应保持打开')
-    await dlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
-    await waitDialogGone(page, '新增角色')
+    log(`  直连新增接口: HTTP ${resp.status()} body.code=${body.code} msg="${body.msg}"`)
+    assertEq(resp.status(), 200, '契约：HTTP 恒 200（403 在 body；page.request 流量不入 page 网络统计）')
+    assertEq(body.code, 403, '无 system:role:add 权限直连提交应 body 403（@PreAuthorize 最终防线）')
+    assert(typeof body.msg === 'string' && body.msg.length > 0, `403 msg 应非空，实际 "${body.msg}"`)
     // 列表不新增该行（全表检索；N5 若意外成功落库由 CLEANUP 兜底删净）
     const leaked = await findRoleRowByKey(TEST_403_ROLE_KEY)
     assert(leaked === null, `403 后角色列表不应新增 ${TEST_403_ROLE_KEY}`)
-    await shot(page, 'n5-403-evidence.png')
+    await shot(page, 'n5-hidden-and-403.png')
   })
 
   // ================= N6 登出清态 + admin 恢复 =================
-  await step('N6', '登出清态：新用户登出 → admin 登录侧边恢复全量四项（动态路由清空重建）', async () => {
+  await step('N6', '登出清态：新用户登出 → admin 登录侧边恢复全量四项 + 角色页按钮全显（三件套清态重建）', async () => {
     await logoutViaUi(page)
     const r = await login(page, 'admin', 'admin123')
     assert(r.ok, `admin 重新登录应成功: ${r.msg || ''}`)
     const labels = await menuLabels()
     log(`  admin 恢复菜单项: ${JSON.stringify(labels)}`)
     assertEq(labels.join(','), '用户管理,角色管理,菜单管理,工作台', 'admin 重登应恢复全量四项（登录页 reset 清态 + 守卫按新账号重建）')
+    // 按钮级权限回归（perms-api §4：admin 全量快照 → 全显；受限快照零残留——三件套 reset 生效证据）
+    await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
+    await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })
+    await waitTableIdle(page)
+    await sleep(500)
+    assertEq(await page.getByRole('button', { name: '新增角色' }).count(), 1, 'admin 重登后表头"新增角色"应可见')
+    assert((await page.locator('.el-table__row button', { hasText: '编辑' }).count()) > 0, 'admin 行内"编辑"应可见')
+    assert((await page.locator('.el-table__row button', { hasText: '分配权限' }).count()) > 0, 'admin 行内"分配权限"应可见')
+    assert((await page.locator('.el-table__row button', { hasText: '删除' }).count()) > 0, 'admin 行内"删除"应可见')
     await shot(page, 'n6-admin-restored.png')
   })
 
@@ -472,7 +503,7 @@ try {
     const noiseFree404 = asset404.filter((u) => !u.includes('favicon'))
     assertEq(noiseFree404.length, 0, `非 favicon 的资产 404 不应存在，实际 ${JSON.stringify(asset404)}`)
     assertEq(h.state.pageErrors.length, 0, `不应有未捕获异常，实际 ${JSON.stringify(h.state.pageErrors)}`)
-    assertEq(h.state.badResponses.length, 0, `不应有 >=400 的 /api 响应（N5 的 403 为 HTTP 200 + body），实际 ${JSON.stringify(h.state.badResponses)}`)
+    assertEq(h.state.badResponses.length, 0, `不应有 >=400 的 /api 响应（N5 的 403 为 page.request 直连，不进 page 网络事件），实际 ${JSON.stringify(h.state.badResponses)}`)
     assertEq(h.state.requestFailures.length, 0, `不应有网络失败，实际 ${JSON.stringify(h.state.requestFailures)}`)
   })
 } finally {
