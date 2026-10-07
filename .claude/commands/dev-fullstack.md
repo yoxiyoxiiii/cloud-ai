@@ -17,7 +17,7 @@ description: 全栈轨道开发（SOP 三轨道）：架构→后端∥前端真
 ## ② 并行实现（真并行）
 
 - **两个 Agent 工具调用放同一条消息**派发 = 真并行（不同目录零冲突）：
-  - `backend-agent`：按契约+计划实现 → 守护测试全绿 → curl 验收（新增 CRUD 先调 `/backend-crud` 技能）
+  - `backend-agent`：按契约+计划实现 → 守护测试全绿 → curl 验收（先调 `/backend-spec` 技能——后端规范基准，不止 CRUD）
   - `frontend-agent`：按契约实现（后端未就绪先 mock）→ build + dev 联通（遵循 `/frontend-page` 技能）
 - 处理 NEEDS_CONTEXT 上报；契约问题回流 architect-agent 修订，不得两端单方改
 

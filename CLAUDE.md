@@ -84,7 +84,7 @@ cloud-base/
 - **跨域只在网关做**（下游配 CORS 会产生双 ACAO 头）。
 - 包名 `com.cloudai.<service>`，groupId `com.cloudai`。
 
-### 编码规范（自 cloud-system 沉淀、适用全部后端服务；三层保障 = 本节 + `/backend-crud` 技能 + ArchitectureGuardTest）
+### 编码规范（自 cloud-system 沉淀、适用全部后端服务；三层保障 = 本节 + `/backend-spec` 技能 + ArchitectureGuardTest）
 
 **分层依赖**：Controller → Service → Mapper（XML）。Controller 禁止 import mapper；Feign 内部接口放 `controller/feign/` 子包。
 
@@ -109,6 +109,7 @@ cloud-base/
 - 动态列用 `<trim>/<set>` + `<if>`（等价 MP NOT_NULL 策略，避免 NULL 打穿 NOT NULL DEFAULT 列）
 - 聚合查询优先 JOIN 一次成型（参考 selectPermsByAccount）
 - 列名-实体映射依赖驼峰（application.yml 已显式 `map-underscore-to-camel-case: true`）
+- **索引**：每表 DDL 按查询清单显式设计索引（`uk_` 兼查重、关联列/高频 WHERE/排序列补 `idx_`，取舍写明）；迭代新增查询路径时审查既有表索引（EXPLAIN 抽查，缺失出增量 ALTER）
 
 **DTO/实体**：密码类敏感字段 `@ToString.Exclude` + `@JsonProperty(WRITE_ONLY)`；关联表实体不继承 BaseEntity（纯关系，无逻辑删除列）
 
@@ -123,7 +124,7 @@ cloud-base/
 8. **实体状态枚举**：状态类字段（status/deleted 等）在**实体类内部**建嵌套枚举，**枚举名以 Enum 为后缀**（如 `SysUser.StatusEnum{NORMAL(0),DISABLED(1)}`，含 code 与 of(code)），**字段类型保持 Integer 映射**；Java 代码引用枚举常量禁魔法数（SQL 字面量除外）
 9. **VO 隔离**：Controller 返回一律 VO 对象（禁 DB 实体直出）；**Service 层统一转换**（多处时集中 `convert` 包静态方法），转换用原生 setter 逐字段设置，**禁三方拷贝工具**（BeanUtils/mapstruct 等）
 
-**新增 CRUD 端点**：使用 `/backend-crud` 技能（DDL→Controller 全套模板 + 检查清单，适用于所有后端服务）；机械规则由 `cloud-system` 的 `ArchitectureGuardTest` 强制（内联 R.ok/隐式 @PathVariable/Wrapper/BaseMapper/controller 依赖 mapper/XML `${}`/单行 `<if>`/Map 接参/实体内嵌枚举无 Enum 后缀等，写错构建即红）。
+**后端开发规范基准**：`/backend-spec` 技能（DDL 与索引设计→Controller 全套模板 + 事务口径 + 检查清单；**不止新增 CRUD**，迭代功能涉及 SQL 亦适用）；机械规则由 `cloud-system` 的 `ArchitectureGuardTest` 强制（内联 R.ok/隐式 @PathVariable/Wrapper/BaseMapper/controller 依赖 mapper/XML `${}`/单行 `<if>`/Map 接参/实体内嵌枚举无 Enum 后缀等，写错构建即红）。
 
 ### 分阶段路线（当前：阶段 1 已合并 main；阶段 2+3 已完成，待合并）
 

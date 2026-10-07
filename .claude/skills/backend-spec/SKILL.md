@@ -1,11 +1,11 @@
 ---
-name: backend-crud
-description: 在任意后端服务（cloud-system/cloud-bpmn/新增 DB 服务）新增实体/管理端点/CRUD 时使用——建表 SQL、实体、Mapper 接口、mapper XML、请求 DTO、VO+Convert、Service、Controller 全套模板与规范检查清单。凡涉及"新增表/新增接口/新增 CRUD/新增 /inner 端点"均应触发本技能。
+name: backend-spec
+description: 后端开发规范基准（cloud-system/cloud-bpmn/新增 DB 服务通用）——DDL 与索引设计、实体、Mapper 接口、mapper XML、请求 DTO、VO+Convert、Service、Controller 全套模板 + 事务口径 + 检查清单。凡后端任务（新增表/新增接口/新增 CRUD/迭代功能改 SQL/加字段/新增 /inner 端点）均应触发本技能，不止新增 CRUD。
 ---
 
-# 后端 CRUD 全套模板（适用于所有 DB 服务）
+# 后端开发规范（全部后端服务通用）
 
-按此技能创建的代码自动满足 CLAUDE.md「编码规范」与 ArchitectureGuardTest；**与 CLAUDE.md 冲突时以 CLAUDE.md 为准**。模板与 cloud-system 现网代码同风格：Mapper/Service 方法名用动词集且**省实体名前缀**（接口名已限定实体，如 `SysUserMapper.findById` 而非 `findUserById`）。以新增实体 `XxxYyy`（表 `xxx_yyy`，服务短名 `<svc>`）为例。
+本技能 = CLAUDE.md「编码规范」的可执行落地：CRUD 全套模板 + **索引设计** + **事务口径** + 检查清单。**不止新增 CRUD**——迭代功能改查询/加字段/动 SQL 同样先过本技能对应章节（新增查询路径必审索引、事务口径必对、代码风格随模板）。按此技能创建的代码自动满足 CLAUDE.md「编码规范」与 ArchitectureGuardTest；**与 CLAUDE.md 冲突时以 CLAUDE.md 为准**。模板与 cloud-system 现网代码同风格：Mapper/Service 方法名用动词集且**省实体名前缀**（接口名已限定实体，如 `SysUserMapper.findById` 而非 `findUserById`）。以新增实体 `XxxYyy`（表 `xxx_yyy`，服务短名 `<svc>`）为例。
 
 ## 步骤 0：建表 SQL（scripts/sql/ 追加）
 
@@ -21,10 +21,20 @@ CREATE TABLE xxx_yyy (
     deleted     TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     PRIMARY KEY (id),
     UNIQUE KEY uk_name (name)
+    -- 普通索引按查询清单补：KEY idx_<列> (<列>)——见下方「索引设计」，必配不可省
 ) ENGINE = InnoDB COMMENT = 'Xxx说明';
 ```
 
 要点：审计四列 + `deleted TINYINT NOT NULL DEFAULT 0`（防 NULL 行被 @TableLogic 过滤隐身）；唯一键 `uk_xxx`；**每列必须有 COMMENT，含审计列（创建人/创建时间/更新人/更新时间，守护测试机械检查）**；纯关系表（无业务生命周期的关联）**不要** deleted/审计列，但列同样要 COMMENT。
+
+### 索引设计（DDL 必配，迭代新增查询必审）
+
+每张表 DDL 必须显式完成索引设计——**依据是本表的 mapper 查询清单**（WHERE / JOIN / ORDER BY 列），每个索引注明命中的查询与取舍。**迭代功能为既有表新增查询路径时同样必审**：查询列是否被既有索引覆盖（EXPLAIN 抽查确认 key 命中），缺失则出增量 DDL（`ALTER TABLE ... ADD INDEX`，进 `scripts/sql/<日期>-*.sql` 增量脚本）——不许"查询上线、索引欠账"。
+
+- **唯一键 `uk_<语义>`**：业务唯一性 + 查重路径二合一（如 `uk_dict_key`、`uk_type_value(dict_type_id, value)`）——查重 COUNT 与等值查询都走它；复合唯一键注意**最左前缀复用**（`uk_type_value` 的左前缀已覆盖"按类型查子表"，无需再建 `idx_dict_type_id`）
+- **普通索引 `idx_<列/语义>`**：外键式关联列必建（子表按父查询/删除前 count 校验）；高频 WHERE 等值列；大表分页的 ORDER BY 列（小表 filesort 可容忍，取舍写明即可）
+- **不建**：`deleted` 单列（基数只有 0/1，选择性极差，全表都带此条件但不值得单建）；写多读少的表宁缺毋滥（每个索引都是写放大）
+- 命名与现网一致：`uk_` / `idx_` 前缀小写下划线；索引与查询的对应关系写在 DDL 注释或方案文档
 
 权限种子（管理端点需要）：权限体系集中在 cloud-system 的 sys_menu——追加 INSERT（perms 形如 `<svc>:xxx:list/add/edit/remove`，领域动作可加 `resetPwd`/`assignRole` 等）+ `INSERT INTO sys_role_menu ... SELECT 1, id FROM sys_menu` 增量映射 admin 角色。
 
@@ -297,7 +307,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -324,7 +333,7 @@ public class XxxYyyManageService {
         return XxxYyyConvert.toVo(requireXxx(id));
     }
 
-    @Transactional(rollbackFor = Exception.class)
+    /** 单表单语句不加事务：MySQL 语句级原子已保证，唯一性并发由 uk + DuplicateKeyException 兜底 */
     public Long save(XxxSaveRequest req) {
         if (req.getName() == null || req.getName().isBlank()) {
             throw new BusinessException("名称不能为空");
@@ -347,14 +356,15 @@ public class XxxYyyManageService {
         return xxx.getId();
     }
 
-    @Transactional(rollbackFor = Exception.class)
+    /** 单语句不加事务，理由同 save */
     public void update(Long id, XxxSaveRequest req) {
         requireXxx(id);
         Long exists = xxxMapper.countByName(req.getName(), id);
         if (exists > 0) {
             throw new BusinessException(ERR_XXX_DUP, "名称已存在: " + req.getName());
         }
-        XxxYyy xxx = requireXxx(id);
+        XxxYyy xxx = new XxxYyy();
+        xxx.setId(id);
         xxx.setName(req.getName());
         xxx.setStatus(req.getStatus());
         xxx.setUpdateBy(SecurityUtils.currentAccount());
@@ -367,12 +377,16 @@ public class XxxYyyManageService {
         }
     }
 
-    @Transactional(rollbackFor = Exception.class)
+    /** 单语句不加事务；本方法若加关联物理清理（下行注释示例）则变为多写，必须 @Transactional */
     public void delete(Long id) {
         requireXxx(id);
         xxxMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
-        // 有关联关系表时在此物理清理（参考 SysUserManageService.delete → userRoleMapper.deleteByUserId）
+        // 有关联关系表时在此物理清理（参考 SysUserManageService.delete → userRoleMapper.deleteByUserId，带 @Transactional）
     }
+
+    // 事务口径：多写语句方法必须 @Transactional(rollbackFor = Exception.class)——部分成功会留脏状态
+    // （范本：SysUserManageService.delete 墓碑+关系物理清理 / assignRoles 删旧绑定+批插）；
+    // 单表单语句一律不加：语句级原子 + uk 兜底已足够，check-then-act 竞态加事务也防不住（快照读不锁行）
 
     /** 手写 SQL 无自动填充：审计四值显式构造，插入时 update 值 = create 值 */
     private void auditCreate(XxxYyy xxx) {
@@ -394,7 +408,7 @@ public class XxxYyyManageService {
 }
 ```
 
-规则：业务校验前置 + 唯一性查重 + DuplicateKey 兜底（**catch 内必须先 `log.error` 记根因再转业务异常**）；多表写 `@Transactional(rollbackFor = Exception.class)`；方法 ≤50 行目标 / 100 硬上限，入参 >3 封装对象。
+规则：业务校验前置 + 唯一性查重 + DuplicateKey 兜底（**catch 内必须先 `log.error` 记根因再转业务异常**）；**事务只挂多写语句方法**（`@Transactional(rollbackFor = Exception.class)`，范本 `SysUserManageService.delete/assignRoles`；单表单语句不加——语句级原子 + uk 兜底已足够）；方法 ≤50 行目标 / 100 硬上限，入参 >3 封装对象。
 
 ## 步骤 6：Controller（controller/XxxYyyController.java）
 
@@ -479,6 +493,8 @@ public class XxxYyyController {
 
 - [ ] 主表每条 SQL 都有 `deleted`（查询=0 / 删除置 1 带 update 审计）？纯关系表物理 DELETE？
 - [ ] DDL 每列有 COMMENT（审计列=创建人/创建时间/更新人/更新时间）？
+- [ ] **索引**：新表 DDL 已按查询清单设计（uk 兼查重、关联列/高频列覆盖、取舍写明）？迭代新增查询路径已 EXPLAIN 复审既有索引、缺失出增量 ALTER？
+- [ ] **事务**：只挂多写语句方法（单表单语句不加，见步骤 5 事务口径）？
 - [ ] Mapper/Service 方法名在动词集白名单（find/save/update/pageList/list/delete/count + 领域动作 reset/assign 等）且不带实体名前缀？
 - [ ] INSERT 显式审计四值 / UPDATE 两值（Service 构造）；update 单参（审计随实体）、deleteById 三参？
 - [ ] 全部 `#{}` 无 `${}`？分页无 LIMIT？`<if>` 标签体全部换行？

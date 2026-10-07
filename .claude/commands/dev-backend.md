@@ -17,7 +17,7 @@ description: 纯后端轨道开发（SOP 三轨道）：判级→架构/轻量pl
 
 ## ② 实现
 
-- 派 `backend-agent`，贴方案/契约（或轻量 plan）+ 任务清单**全文**（不让其自读零散文件）；新增 CRUD 提醒其先调 `/backend-crud` 技能
+- 派 `backend-agent`，贴方案/契约（或轻量 plan）+ 任务清单**全文**（不让其自读零散文件）；提醒其先调 `/backend-spec` 技能（后端规范基准，不止 CRUD）
 
 ## ③ 验收
 
