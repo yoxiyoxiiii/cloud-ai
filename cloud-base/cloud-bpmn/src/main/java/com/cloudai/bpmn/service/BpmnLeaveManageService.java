@@ -10,6 +10,7 @@ import com.cloudai.bpmn.mapper.BpmnLeaveMapper;
 import com.cloudai.bpmn.util.BpmnDateUtil;
 import com.cloudai.bpmn.vo.ApprovalStepVo;
 import com.cloudai.bpmn.vo.LeaveDetailVo;
+import com.cloudai.bpmn.vo.LeaveDiagramVo;
 import com.cloudai.bpmn.vo.LeaveVo;
 import com.cloudai.bpmn.vo.UserOptionVo;
 import com.cloudai.common.core.domain.PageQuery;
@@ -21,13 +22,16 @@ import com.cloudai.common.translate.domain.UserEntry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.engine.HistoryService;
+import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
+import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.task.Comment;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,6 +41,8 @@ import java.util.Set;
  * + HistoricProcessInstance（end 步），契约 2026-10-07-bpmn-leave-api §2.2/§2.3/§2.5。
  * 只读服务不加事务注解；详情嵌套 VO 不在 TranslateAdvisor 容器下钻范围（候选①挂账）——
  * 译文字段经 TranslationCacheService 手动回填，未命中 null 同降级语义。
+ * 图数据（findDiagram）契约 2026-10-08-bpmn-diagram-designer-api §3：businessKey 历史锚点，
+ * 不碰 bpmn_leave.process_instance_id（撤销后已置 null）。
  */
 @Slf4j
 @Service
@@ -55,6 +61,7 @@ public class BpmnLeaveManageService {
     private final BpmnLeaveMapper leaveMapper;
     private final TaskService taskService;
     private final HistoryService historyService;
+    private final RuntimeService runtimeService;
     private final SystemUserClient systemUserClient;
     private final TranslationCacheService translationCacheService;
 
@@ -94,6 +101,66 @@ public class BpmnLeaveManageService {
             throw new BusinessException("用户服务不可用");
         }
         return users.stream().map(BpmnLeaveManageService::toOptionVo).toList();
+    }
+
+    /** 请假单图数据（契约 2026-10-08 §3）：businessKey=leaveId 历史锚点定位实例（三态均有痕）
+     *  → 高亮四字段；历史缺失防御态返回 definitionId=null 空集合（不设错误码，前端隐藏图区） */
+    public LeaveDiagramVo findDiagram(Long id) {
+        BpmnLeave leave = leaveMapper.findById(id);
+        if (leave == null) {
+            throw new BusinessException(ERR_LEAVE_NOT_FOUND, "请假单不存在");
+        }
+        HistoricProcessInstance historic = historyService.createHistoricProcessInstanceQuery()
+                .processInstanceBusinessKey(String.valueOf(id))
+                .singleResult();
+        if (historic == null) {
+            return emptyDiagram();
+        }
+        return buildDiagram(historic);
+    }
+
+    /** 组装高亮四字段：definitionId/processInstanceId/end 取历史实例投影，活动集合走引擎查询 */
+    private LeaveDiagramVo buildDiagram(HistoricProcessInstance historic) {
+        LeaveDiagramVo vo = new LeaveDiagramVo();
+        vo.setDefinitionId(historic.getProcessDefinitionId());
+        vo.setProcessInstanceId(historic.getId());
+        vo.setActiveActivityIds(activeActivityIds(historic.getId()));
+        vo.setCompletedActivityIds(completedActivityIds(historic.getId()));
+        vo.setEndActivityId(historic.getEndActivityId());
+        return vo;
+    }
+
+    /** 当前活动节点：先判运行中（runtime query count>0）再取——getActiveActivityIds
+     *  对已结束实例是未定义行为（设计 D3 防御）；终态/撤销恒空数组（三态矩阵） */
+    private List<String> activeActivityIds(String processInstanceId) {
+        long running = runtimeService.createProcessInstanceQuery()
+                .processInstanceId(processInstanceId)
+                .count();
+        if (running == 0) {
+            return List.of();
+        }
+        return runtimeService.getActiveActivityIds(processInstanceId);
+    }
+
+    /** 已执行活动 id：ACT_HI_ACTINST 开始时间升序 LinkedHashSet 去重保序
+     *  （含网关/事件节点，多余 id 对 Viewer 无害——契约 §3） */
+    private List<String> completedActivityIds(String processInstanceId) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (HistoricActivityInstance activity : historyService.createHistoricActivityInstanceQuery()
+                .processInstanceId(processInstanceId)
+                .orderByHistoricActivityInstanceStartTime().asc()
+                .list()) {
+            ids.add(activity.getActivityId());
+        }
+        return new ArrayList<>(ids);
+    }
+
+    /** 防御态 VO（理论不发生——历史表对三态均有痕）：definitionId/processInstanceId null + 双空集合 */
+    private LeaveDiagramVo emptyDiagram() {
+        LeaveDiagramVo vo = new LeaveDiagramVo();
+        vo.setActiveActivityIds(List.of());
+        vo.setCompletedActivityIds(List.of());
+        return vo;
     }
 
     /** 时间线拼装：apply 恒在；审批中单无 end 步（el-steps active=approval）；终态单附 end（结果） */

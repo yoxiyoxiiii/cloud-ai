@@ -11,6 +11,8 @@
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.2",
     "axios": "^1.20.0",
+    "bpmn-js": "^18.31.0",
+    "bpmn-js-properties-panel": "^5.65.1",
     "element-plus": "^2.14.7",
     "pinia": "^3.0.4",
     "vue": "^3.5.13",

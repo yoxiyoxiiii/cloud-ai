@@ -4,6 +4,7 @@ import com.cloudai.bpmn.dto.LeaveCreateRequest;
 import com.cloudai.bpmn.service.BpmnLeaveManageService;
 import com.cloudai.bpmn.service.LeaveWorkflowService;
 import com.cloudai.bpmn.vo.LeaveDetailVo;
+import com.cloudai.bpmn.vo.LeaveDiagramVo;
 import com.cloudai.bpmn.vo.LeaveVo;
 import com.cloudai.bpmn.vo.UserOptionVo;
 import com.cloudai.common.core.domain.LoginUser;
@@ -79,6 +80,22 @@ class LeaveControllerTest {
 
         verify(manageService).findById(5L);
         assertThat(result.getData()).isSameAs(detail);
+    }
+
+    @Test
+    void diagram_delegates() throws Exception {
+        LeaveDiagramVo diagram = new LeaveDiagramVo();
+        when(manageService.findDiagram(5L)).thenReturn(diagram);
+
+        R<LeaveDiagramVo> result = controller.diagram(5L);
+
+        verify(manageService).findDiagram(5L);
+        assertThat(result.getData()).isSameAs(diagram);
+        java.lang.reflect.Method method = LeaveController.class.getMethod("diagram", Long.class);
+        assertThat(method.getAnnotation(org.springframework.web.bind.annotation.GetMapping.class).value())
+                .containsExactly("/{id}/diagram");
+        assertThat(method.getAnnotation(org.springframework.security.access.prepost.PreAuthorize.class).value())
+                .isEqualTo("hasAuthority('bpmn:leave:list')");
     }
 
     @Test

@@ -13,3 +13,6 @@ target/
 logs/
 *.log
 .DS_Store
+
+# Playwright MCP 会话工件目录（截图/快照，验收后删，不入库）
+.playwright-mcp/

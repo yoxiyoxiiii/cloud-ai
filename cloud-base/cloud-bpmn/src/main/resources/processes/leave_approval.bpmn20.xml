@@ -2,6 +2,9 @@
 <definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
              xmlns:flowable="http://flowable.org/bpmn"
+             xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI"
+             xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC"
+             xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
              targetNamespace="http://www.flowable.org/processdef">
 
     <!-- 请假审批（阶段4 设计 D7）：单人审批线性流 + 排他网关二分支。
@@ -33,5 +36,48 @@
         <endEvent id="endReject" name="审批拒绝"/>
 
     </process>
+
+    <!-- 图形布局信息（DI）：bpmn-js 前端渲染必需（无 DI 则 importXML 报 no diagram to display）；
+         仅布局坐标，process 语义（id/assignee/条件表达式）与上块零关联。手工从左到右布局：
+         start → approval → decision → 上 endApprove（通过）/ 下 endReject（拒绝）。 -->
+    <bpmndi:BPMNDiagram id="BPMNDiagram_leave_approval">
+        <bpmndi:BPMNPlane bpmnElement="leave_approval" id="BPMNPlane_leave_approval">
+            <bpmndi:BPMNShape bpmnElement="start" id="BPMNShape_start">
+                <omgdc:Bounds height="36.0" width="36.0" x="152.0" y="241.0"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="approval" id="BPMNShape_approval">
+                <omgdc:Bounds height="80.0" width="100.0" x="230.0" y="219.0"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="decision" id="BPMNShape_decision" isMarkerVisible="true">
+                <omgdc:Bounds height="40.0" width="40.0" x="380.0" y="235.0"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="endApprove" id="BPMNShape_endApprove">
+                <omgdc:Bounds height="28.0" width="28.0" x="490.0" y="100.0"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNShape bpmnElement="endReject" id="BPMNShape_endReject">
+                <omgdc:Bounds height="28.0" width="28.0" x="490.0" y="350.0"/>
+            </bpmndi:BPMNShape>
+            <bpmndi:BPMNEdge bpmnElement="flowStart" id="BPMNEdge_flowStart">
+                <omgdi:waypoint x="188.0" y="259.0"/>
+                <omgdi:waypoint x="230.0" y="259.0"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="flowApproval" id="BPMNEdge_flowApproval">
+                <omgdi:waypoint x="330.0" y="259.0"/>
+                <omgdi:waypoint x="380.0" y="255.0"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="flowApprove" id="BPMNEdge_flowApprove">
+                <omgdi:waypoint x="420.0" y="255.0"/>
+                <omgdi:waypoint x="455.0" y="255.0"/>
+                <omgdi:waypoint x="455.0" y="114.0"/>
+                <omgdi:waypoint x="490.0" y="114.0"/>
+            </bpmndi:BPMNEdge>
+            <bpmndi:BPMNEdge bpmnElement="flowReject" id="BPMNEdge_flowReject">
+                <omgdi:waypoint x="420.0" y="255.0"/>
+                <omgdi:waypoint x="455.0" y="255.0"/>
+                <omgdi:waypoint x="455.0" y="364.0"/>
+                <omgdi:waypoint x="490.0" y="364.0"/>
+            </bpmndi:BPMNEdge>
+        </bpmndi:BPMNPlane>
+    </bpmndi:BPMNDiagram>
 
 </definitions>

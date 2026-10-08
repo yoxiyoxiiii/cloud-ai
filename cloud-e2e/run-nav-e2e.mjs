@@ -154,7 +154,7 @@ try {
     log(`  user-nav 接口: HTTP ${resp.status()} code=${body.code}`)
     assertEq(resp.status(), 200, '契约：HTTP 恒 200')
     assertEq(body.code, 200, 'user-nav 业务码应为 200')
-    // me 形状（契约 perms-api §2）：account=admin + 全量快照（24 项：user6+role5+menu4+sso2 + bpmn 7——30 段种子后）
+    // me 形状（契约 perms-api §2）：account=admin + 全量快照（25 项：user6+role5+menu4+sso2 + bpmn 8——Round H 331 部署流程加入后 admin 重登实况）
     const meBody = await meResp.json()
     log(`  me 接口: HTTP ${meResp.status()} code=${meBody.code} account=${meBody.data.account} perms=${meBody.data.permissions.length} 项`)
     assertEq(meResp.status(), 200, 'me：HTTP 恒 200')

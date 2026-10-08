@@ -9,6 +9,13 @@ spring:
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+  servlet:
+    multipart:
+      # multipart 大小上限三段式第 2 段（契约 2026-10-08 §2.2 / 设计 D4）：解析层只兜 ≥3MB/4MB 极端值，
+      # 异常经本地 MultipartLimitExceptionHandler 归口 4009。定夺：与 2MB 业务上限强绑定跟代码走，
+      # 本地配置不进 Nacos；Boot 默认 1MB 会使 1-2MB 合法文件死在解析层且非 4009 形态。
+      max-file-size: 3MB
+      max-request-size: 4MB
 
 management:
   endpoints:

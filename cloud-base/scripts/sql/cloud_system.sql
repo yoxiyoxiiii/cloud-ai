@@ -151,7 +151,8 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (141, 14, '字典新增', 'system:dict:add',    'F', '',             '',           1, 1, NOW()),
 (142, 14, '字典修改', 'system:dict:edit',   'F', '',             '',           2, 1, NOW()),
 (143, 14, '字典删除', 'system:dict:remove', 'F', '',             '',           3, 1, NOW()),
--- 流程管理菜单（30 段；与增量脚本 2026-10-07-bpmn-menus.sql 语义等价——契约 2026-10-07-bpmn-leave-api §9；
+-- 流程管理菜单（30 段 31 行；与增量脚本 2026-10-07-bpmn-menus.sql / 2026-10-08-bpmn-deploy-menu.sql
+-- 语义等价——契约 2026-10-07-bpmn-leave-api §9 + 2026-10-08-bpmn-diagram-designer-api §5；
 -- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定）
 (30,  0,  '流程管理', '',                    'M', '',               'Tickets',   3, 1, NOW()),
 (31,  30, '我的申请', 'bpmn:leave:list',     'C', '/bpmn/leave',     'Document',  1, 1, NOW()),
@@ -159,7 +160,8 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (33,  30, '流程定义', 'bpmn:definition:list','C', '/bpmn/definition','Files',     3, 1, NOW()),
 (311, 31, '发起申请', 'bpmn:leave:add',      'F', '', '', 1, 1, NOW()),
 (312, 31, '撤销申请', 'bpmn:leave:cancel',   'F', '', '', 2, 1, NOW()),
-(321, 32, '办理任务', 'bpmn:task:complete',  'F', '', '', 1, 1, NOW());
+(321, 32, '办理任务', 'bpmn:task:complete',  'F', '', '', 1, 1, NOW()),
+(331, 33, '部署流程', 'bpmn:definition:deploy', 'F', '', '', 1, 1, NOW());
 
 -- admin 账号（密码 admin123）
 INSERT INTO sys_user (id, account, nickname, password, is_builtin, create_time) VALUES

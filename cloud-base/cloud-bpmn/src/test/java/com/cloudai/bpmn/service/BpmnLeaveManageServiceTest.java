@@ -7,6 +7,7 @@ import com.cloudai.bpmn.entity.BpmnLeave.StatusEnum;
 import com.cloudai.bpmn.mapper.BpmnLeaveMapper;
 import com.cloudai.bpmn.vo.ApprovalStepVo;
 import com.cloudai.bpmn.vo.LeaveDetailVo;
+import com.cloudai.bpmn.vo.LeaveDiagramVo;
 import com.cloudai.bpmn.vo.LeaveVo;
 import com.cloudai.bpmn.vo.UserOptionVo;
 import com.cloudai.common.core.domain.PageQuery;
@@ -16,8 +17,11 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.common.translate.domain.UserEntry;
 import org.flowable.engine.HistoryService;
+import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
+import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.runtime.ProcessInstanceQuery;
 import org.flowable.engine.task.Comment;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -54,6 +58,8 @@ class BpmnLeaveManageServiceTest {
     private TaskService taskService;
     @Mock
     private HistoryService historyService;
+    @Mock
+    private RuntimeService runtimeService;
     @Mock
     private SystemUserClient systemUserClient;
     @Mock
@@ -210,6 +216,123 @@ class BpmnLeaveManageServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(1002);
+    }
+
+    // ---- findDiagram（契约 2026-10-08 §3 三态矩阵 + 防御态）----
+
+    @Test
+    void findDiagram_notFoundRejected_4001() {
+        when(leaveMapper.findById(9L)).thenReturn(null);
+        assertThatThrownBy(() -> service.findDiagram(9L))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(4001);
+    }
+
+    @Test
+    void findDiagram_approving_activeNodeWithDedupCompleted() {
+        when(leaveMapper.findById(5L)).thenReturn(leave(StatusEnum.APPROVING.getCode(), "userA", "admin", "pid-1"));
+        stubHistoricInstance(null);
+        ProcessInstanceQuery runtimeQuery = mock(ProcessInstanceQuery.class);
+        when(runtimeService.createProcessInstanceQuery()).thenReturn(runtimeQuery);
+        when(runtimeQuery.processInstanceId("pid-1")).thenReturn(runtimeQuery);
+        when(runtimeQuery.count()).thenReturn(1L);
+        when(runtimeService.getActiveActivityIds("pid-1")).thenReturn(List.of("approval"));
+        stubHistoricActivities("start", "approval", "decision", "approval");
+
+        LeaveDiagramVo diagram = service.findDiagram(5L);
+
+        assertThat(diagram.getDefinitionId()).isEqualTo("leave_approval:1:4");
+        assertThat(diagram.getProcessInstanceId()).isEqualTo("pid-1");
+        assertThat(diagram.getActiveActivityIds()).containsExactly("approval");
+        // LinkedHashSet 去重保序：approval 重复出现只留一次
+        assertThat(diagram.getCompletedActivityIds()).containsExactly("start", "approval", "decision");
+        assertThat(diagram.getEndActivityId()).isNull();
+    }
+
+    @Test
+    void findDiagram_approved_endNodeWithEmptyActive() {
+        when(leaveMapper.findById(5L)).thenReturn(leave(StatusEnum.APPROVED.getCode(), "userA", "admin", "pid-1"));
+        stubHistoricInstance("endApprove");
+        ProcessInstanceQuery runtimeQuery = mock(ProcessInstanceQuery.class);
+        when(runtimeService.createProcessInstanceQuery()).thenReturn(runtimeQuery);
+        when(runtimeQuery.processInstanceId("pid-1")).thenReturn(runtimeQuery);
+        when(runtimeQuery.count()).thenReturn(0L);
+        stubHistoricActivities("start", "approval", "decision", "endApprove");
+
+        LeaveDiagramVo diagram = service.findDiagram(5L);
+
+        assertThat(diagram.getActiveActivityIds()).isEmpty();
+        assertThat(diagram.getCompletedActivityIds())
+                .containsExactly("start", "approval", "decision", "endApprove");
+        assertThat(diagram.getEndActivityId()).isEqualTo("endApprove");
+    }
+
+    @Test
+    void findDiagram_cancelled_endNullCompletedTruncated() {
+        // R4 单测面：撤销态契约定型 endActivityId=null、completed 截断至删除点（B5 实测定型记档）
+        when(leaveMapper.findById(5L)).thenReturn(leave(StatusEnum.CANCELLED.getCode(), "userA", "admin", null));
+        stubHistoricInstance(null);
+        ProcessInstanceQuery runtimeQuery = mock(ProcessInstanceQuery.class);
+        when(runtimeService.createProcessInstanceQuery()).thenReturn(runtimeQuery);
+        when(runtimeQuery.processInstanceId("pid-1")).thenReturn(runtimeQuery);
+        when(runtimeQuery.count()).thenReturn(0L);
+        stubHistoricActivities("start");
+
+        LeaveDiagramVo diagram = service.findDiagram(5L);
+
+        assertThat(diagram.getActiveActivityIds()).isEmpty();
+        assertThat(diagram.getCompletedActivityIds()).containsExactly("start");
+        assertThat(diagram.getEndActivityId()).isNull();
+    }
+
+    @Test
+    void findDiagram_historyMissing_defensiveVo() {
+        // 防御态（理论不发生）：definitionId=null 空集合直返，不设「无图」错误码（契约 §3）
+        when(leaveMapper.findById(5L)).thenReturn(leave(StatusEnum.APPROVING.getCode(), "userA", "admin", "pid-1"));
+        org.flowable.engine.history.HistoricProcessInstanceQuery missing =
+                mock(org.flowable.engine.history.HistoricProcessInstanceQuery.class);
+        when(historyService.createHistoricProcessInstanceQuery()).thenReturn(missing);
+        when(missing.processInstanceBusinessKey("5")).thenReturn(missing);
+        when(missing.singleResult()).thenReturn(null);
+
+        LeaveDiagramVo diagram = service.findDiagram(5L);
+
+        assertThat(diagram.getDefinitionId()).isNull();
+        assertThat(diagram.getProcessInstanceId()).isNull();
+        assertThat(diagram.getActiveActivityIds()).isEmpty();
+        assertThat(diagram.getCompletedActivityIds()).isEmpty();
+        assertThat(diagram.getEndActivityId()).isNull();
+    }
+
+    /** 历史实例锚点（businessKey 单查）通用 stub：endActivityId 可空 */
+    private void stubHistoricInstance(String endActivityId) {
+        org.flowable.engine.history.HistoricProcessInstanceQuery query =
+                mock(org.flowable.engine.history.HistoricProcessInstanceQuery.class);
+        when(historyService.createHistoricProcessInstanceQuery()).thenReturn(query);
+        when(query.processInstanceBusinessKey("5")).thenReturn(query);
+        HistoricProcessInstance historic = mock(HistoricProcessInstance.class);
+        when(historic.getId()).thenReturn("pid-1");
+        when(historic.getProcessDefinitionId()).thenReturn("leave_approval:1:4");
+        when(historic.getEndActivityId()).thenReturn(endActivityId);
+        when(query.singleResult()).thenReturn(historic);
+    }
+
+    /** 历史活动时间升序查询 stub（activityId 序列即返回序） */
+    private void stubHistoricActivities(String... activityIds) {
+        org.flowable.engine.history.HistoricActivityInstanceQuery query =
+                mock(org.flowable.engine.history.HistoricActivityInstanceQuery.class);
+        when(historyService.createHistoricActivityInstanceQuery()).thenReturn(query);
+        when(query.processInstanceId("pid-1")).thenReturn(query);
+        when(query.orderByHistoricActivityInstanceStartTime()).thenReturn(query);
+        when(query.asc()).thenReturn(query);
+        java.util.List<HistoricActivityInstance> activities = new java.util.ArrayList<>();
+        for (String activityId : activityIds) {
+            HistoricActivityInstance activity = mock(HistoricActivityInstance.class);
+            lenient().when(activity.getActivityId()).thenReturn(activityId);
+            activities.add(activity);
+        }
+        when(query.list()).thenReturn(activities);
     }
 
     // ---- 脚手架 ----

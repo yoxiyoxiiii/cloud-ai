@@ -399,3 +399,49 @@ export const LEAVE_TYPE_MAP: Record<string, string> = {
   '2': '病假',
   '3': '年假',
 }
+
+/* ==== bpmn 图渲染/设计器增量（契约 2026-10-08-bpmn-diagram-designer-api §7，additive） ==== */
+
+/**
+ * 流程定义 XML VO（契约 §2.1）：GET /bpmn/definition/{id}/xml 出参——
+ * xml 为部署时原始资源字符串（UTF-8，非 BpmnModel 往返重建，注释等细节零丢失）；
+ * version 为 int 字符串化
+ */
+export interface DefinitionXmlVo {
+  id: string
+  key: string
+  name: string | null
+  version: string
+  /** BPMN 2.0 XML 原文（含中文） */
+  xml: string
+}
+
+/**
+ * 部署结果 VO（契约 §2.2）：POST /bpmn/definition/deploy 出参——
+ * definitions 为本次部署产生的定义（DefinitionVo 复用，不做 latestVersion 过滤；
+ * 同名原样重部署亦产生新版本 version+1——引擎行为记档）
+ */
+export interface DeployResultVo {
+  deploymentId: string
+  definitions: DefinitionVo[]
+}
+
+/**
+ * 请假单图数据 VO（契约 §3）：GET /bpmn/leave/{id}/diagram 出参。
+ * 三态矩阵（契约 §3 表，前端主高亮渲染权威）：
+ * - 0 审批中：activeActivityIds=当前节点、endActivityId=null → 主高亮 active 节点
+ * - 1 已通过 / 2 已拒绝：active=[]、endActivityId=endApprove/endReject → 主高亮 end 节点 + 路径浅色
+ * - 3 已撤销：active=[]、endActivityId=null → 无主高亮，仅路径浅色
+ * definitionId=null 为历史实例缺失防御态 → 前端隐藏图区（不设「无图」错误码）
+ */
+export interface LeaveDiagramVo {
+  /** 实例所用定义 id（key:version:generated 形态，冒号合法无需编码）；防御态 null */
+  definitionId: string | null
+  processInstanceId: string | null
+  /** 当前活动节点（终态/撤销恒空数组） */
+  activeActivityIds: string[]
+  /** 已执行活动 id 集合（含网关/事件节点，多余 id 对 Viewer 无害） */
+  completedActivityIds: string[]
+  /** 结束节点 id（endApprove/endReject）；审批中/撤销为 null */
+  endActivityId: string | null
+}

@@ -1,13 +1,18 @@
 /**
  * 请假工作流接口（契约 2026-10-07-bpmn-leave-api，cloud-bpmn，网关前缀 /bpmn）
- * 三 controller：/leave 请假单（§2）/ /task 任务（§3）/ /definition 流程定义（§4，只读）
+ * 三 controller：/leave 请假单（§2）/ /task 任务（§3）/ /definition 流程定义（§4）
  * 注意：id/taskId/leaveId/total 均为字符串（Long→String）；错误码 4xxx 段归 bpmn 域（§5）
+ * 增量契约 2026-10-08-bpmn-diagram-designer-api（additive）：/leave/{id}/diagram（§3）、
+ * /definition/{id}/xml（§2.1）、/definition/deploy（§2.2，multipart）——定义域不再只读（§0.1）
  */
 import { request } from '../utils/request'
 import type {
   DefinitionVo,
+  DefinitionXmlVo,
+  DeployResultVo,
   LeaveCreatePayload,
   LeaveDetailVo,
+  LeaveDiagramVo,
   LeaveVo,
   PageResult,
   TaskCompletePayload,
@@ -68,11 +73,41 @@ export function completeTask(payload: TaskCompletePayload): Promise<null> {
   return request<null>({ url: '/bpmn/task/complete', method: 'post', data: payload })
 }
 
-/** 流程定义分页（契约 §4.1，perms bpmn:definition:list）：latestVersion 过滤，key 升序；只读域——无任何写端点 */
+/** 流程定义分页（契约 §4.1，perms bpmn:definition:list）：latestVersion 过滤，key 升序（v1 只读语义；写端点见下方增量契约） */
 export function pageDefinitions(query: DefinitionPageQuery): Promise<PageResult<DefinitionVo>> {
   return request<PageResult<DefinitionVo>>({
     url: '/bpmn/definition/page',
     method: 'get',
     params: query,
   })
+}
+
+/**
+ * 流程定义 XML（增量契约 2026-10-08-bpmn-diagram-designer-api §2.1，perms bpmn:definition:list）：
+ * 返回部署时原始资源字符串；definitionId 冒号为合法路径字符无需编码；定义不存在得 4008
+ */
+export function getDefinitionXml(id: string): Promise<DefinitionXmlVo> {
+  return request<DefinitionXmlVo>({ url: `/bpmn/definition/${id}/xml`, method: 'get' })
+}
+
+/**
+ * 部署流程（增量契约 §2.2，perms bpmn:definition:deploy）：
+ * multipart/form-data 非 JSON body——data 传 FormData，axios 对 FormData 自动设
+ * Content-Type 与 boundary（request.ts 拦截器未强设 Content-Type，已核对）；
+ * 空文件/任何尺寸超限（业务 2MB 与解析层 ≥3MB 三段式归口）/解析失败统一 4009；
+ * 同 key 部署 version+1；无权限得 HTTP 200 + body 403
+ */
+export function deployDefinition(file: File): Promise<DeployResultVo> {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request<DeployResultVo>({ url: '/bpmn/definition/deploy', method: 'post', data: formData })
+}
+
+/**
+ * 请假单图数据（增量契约 §3，perms bpmn:leave:list）：definitionId + 三态高亮数据
+ * （activeActivityIds/completedActivityIds/endActivityId，三态矩阵见类型注释）；
+ * 历史实例缺失为防御态 definitionId=null（前端隐藏图区）；请假单不存在得 4001
+ */
+export function getLeaveDiagram(id: string): Promise<LeaveDiagramVo> {
+  return request<LeaveDiagramVo>({ url: `/bpmn/leave/${id}/diagram`, method: 'get' })
 }

@@ -4,10 +4,11 @@
  * 运行前提：后端 gateway 18080 / sso 9201 / system 9202（v2 契约版）已启动；前端 dev 5173 已启动（/api 代理 18080）
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 node run-menu-e2e.mjs）
  * 测试数据（删净纪律最高优先，设计 D8）：
- * - 菜单名 E2E 前缀+时间戳；绝不编辑/删除种子菜单（10/11/12/13/111… 与 20/21/211 与 30 段 30/31/32/33/311/312/321——契约 bpmn-leave-api §9）；
+ * - 菜单名 E2E 前缀+时间戳；绝不编辑/删除种子菜单（10/11/12/13/111… 与 20/21/211 与 30 段 30/31/32/33/311/312/321/331——
+ *   契约 bpmn-leave-api §9 + 2026-10-08-bpmn-diagram-designer-api §5）；
  *   M5b 内置保护：种子"用户管理"行徽标/禁用面断言 + 直连 PUT/DELETE → 3014 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
  * - 结束按 F → C → M 自底向上删净并断言树中无 E2E 残留——
- *   role e2e R5a 直连断言 admin 绑定恰 30 个种子菜单 id 全量（E1 迁移后形态），任何残留 E2E 行都会让下一轮回归必红
+ *   role e2e R5a 直连断言 admin 绑定恰 31 个种子菜单 id 全量（Round H +331 迁移后形态），任何残留 E2E 行都会让下一轮回归必红
  * - 不断言"权限改完立即可用"（权限快照时效，契约 §1：变更需重登/refresh 生效）
  * - 动态路由适配（2026-10-07 计划 E1）：M3/M4 C 型表单补填新必填"路由路径"（契约 §5.2 v2），
  *   M4 请求体键断言随 v2 更新为八字段+id；其余场景零改动
@@ -35,14 +36,16 @@ const TEST_PAGE_PATH = `/e2e/page${stamp}`
 const TEST_FUNC = `E2E按钮${stamp}`
 const TEST_PERMS = `system:e2e:test${stamp}`
 
-/** 内置种子菜单 id 全量清单（30 = 既有 23 + 30 段 bpmn 7 行，契约 2026-10-07-bpmn-leave-api §9）——
+/** 内置种子菜单 id 全量清单（31 = 既有 23 + 30 段 bpmn 7 行 + 331；契约 2026-10-07-bpmn-leave-api §9
+ *  + 2026-10-08-bpmn-diagram-designer-api §5）——331 为 F 节点「部署流程」（perms bpmn:definition:deploy，
+ *  挂 33 流程定义下，is_builtin=1，Round H 设计器新增；admin 绑定增量同落）
  *  互指义务：与 run-role-e2e.mjs R5a 的 SEED_MENU_IDS 各自维护、改菜单种子段时 grep 两脚本同步改
  *  （有意不进 lib/harness.mjs——harness 保持业务零知识，计划 E1 共享常量决策） */
 const SEED_MENU_IDS = [
   '10', '11', '12', '13', '111', '112', '113', '114', '115',
   '121', '122', '123', '124', '131', '132', '133', '14', '141', '142', '143',
   '20', '21', '211',
-  '30', '31', '32', '33', '311', '312', '321',
+  '30', '31', '32', '33', '311', '312', '321', '331',
 ]
 
 const MENU_PATH = '/system/menu'
@@ -576,14 +579,14 @@ try {
     await loadTreePage()
     const residue = await page.locator('.el-table__row', { hasText: 'E2E' }).count()
     log(`  E2E 残留行数: ${residue}`)
-    assertEq(residue, 0, '清理后菜单树中不应残留任何 E2E 前缀行（残留会让 role e2e R5a 直连 30 id 全量断言必红）')
+    assertEq(residue, 0, '清理后菜单树中不应残留任何 E2E 前缀行（残留会让 role e2e R5a 直连 31 id 全量断言必红）')
     for (const seed of ['系统管理', '用户管理', '角色管理', '菜单管理', '认证管理', '用户新增']) {
       const row = await findMenuRow(seed, { reload: false })
       assert(row !== null, `种子菜单 ${seed} 应仍在（绝不删种子纪律核验）`)
     }
     const rowCount = await page.locator('.el-table__row').count()
     log(`  清理后总行数: ${rowCount}`)
-    // E1 迁移（宽松语义）：行数 ≥ 30 且树 id ⊇ SEED_MENU_IDS（30 项全量；树表无 id 列，经树端点全量收集），
+    // E1 迁移（宽松语义）：行数 ≥ 31 且树 id ⊇ SEED_MENU_IDS（31 项全量，Round H +331；树表无 id 列，经树端点全量收集），
     // 不再锁「恰 23 行」上限——后续加内置菜单种子只改 SEED_MENU_IDS 一处
     assert(rowCount >= SEED_MENU_IDS.length, `清理后菜单树应 ≥ ${SEED_MENU_IDS.length} 行（内置种子全量，M5b 保护后零变更），实际 ${rowCount}`)
     const treeIds = []

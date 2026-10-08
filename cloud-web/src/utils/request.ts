@@ -8,6 +8,7 @@
 import axios from 'axios'
 import type { AxiosRequestConfig } from 'axios'
 import { ElMessage } from 'element-plus'
+import { START_LOCATION } from 'vue-router'
 import router from '../router'
 import { clearAuth, getAuth } from './storage'
 import type { R } from '../types/api'
@@ -24,9 +25,18 @@ const instance = axios.create({
   timeout: 15000,
 })
 
-/** 清登录态并跳登录页（带 redirect 回跳）；并发 401 时靠当前路径判断防重复跳转 */
+/**
+ * 清登录态并跳登录页（带 redirect 回跳）；并发 401 时靠当前路径判断防重复跳转。
+ * boot 期感知：首次导航未提交时（currentRoute 仍是 START_LOCATION 哨兵）只清态不抢跳——
+ * 此刻 currentRoute.fullPath 恒为初始 "/"，据此拼 redirect 会丢深链；且触发 401 的请求
+ * 正是守卫 await 的 user-nav/me，守卫随后按已清态分支统一带 to.fullPath 跳 /login，
+ * 双路争序由此收敛为守卫单路。会话过期等常规 401（导航已提交）行为不变。
+ */
 function redirectToLogin(): void {
   clearAuth()
+  if (router.currentRoute.value === START_LOCATION) {
+    return
+  }
   if (router.currentRoute.value.path !== '/login') {
     router.push({ path: '/login', query: { redirect: router.currentRoute.value.fullPath } })
   }

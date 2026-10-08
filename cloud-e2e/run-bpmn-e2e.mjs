@@ -14,6 +14,7 @@
  *
  * 测试数据（title 前缀 e2ebpmn${stamp}；admin 双角色 = 申请人 + 审批人，单人闭环——e2e 环境最小依赖）：
  * - A 同意路径 / R 拒绝路径 / C 撤销路径 / D 4002 探针（后台审批后对已终态单再撤销——BP8 附产，终态=已通过）
+ * - E 审批中高亮探针（BP9 造单断言 approval 主高亮后即后台办结，终态=已通过）
  * - X 4004 探针（approver=nobody，被校验拦截永不落库）
  *
  * 场景（契约 §11 验收口径）：
@@ -24,13 +25,27 @@
  * - BP3 待办出现 → 办理弹窗（同意默认选中 + 意见）→ 待办消行 + 我的申请变已通过 + 已办 tab 1 行同意
  * - BP4 拒绝路径（R）：办理选拒绝 → 已拒绝 + 已办 tab 拒绝 tag（与 A 行累积断言）
  * - BP5 撤销路径（C）：ElMessageBox 二段确认（含标题与不可恢复提示）→ 已撤销 + 待办无此单
- * - BP6 流程定义页：leave_approval 行（key/名称/版本/部署时间格式）
+ * - BP6 流程定义页：leave_approval 行（key/名称/版本/部署时间格式）+ 表头 5 列（末位操作列——Round H 设计器迁移，设计 D8）
  * - BP7 详情时间线：已通过单三步骤（发起申请/审批意见含文案/流程结束 result=已通过）
  * - BP8 防御面：无 token 直调 /bpmn/leave/page → HTTP 401（网关层）；D 单后台审批后 stale DOM 撤销 → toast 4002；
  *   approver=nobody 直连发起 body 4004（msg 含 审批人无效——契约 §5 为含义列，后端实参拼接账号，措辞差异已回报主控）；
- *   定义页无写按钮（表头 4 列无操作列 + 零按钮）
- * - CLEANUP/VERIFY：本轮 stamp 四单各自终态（A/D=已通过 R=已拒绝 C=已撤销，C 实例已删 processInstanceId=null）
+ *   定义页写面反转（Round H 迁移，设计 D8：种子 331 bpmn:definition:deploy 绑 admin，本脚本 BP0 全新登录取新快照）
+ *   ——admin 可见「新建流程」按钮与操作列（查看图/设计），原「无写按钮（4 列无操作列+零按钮）」断言反转
+ * - BP9 详情流程图（契约 2026-10-08-bpmn-diagram-designer-api §3/§8）：已通过 A 单 svg 渲染 + 主高亮恰 [endApprove]
+ *   （active=[] + endActivityId 并入——三态矩阵终态列）+ completed 含 start/approval + 时间线并存（BP7 互证）；
+ *   再造 E 单审批中主高亮恰 [approval]（三态矩阵在途列）→ 后台办结归终态
+ * - BP10 定义页「查看图」弹窗（契约 §2.1/§8）：xml 端点 200 → svg 渲染 leave_approval 语义元素封闭集恰 9 id
+ *   （5 节点 + 4 连线；bpmn-js 外置标签元素 *_label 不计）+ 零高亮 marker → 关闭
+ * - BP11 设计器（契约 §2.2/§8）：「设计」打开 leave_approval → 画布元素 ≥1（F7 booting 修复后画布常驻）+
+ *   属性面板挂载 + XML 源码含 leave_approval → 不改动「保存部署」→ 部署响应/toast/页内 fetch 三证 version+1；
+ *   部署产生的 v2+ 定义允许残留（latestVersion 过滤下 UI 恒显最新版——设计 D9 纪律）
+ * - BP12 工作台两卡（契约 §6/§8）：两卡标题 + 待办行数 = min(5, todo 接口长度) + 申请卡含本轮 stamp 行 +
+ *   两「查看全部」跳转 URL；无权限整卡隐藏分支不建第二账号（契约 §6 记档——快照权限单账号环境无法构造无权限态）
+ * - CLEANUP/VERIFY：本轮 stamp 五单各自终态（A/D/E=已通过 R=已拒绝 C=已撤销，C 实例已删 processInstanceId=null）
  *   + console/badResponses/网络失败零污染
+ *
+ * B5 留档红线：e2ebpmnb5114833 前缀单/角色与受限账号 e2ebpmnb5114833u 绝不办理/触碰——
+ * BP12 待办 min 公式允许 B5 留档待办计入行数（只断言行数与 stamp 行存在，不做封闭集断言）
  *
  * 实操注意（F6 联调结论）：el-date-picker 走日历面板点击（键盘输入会触发 EP Invalid user input 警告污染 console 断言）；
  * 办理弹窗同意 radio 默认选中；撤销有 ElMessageBox 二段确认
@@ -56,11 +71,13 @@ const T_A = `e2ebpmn${stamp}A` // 同意路径
 const T_R = `e2ebpmn${stamp}R` // 拒绝路径
 const T_C = `e2ebpmn${stamp}C` // 撤销路径
 const T_D = `e2ebpmn${stamp}D` // 4002 探针（审批后再撤销）
+const T_E = `e2ebpmn${stamp}E` // 审批中高亮探针（BP9 造单断言后即后台办结，终态=已通过）
 const T_X = `e2ebpmn${stamp}X` // 4004 探针（approver=nobody，永不落库）
 const REASON_A = `E2E事由同意${stamp}`
 const COMMENT_A = `E2E同意意见${stamp}`
 const COMMENT_R = `E2E拒绝意见${stamp}`
 const COMMENT_D = `E2E后台同意${stamp}`
+const COMMENT_E = `E2E通过意见${stamp}`
 
 const LEAVE_PATH = '/bpmn/leave'
 const TASK_PATH = '/bpmn/task'
@@ -154,6 +171,16 @@ async function pageFetch(pathWithQuery) {
     const res = await fetch(p, { headers: { Authorization: `Bearer ${token}` } })
     return await res.json()
   }, pathWithQuery)
+}
+
+/** BpmnViewer 高亮态提取（Round H BP9/BP10）：canvas.addMarker 把 marker 类挂在 g.djs-element 上、
+ *  data-element-id 即流程节点 id（BpmnViewer 双类：bpmn-highlight-active 主高亮 / -completed 已执行路径） */
+async function viewerMarkers(scope) {
+  return scope.evaluate((el) => {
+    const ids = (cls) =>
+      Array.from(el.querySelectorAll(`.djs-element.${cls}`)).map((g) => g.getAttribute('data-element-id'))
+    return { active: ids('bpmn-highlight-active'), completed: ids('bpmn-highlight-completed') }
+  })
 }
 
 /** 进入我的申请页并等首屏分页落定 */
@@ -530,7 +557,7 @@ try {
   })
 
   // ================= BP6 流程定义页：leave_approval 行 =================
-  await step('BP6', '流程定义页：leave_approval 行（key/名称=请假审批/版本/部署时间格式）+ 只读骨架（表头 4 列无操作列）', async () => {
+  await step('BP6', '流程定义页：leave_approval 行（key/名称=请假审批/版本/部署时间格式）+ 表头 5 列（末位操作列——Round H 迁移）', async () => {
     const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/bpmn/definition/page'), { timeout: 15000 })
     await page.goto(`${BASE}${DEF_PATH}`, { waitUntil: 'domcontentloaded' })
     const resp = await respP
@@ -543,7 +570,7 @@ try {
     const headers = []
     for (let i = 0; i < tn; i++) headers.push(((await ths.nth(i).innerText()) || '').trim())
     log(`  表头(${tn}): ${JSON.stringify(headers)}`)
-    assertEq(headers.join(','), '定义标识,定义名称,版本,部署时间', '定义表头应为 4 列精确序（无操作列）')
+    assertEq(headers.join(','), '定义标识,定义名称,版本,部署时间,操作', '定义表头应为 5 列精确序（末位操作列——Round H 设计器迁移，设计 D8）')
     // leave_approval 行（classpath 自动部署唯一种子；latestVersion 过滤取最新版）
     const defRow = body.data.rows.find((r) => r.key === 'leave_approval')
     assert(defRow, `定义分页应含 leave_approval 行，实际 ${JSON.stringify(body.data.rows)}`)
@@ -593,8 +620,8 @@ try {
     await waitDialogGone(page, '请假单详情')
   })
 
-  // ================= BP8 防御面：401 / 4002 / 4004 / 定义页无写按钮 =================
-  await step('BP8', '防御面：无 token 直调 401 → D 单后台审批后 stale 撤销 toast 4002 → nobody 直连发起 body 4004（msg 含 审批人无效）→ 定义页无写按钮', async () => {
+  // ================= BP8 防御面：401 / 4002 / 4004 / 定义页写面反转（Round H 迁移） =================
+  await step('BP8', '防御面：无 token 直调 401 → D 单后台审批后 stale 撤销 toast 4002 → nobody 直连发起 body 4004（msg 含 审批人无效）→ 定义页写面反转（新建流程按钮/操作列可见）', async () => {
     // ---- a. 无 token 直调网关 → HTTP 401（网关层真实状态码 + R JSON body——认证链路契约） ----
     const noToken = await page.request.get(`${GATEWAY}/bpmn/leave/page`)
     log(`  无 token 直调 ${GATEWAY}/bpmn/leave/page: HTTP ${noToken.status()}`)
@@ -650,28 +677,243 @@ try {
       typeof bad.body.msg === 'string' && bad.body.msg.includes('审批人无效'),
       `4004 msg 应含 审批人无效，实际 "${bad.body.msg}"`,
     )
-    // ---- d. 定义页无写按钮（只读域——契约 §4 无任何写端点） ----
+    // ---- d. 定义页写面反转（Round H 迁移，设计 D8：种子 331 bpmn:definition:deploy 绑 admin——
+    //      本脚本 BP0 无 token 直访后 admin 全新登录，快照必含 deploy 权限；断言按可见形态写，
+    //      原「无写按钮（只读域）」三断言（零按钮/无操作列/零行内按钮）反转） ----
     const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/bpmn/definition/page'), { timeout: 15000 })
     await page.goto(`${BASE}${DEF_PATH}`, { waitUntil: 'domcontentloaded' })
     await respP
     await waitTableIdle(page)
     await sleep(300)
-    assertEq(await page.locator('.el-card__header button').count(), 0, '定义页卡头应无任何按钮（只读域）')
-    assertEq(await page.locator('.el-table__header-wrapper th', { hasText: '操作' }).count(), 0, '定义表头应无操作列')
-    assertEq(await page.locator('.el-table__row button').count(), 0, '定义行内应无任何按钮')
+    const createBtn = page.getByRole('button', { name: '新建流程' })
+    assertEq(await createBtn.count(), 1, '定义页应可见「新建流程」按钮且唯一（admin 快照含 bpmn:definition:deploy——331 绑定 + BP0 全新登录取新快照）')
+    assert(await createBtn.isVisible(), '「新建流程」按钮应可见（v-perm bpmn:definition:deploy 放行形态）')
+    assertEq(await page.locator('.el-table__header-wrapper th', { hasText: '操作' }).count(), 1, '定义表头应有操作列（5 列，与 BP6 表头断言互证）')
+    assert((await page.locator('.el-table__row button', { hasText: '查看图' }).count()) >= 1, '定义行内应有「查看图」按钮（perms bpmn:definition:list 可见）')
+    assert((await page.locator('.el-table__row button', { hasText: '设计' }).count()) >= 1, '定义行内应有「设计」按钮（v-perm bpmn:definition:deploy）')
     await shot(page, 'bp8-defense.png')
   })
 
+  // ================= BP9 详情流程图：三态矩阵两态实证（已通过/审批中主高亮分治） =================
+  await step('BP9', '已通过 A 单详情：svg 渲染 + 主高亮恰 [endApprove] + completed 含 start/approval + 时间线并存；再造 E 单审批中主高亮恰 [approval] → 后台办结（终态=已通过）', async () => {
+    // ---- a. 已通过单（A）：active=[] + endActivityId 并入主高亮（契约 §3 三态矩阵终态列） ----
+    const rowA = await leaveRow(T_A)
+    assert(rowA, `我的申请应含 "${T_A}" 行`)
+    await rowA.getByRole('button', { name: '详情' }).click()
+    const dlg = dialogByTitle('请假单详情')
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    // 两段式数据链（detail → diagram → xml）+ BpmnViewer async chunk：等首个 djs 元素可见（importXML 落定标志）
+    const viewerA = dlg.locator('.bpmn-viewer')
+    await viewerA.locator('.djs-element').first().waitFor({ state: 'visible', timeout: 20000 })
+    await sleep(500)
+    const mA = await viewerMarkers(viewerA)
+    log(`  A 单 markers: active=${JSON.stringify(mA.active)} completed=${JSON.stringify(mA.completed)}`)
+    assertEq([...mA.active].sort().join(','), 'endApprove', `已通过单主高亮应恰 [endApprove]（契约 §3 终态列），实际 ${JSON.stringify(mA.active)}`)
+    assert(mA.completed.includes('start') && mA.completed.includes('approval'), `已通过单 completed 应含 start+approval（已执行路径），实际 ${JSON.stringify(mA.completed)}`)
+    // 流程图与时间线并存（F3：图区不挤占时间线——与 BP7 三步断言互证）
+    assertEq(await dlg.locator('.el-step').count(), 3, '详情弹窗时间线应仍恰 3 步（图与时间线并存）')
+    await shot(page, 'bp9-approved-highlight.png')
+    await dlg.locator('.el-dialog__footer button', { hasText: '关闭' }).click()
+    await waitDialogGone(page, '请假单详情')
+    // ---- b. 审批中单（E 造单）：activeActivityIds 主高亮当前节点 ----
+    const eId = await createLeaveViaUi({ title: T_E, typeLabel: '年假', reason: '' })
+    assert(typeof eId === 'string', '发起 E 应返回 id')
+    const rowE = await leaveRow(T_E, { reload: false })
+    assert(rowE, `我的申请应含 "${T_E}" 行`)
+    await rowE.getByRole('button', { name: '详情' }).click()
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    const viewerE = dlg.locator('.bpmn-viewer')
+    await viewerE.locator('.djs-element').first().waitFor({ state: 'visible', timeout: 20000 })
+    await sleep(500)
+    const mE = await viewerMarkers(viewerE)
+    log(`  E 单 markers: active=${JSON.stringify(mE.active)} completed=${JSON.stringify(mE.completed)}`)
+    assertEq([...mE.active].sort().join(','), 'approval', `审批中单主高亮应恰 [approval]（契约 §3 在途列），实际 ${JSON.stringify(mE.active)}`)
+    assert(mE.completed.includes('start'), `审批中单 completed 应含 start，实际 ${JSON.stringify(mE.completed)}`)
+    assert(!mE.active.includes('endApprove') && !mE.active.includes('endReject'), '审批中单主高亮不应含任何 end 节点')
+    await shot(page, 'bp9-active-highlight.png')
+    await dlg.locator('.el-dialog__footer button', { hasText: '关闭' }).click()
+    await waitDialogGone(page, '请假单详情')
+    // ---- c. E 后台办结（BP8-b 同款直连手法）：归终态 已通过（保 CLEANUP 五单全终态） ----
+    const todo = await directApi('GET', '/bpmn/task/todo')
+    assertEq(todo.body.code, 200, '直连待办业务码应为 200')
+    const eTask = todo.body.data.find((t) => t.leaveTitle === T_E)
+    assert(eTask, `直连待办应含 "${T_E}"（taskId 办理锚点）`)
+    const done = await directApi('POST', '/bpmn/task/complete', { taskId: eTask.taskId, approve: 'true', comment: COMMENT_E })
+    log(`  直连后台办结 E: HTTP ${done.httpStatus} code=${done.body.code}`)
+    assertEq(done.body.code, 200, '后台办结 E 应 body 200')
+  })
+
+  // ================= BP10 定义页「查看图」弹窗：五节点四连线零高亮 =================
+  await step('BP10', '定义页 leave_approval 行「查看图」→ 弹窗 svg 渲染恰 5 节点 4 连线 + 零高亮 marker → 关闭', async () => {
+    const respP = page.waitForResponse((r) => apiPath(r.url(), '/api/bpmn/definition/page'), { timeout: 15000 })
+    await page.goto(`${BASE}${DEF_PATH}`, { waitUntil: 'domcontentloaded' })
+    await respP
+    await waitTableIdle(page)
+    await sleep(300)
+    const defRow = page.locator('.el-table__row', { hasText: 'leave_approval' }).first()
+    assert(await defRow.isVisible(), '定义页应含 leave_approval 行')
+    // xml 端点（契约 §2.1 /api/bpmn/definition/{definitionId}/xml——响应等待先注册后点击）
+    const xmlP = page.waitForResponse(
+      (r) => /^\/api\/bpmn\/definition\/.+\/xml$/.test(new URL(r.url()).pathname),
+      { timeout: 15000 },
+    )
+    await defRow.getByRole('button', { name: '查看图' }).click()
+    const xmlRes = await xmlP
+    const xmlBody = await xmlRes.json()
+    assertEq(xmlBody.code, 200, `取定义 xml 应 body 200，实际 ${xmlBody.code} msg="${xmlBody.msg}"`)
+    assert(typeof xmlBody.data?.xml === 'string' && xmlBody.data.xml.includes('leave_approval'), 'xml 端点 data.xml 应含 leave_approval')
+    log(`  xml 端点: HTTP ${xmlRes.status()} code=${xmlBody.code} xml 长度=${xmlBody.data.xml.length}`)
+    const dlg = dialogByTitle('流程图 - 请假审批')
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    const viewer = dlg.locator('.bpmn-viewer')
+    await viewer.locator('.djs-element').first().waitFor({ state: 'visible', timeout: 20000 })
+    await sleep(500)
+    // 元素清点（run1 实测：bpmn-js 为 start/网关/end 的事件名另建外置标签元素（id 后缀 _label）——
+    // .djs-shape 实计 9 含 4 标签；语义断言改走 data-element-id 封闭集（5 节点 + 4 连线恰 9 id），标签不计入）
+    try {
+      const allIds = await viewer.evaluate((el) =>
+        Array.from(el.querySelectorAll('.djs-element')).map((g) => g.getAttribute('data-element-id')),
+      )
+      const nodeIds = allIds.filter((id) => !id.endsWith('_label')).sort()
+      const labelN = allIds.length - nodeIds.length
+      const connN = await viewer.locator('.djs-connection').count()
+      log(`  查看图画布: 语义元素=${nodeIds.length}（其中连线 ${connN}）外置标签=${labelN} 全量 ids=${JSON.stringify(allIds)}`)
+      assertEq(
+        nodeIds.join(','),
+        'approval,decision,endApprove,endReject,flowApproval,flowApprove,flowReject,flowStart,start',
+        `leave_approval 应恰 9 语义元素（5 节点 + 4 连线封闭集），实际 ${JSON.stringify(nodeIds)}`,
+      )
+      assertEq(connN, 4, `连线元素应恰 4（flowStart/flowApproval/flowApprove/flowReject），实际 ${connN}`)
+      const m = await viewerMarkers(viewer)
+      assertEq(m.active.length + m.completed.length, 0, `定义页查看图应零高亮 marker（无高亮入参），实际 active=${JSON.stringify(m.active)} completed=${JSON.stringify(m.completed)}`)
+      await shot(page, 'bp10-definition-diagram.png')
+    } finally {
+      // 关闭收尾必须兜底（run1 教训：断言中途抛出会遗留弹窗 overlay，拦截后续步骤行内点击）
+      await dlg.locator('.el-dialog__footer button', { hasText: '关闭' }).click()
+      await waitDialogGone(page, '流程图 - 请假审批')
+    }
+  })
+
+  // ================= BP11 设计器：不改动原样重部署 version+1（三证：响应/toast/页内 fetch 前后对比） =================
+  await step('BP11', '「设计」打开 leave_approval → 画布元素 ≥1 + 属性面板挂载 + XML 源码含 leave_approval → 不改动「保存部署」→ version+1', async () => {
+    // 步骤自归位（run1 教训：上步若遗留弹窗 overlay 会拦截行内按钮点击——goto 全量重载天然清场）
+    const navP = page.waitForResponse((r) => apiPath(r.url(), '/api/bpmn/definition/page'), { timeout: 15000 })
+    await page.goto(`${BASE}${DEF_PATH}`, { waitUntil: 'domcontentloaded' })
+    await navP
+    await waitTableIdle(page)
+    await sleep(300)
+    // 部署前版本（页内 fetch API 层——latestVersion 过滤下行即最新版）
+    const before = await pageFetch('/api/bpmn/definition/page?pageNum=1&pageSize=50')
+    assertEq(before.code, 200, '部署前定义分页业务码应为 200')
+    const beforeRow = before.data.rows.find((r) => r.key === 'leave_approval')
+    assert(beforeRow, `部署前分页应含 leave_approval，实际 ${JSON.stringify(before.data.rows.map((r) => r.key))}`)
+    const vBefore = Number(beforeRow.version)
+    assert(Number.isInteger(vBefore) && vBefore >= 1, `部署前版本应为正整数，实际 "${beforeRow.version}"`)
+    log(`  部署前版本: leave_approval v${vBefore}`)
+    const defRow = page.locator('.el-table__row', { hasText: 'leave_approval' }).first()
+    await defRow.getByRole('button', { name: '设计' }).click()
+    const dlg = dialogByTitle('编辑流程')
+    await dlg.waitFor({ state: 'visible', timeout: 8000 })
+    // 版本语义防呆 alert（设计 D5 常驻）
+    const alertText = (await dlg.locator('.el-alert').innerText()).trim()
+    assert(alertText.includes('新版本仅对新发起的流程生效'), `防呆 alert 应含版本语义文案，实际 "${alertText}"`)
+    // 画布（Modeler async chunk + getDefinitionXml 回填 + importXML——F7 修复后容器常驻，等 djs 元素即可）
+    await dlg.locator('.designer-canvas .djs-element').first().waitFor({ state: 'visible', timeout: 20000 })
+    await sleep(500)
+    const elN = await dlg.locator('.designer-canvas .djs-element').count()
+    log(`  设计器画布元素: ${elN}`)
+    assert(elN >= 1, `设计器画布应渲染元素 ≥1（F7 booting v-if 修复后画布常驻），实际 ${elN}`)
+    const panelN = await dlg.locator('.designer-panel').evaluate((el) => el.childElementCount)
+    log(`  属性面板挂载子节点: ${panelN}`)
+    assert(panelN > 0, `properties-panel 应已挂载（designer-panel 子节点 >0），实际 ${panelN}`)
+    await shot(page, 'bp11-designer-canvas.png')
+    // XML 源码 tab（切 tab 触发 saveXML 同步——契约 §2.1 消费位）
+    await dlg.getByRole('tab', { name: 'XML 源码' }).click()
+    await sleep(800)
+    const xmlText = ((await dlg.locator('.designer-xml').innerText()) || '').trim()
+    assert(!xmlText.includes('暂无内容'), 'XML 源码不应为空态 暂无内容')
+    assert(xmlText.includes('leave_approval'), `XML 源码应含 leave_approval，实际前 200 字 "${xmlText.slice(0, 200)}"`)
+    log(`  XML 源码: ${xmlText.length} 字符（含 leave_approval）`)
+    // 不改动保存部署（契约 §2.2 multipart——响应等待先注册后点击）
+    const deployP = page.waitForResponse(
+      (r) => apiPath(r.url(), '/api/bpmn/definition/deploy') && r.request().method() === 'POST',
+      { timeout: 30000 },
+    )
+    await dlg.locator('.el-dialog__footer button', { hasText: '保存部署' }).click()
+    const res = await deployP
+    const body = await res.json()
+    assertEq(res.status(), 200, '契约：HTTP 恒 200（错误码在 body）')
+    assertEq(body.code, 200, `保存部署应 body 200，实际 ${body.code} msg="${body.msg}"`)
+    const defs = body.data?.definitions ?? []
+    log(`  部署响应 definitions: ${JSON.stringify(defs)}`)
+    const deployed = defs.find((d) => d.key === 'leave_approval')
+    assert(deployed && Number(deployed.version) === vBefore + 1, `部署响应应含 leave_approval v${vBefore + 1}，实际 ${JSON.stringify(defs)}`)
+    const toastText = await waitToast(page, '部署成功')
+    assert(toastText.includes(`leave_approval v${vBefore + 1}`), `toast 应含 "leave_approval v${vBefore + 1}"，实际 "${toastText}"`)
+    await waitDialogGone(page, '编辑流程')
+    await waitTableIdle(page)
+    await sleep(300)
+    // 部署后版本（页内 fetch 前后对比 + UI 行版本互证——emit success 已刷新列表）
+    const after = await pageFetch('/api/bpmn/definition/page?pageNum=1&pageSize=50')
+    assertEq(after.code, 200, '部署后定义分页业务码应为 200')
+    const afterRow = after.data.rows.find((r) => r.key === 'leave_approval')
+    assert(afterRow, '部署后分页应含 leave_approval')
+    assertEq(Number(afterRow.version), vBefore + 1, `部署后版本应为 ${vBefore + 1}（同 key 自动 +1），实际 "${afterRow.version}"`)
+    const uiVer = (await rowCells(page.locator('.el-table__row', { hasText: 'leave_approval' }).first()))[2]
+    assertEq(uiVer, String(vBefore + 1), `UI 行版本列应变 ${vBefore + 1}，实际 "${uiVer}"`)
+    await shot(page, 'bp11-deployed.png')
+  })
+
+  // ================= BP12 工作台两卡：行数公式 + stamp 行 + 查看全部跳转 =================
+  await step('BP12', '/dashboard 两卡标题 + 待办行数 = min(5, todo 接口长度) + 申请卡含本轮 stamp 行 + 两「查看全部」跳转 URL（无权限整卡隐藏分支记档不测——单账号环境）', async () => {
+    // 数据链在 onMounted（keep-alive 组件 Dashboard——首访即挂载即拉取；响应等待先注册）
+    const todoP = page.waitForResponse((r) => apiPath(r.url(), '/api/bpmn/task/todo'), { timeout: 15000 })
+    const leaveP = page.waitForResponse((r) => apiPath(r.url(), '/api/bpmn/leave/page'), { timeout: 15000 })
+    await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
+    const todoBody = await (await todoP).json()
+    const leaveBody = await (await leaveP).json()
+    assertEq(todoBody.code, 200, 'todo 接口业务码应为 200')
+    assertEq(leaveBody.code, 200, 'leave 分页业务码应为 200')
+    const todoLen = Array.isArray(todoBody.data) ? todoBody.data.length : 0
+    // B5 留档红线：todo 列表可能含 e2ebpmnb5114833 前缀留档待办——min 公式天然计入，只断言行数不点名触碰
+    const todoCard = page.locator('.dash-card').filter({ has: page.locator('.el-card__header', { hasText: '我的待办' }) })
+    const leaveCard = page.locator('.dash-card').filter({ has: page.locator('.el-card__header', { hasText: '我的申请' }) })
+    assertEq(await todoCard.count(), 1, '「我的待办」卡应恰 1 张（admin 快照含 bpmn:task:list）')
+    assertEq(await leaveCard.count(), 1, '「我的申请」卡应恰 1 张（admin 快照含 bpmn:leave:list）')
+    await todoCard.waitFor({ state: 'visible', timeout: 8000 })
+    await leaveCard.waitFor({ state: 'visible', timeout: 8000 })
+    await sleep(500)
+    const todoRowN = await todoCard.locator('.dash-row').count()
+    log(`  待办卡: 行数=${todoRowN}（todo 接口长度=${todoLen} → min(5, ${todoLen})=${Math.min(5, todoLen)}）`)
+    assertEq(todoRowN, Math.min(5, todoLen), `待办卡行数应为 min(5, todo 接口长度)=${Math.min(5, todoLen)}，实际 ${todoRowN}`)
+    const leaveRowN = await leaveCard.locator('.dash-row').count()
+    const stampRows = await leaveCard.locator('.dash-row', { hasText: `e2ebpmn${stamp}` }).count()
+    log(`  申请卡: 行数=${leaveRowN} 其中本轮 stamp 行=${stampRows}（leave 接口 total=${leaveBody.data.total}）`)
+    assert(leaveRowN > 0, `申请卡应有数据行（本轮五单置顶），实际 ${leaveRowN}`)
+    assert(leaveRowN <= 5, `申请卡行数应 ≤5（pageSize=5），实际 ${leaveRowN}`)
+    assert(stampRows >= 1, `申请卡应含本轮 stamp（e2ebpmn${stamp}）行，实际 ${stampRows}`)
+    await shot(page, 'bp12-dashboard.png')
+    // 两「查看全部」跳转（keep-alive：二次 goto /dashboard 不重挂载，卡片仍在 DOM 可定位 footer）
+    await todoCard.getByRole('button', { name: '查看全部' }).click()
+    await page.waitForURL('**/bpmn/task', { timeout: 10000 })
+    assertEq(new URL(page.url()).pathname, TASK_PATH, `待办卡「查看全部」应跳 ${TASK_PATH}，实际 ${page.url()}`)
+    await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
+    await todoCard.waitFor({ state: 'visible', timeout: 8000 })
+    await leaveCard.getByRole('button', { name: '查看全部' }).click()
+    await page.waitForURL('**/bpmn/leave', { timeout: 10000 })
+    assertEq(new URL(page.url()).pathname, LEAVE_PATH, `申请卡「查看全部」应跳 ${LEAVE_PATH}，实际 ${page.url()}`)
+  })
+
   // ================= CLEANUP 清扫纪律新形态：本轮 stamp 单全部终态（不清零、允许留档） =================
-  await step('CLEANUP', '清扫新形态：本轮 stamp 四单各自终态（A/D=已通过 R=已拒绝 C=已撤销）+ C 实例已删 + 无审批中残留（不清零，允许留档）', async () => {
+  await step('CLEANUP', '清扫新形态：本轮 stamp 五单各自终态（A/D/E=已通过 R=已拒绝 C=已撤销）+ C 实例已删 + 无审批中残留（不清零，允许留档）', async () => {
     // ---- API 层权威断言（页内 fetch，数据面以接口为准） ----
     const fetched = await pageFetch('/api/bpmn/leave/page?pageNum=1&pageSize=50')
     assertEq(fetched.code, 200, '页内 fetch 业务码应为 200')
     const mine = fetched.data.rows.filter((r) => r.title.startsWith(`e2ebpmn${stamp}`))
     log(`  本轮 stamp 单: ${mine.length} 行`)
-    assertEq(mine.length, 4, `本轮 stamp 应恰 4 单（A/R/C/D），实际 ${JSON.stringify(mine.map((r) => [r.title, r.status]))}`)
-    const expected = { [T_A]: '1', [T_R]: '2', [T_C]: '3', [T_D]: '1' }
-    const expectedLabel = { [T_A]: '已通过', [T_R]: '已拒绝', [T_C]: '已撤销', [T_D]: '已通过' }
+    assertEq(mine.length, 5, `本轮 stamp 应恰 5 单（A/R/C/D/E），实际 ${JSON.stringify(mine.map((r) => [r.title, r.status]))}`)
+    const expected = { [T_A]: '1', [T_R]: '2', [T_C]: '3', [T_D]: '1', [T_E]: '1' }
+    const expectedLabel = { [T_A]: '已通过', [T_R]: '已拒绝', [T_C]: '已撤销', [T_D]: '已通过', [T_E]: '已通过' }
     for (const row of mine) {
       assertEq(row.status, expected[row.title], `${row.title} 终态应为 ${expected[row.title]}（${expectedLabel[row.title]}），实际 ${row.status}`)
       assertEq(row.statusLabel, expectedLabel[row.title], `${row.title} statusLabel 应为 ${expectedLabel[row.title]}，实际 "${row.statusLabel}"`)
@@ -684,8 +926,8 @@ try {
     }
     // 4004 探针 X 永不落库（stamp 前缀兜底核验）
     assert(!mine.some((r) => r.title === T_X), '4004 探针 X 不应落库')
-    // ---- UI 层复核（四行各自状态 tag 终态呈现） ----
-    for (const title of [T_A, T_R, T_C, T_D]) {
+    // ---- UI 层复核（五行各自状态 tag 终态呈现） ----
+    for (const title of [T_A, T_R, T_C, T_D, T_E]) {
       const row = await leaveRow(title)
       assert(row, `UI 应仍含 "${title}" 行`)
       const cells = await rowCells(row)
@@ -712,9 +954,9 @@ try {
   // ---------- 汇总 ----------
   h.summary({
     extras: [
-      `\n测试数据: ${T_A}（事假→已通过）/ ${T_R}（病假→已拒绝）/ ${T_C}（年假→已撤销）/ ${T_D}（事假→已通过，4002 探针附产）/ ${T_X}（4004 探针，永不落库）`,
-      '清扫纪律新形态（设计 D12）：bpmn 域无删除端点——业务表不清零，本轮 stamp 四单全部终态即验收通过；ACT_HI 允许残留；下一轮时间戳天然隔离',
-      '历史 e2ebpmncurl/e2ebpmnf6 终态留档单未触碰（stamp 精确锚定，无全局计数断言）；admin 双角色（申请人+审批人）单人闭环；内置种子零触碰',
+      `\n测试数据: ${T_A}（事假→已通过）/ ${T_R}（病假→已拒绝）/ ${T_C}（年假→已撤销）/ ${T_D}（事假→已通过，4002 探针附产）/ ${T_E}（年假→已通过，BP9 审批中高亮探针）/ ${T_X}（4004 探针，永不落库）`,
+      '清扫纪律新形态（设计 D12）：bpmn 域无删除端点——业务表不清零，本轮 stamp 五单全部终态即验收通过；ACT_HI 允许残留；下一轮时间戳天然隔离；BP11 部署产生的 v2+ 定义允许残留（latestVersion 过滤下 UI 恒显最新版）',
+      'B5 留档红线遵守：e2ebpmnb5114833 前缀单/角色与受限账号 e2ebpmnb5114833u 绝不办理/触碰（BP12 待办 min 公式允许留档待办计入）；历史 e2ebpmncurl/e2ebpmnf6 终态留档单未触碰（stamp 精确锚定，无全局计数断言）；admin 双角色（申请人+审批人）单人闭环；内置种子零触碰',
     ],
   })
   await browser.close()

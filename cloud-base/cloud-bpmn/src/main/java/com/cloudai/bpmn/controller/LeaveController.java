@@ -4,6 +4,7 @@ import com.cloudai.bpmn.dto.LeaveCreateRequest;
 import com.cloudai.bpmn.service.BpmnLeaveManageService;
 import com.cloudai.bpmn.service.LeaveWorkflowService;
 import com.cloudai.bpmn.vo.LeaveDetailVo;
+import com.cloudai.bpmn.vo.LeaveDiagramVo;
 import com.cloudai.bpmn.vo.LeaveVo;
 import com.cloudai.bpmn.vo.UserOptionVo;
 import com.cloudai.common.core.domain.PageQuery;
@@ -57,6 +58,15 @@ public class LeaveController {
     public R<LeaveDetailVo> detail(@PathVariable("id") Long id) {
         LeaveDetailVo detail = manageService.findById(id);
         return R.ok(detail);
+    }
+
+    /** 请假单图数据（契约 2026-10-08 §3：businessKey 历史锚点 + 高亮四字段三态矩阵；
+     *  与 /{id} 两段路径共存——Spring 按段数精确匹配，无冲突） */
+    @GetMapping("/{id}/diagram")
+    @PreAuthorize("hasAuthority('bpmn:leave:list')")
+    public R<LeaveDiagramVo> diagram(@PathVariable("id") Long id) {
+        LeaveDiagramVo diagram = manageService.findDiagram(id);
+        return R.ok(diagram);
     }
 
     /** 撤销请假（仅申请人本人且审批中；同事务删实例 + 置已撤销） */
