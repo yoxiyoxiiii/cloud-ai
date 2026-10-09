@@ -25,6 +25,7 @@ description: 纯前端轨道开发（SOP 三轨道）：判级→架构/轻量pl
 - 联通：dev server 起后 `curl http://localhost:5173/api/system/demo/ping` 返回后端 R（需后端栈在线：sso/system/网关）
 - 浏览器测试：cloud-e2e 增/改对应场景，`npm run e2e` **有头**跑（用户桌面可见）+ 全量回归；关键截图经 analyze_image 视觉核对
 - 测试数据纪律：`e2e` 前缀+时间戳，绝不改 admin；结束清理；**截图验收后删**（artifacts 不进 git）
+- 验收全绿后关闭 agent 起的服务进程（含联通所起后端栈与 dev 5173；时点与边界见 SOP「服务进程管理」）
 
 ## ④ 审查与收尾
 

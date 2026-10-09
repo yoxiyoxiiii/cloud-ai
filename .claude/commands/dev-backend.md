@@ -24,7 +24,7 @@ description: 纯后端轨道开发（SOP 三轨道）：判级→架构/轻量pl
 - 构建：`D:/software/apache-maven-3.8.4/bin/mvn -f cloud-base/pom.xml clean install`（可 `-pl <模块> -am`）全绿，守护测试通过
 - 运行时：起相关服务（业务服务 → 网关 18080 最后）按契约 curl 逐条实证（Windows 陷阱见 CLAUDE.md；中文 JSON 别用 curl 直发）
 - **触及既有契约**：起全栈（含 dev 5173）后 `cd cloud-e2e && npm run e2e` 全量回归；红了拉 `frontend-agent` 进场修复（收尾升级为全栈轨道）
-- 验收后按需停服（netstat 找 PID + taskkill）
+- 验收通过后**立即关闭** agent 起的全部服务进程（netstat 找 PID + taskkill；时点与边界见 SOP「服务进程管理」——自动化验证收口即停，不滞留进人工审核）
 
 ## ④ 审查与收尾
 
