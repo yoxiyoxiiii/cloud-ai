@@ -10,6 +10,7 @@ USE cloud_bpmn;
 
 DROP TABLE IF EXISTS bpmn_approval;
 DROP TABLE IF EXISTS bpmn_business_type;
+DROP TABLE IF EXISTS mq_tx_log;
 
 -- 索引设计（依据 mapper 查询清单，设计 D1 取舍）：
 --   uk_business(business_type, business_key)：/inner/approval/create 查重（任意状态存在即拒——行永不删、
@@ -60,3 +61,23 @@ CREATE TABLE bpmn_business_type (
 -- 2026-10-08-approval-platform.sql 语义等价——本表无 is_builtin 列，MVP 配置行即种子，管理界面后置再评估保护）
 INSERT INTO bpmn_business_type (type_code, type_name, process_key, detail_route, create_by, create_time, update_by, update_time)
 VALUES ('leave', '请假申请', 'leave_approval', '/system/leave?approval={businessKey}', 'system', NOW(), 'system', NOW());
+
+-- MQ 事务消息本地事务流水（MQ 化改造，契约 2026-10-09-rocketmq-tx-approval-api / 设计 D8；
+-- cloud_bpmn=流2 终态通知通道 terminal-complete/terminal-cancel 所在库，结构与 cloud_system 同款；
+-- 与增量脚本 2026-10-09-rocketmq-tx-approval.sql 语义等价。索引取舍：uk_tx_no 命中回查点查、
+-- idx_business 命中运维排查；无按时间查询路径不建 create_time 索引——清理低峰全表扫可接受）
+CREATE TABLE mq_tx_log (
+    id            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    tx_no         VARCHAR(64)  NOT NULL COMMENT '事务消息流水号（发送前预生成 UUID，userProperty TX_NO 回传；回查唯一依据：行存在=COMMIT 行缺失=ROLLBACK）',
+    topic         VARCHAR(64)  NOT NULL COMMENT '目标 topic（TX_APPROVAL_CREATE / APPROVAL_EVENT_NOTIFY）',
+    channel       VARCHAR(64)  NOT NULL COMMENT '业务通道标识（starter TxLocalExecutor.channel，如 leave-create/terminal-complete/terminal-cancel）',
+    business_type VARCHAR(50)  NOT NULL COMMENT '业务类型（消息业务维度，如 leave）',
+    business_key  VARCHAR(64)  NOT NULL COMMENT '业务键（流1=leaveId 流2=approvalId）',
+    result_digest VARCHAR(500) NULL     COMMENT '本地事务结果摘要（executor 返回值 JSON 截断，仅运维观测）',
+    create_time   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（=本地事务提交时间）',
+    update_time   DATETIME     NULL     COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_tx_no (tx_no),
+    KEY idx_business (business_type, business_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  COMMENT='MQ 事务消息本地事务流水（starter 回查依据；审计保留 N 天后定时清理）';

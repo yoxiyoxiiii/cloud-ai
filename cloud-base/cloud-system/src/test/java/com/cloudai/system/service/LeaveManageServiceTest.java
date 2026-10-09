@@ -100,6 +100,26 @@ class LeaveManageServiceTest {
         assertThat(result.getRows().get(0).getStatus()).isEqualTo("0");
     }
 
+    @Test
+    void pageListMy_failedTerminalRowUntouchedByReconcile() {
+        // MQ 形态（契约 2026-10-09 §2.2）：status=4 发起失败终态行 approvalId=null，天然跳过纠偏键集——
+        // 混排场景仅正常行发起 Feign，4 行零写不被任何真相覆盖
+        SysLeave failed = leave(4L, StatusEnum.FAILED.getCode(), null);
+        SysLeave approving = leave(5L, StatusEnum.APPROVING.getCode(), 12L);
+        when(leaveMapper.pageList(any(Page.class), eq("userA"))).thenReturn(pageOf(List.of(failed, approving)));
+        when(approvalClient.statusList(any())).thenReturn(R.ok(List.of(statusVo("5", "1"))));
+
+        PageResult<SysLeaveVo> result = service.pageListMy(query(1, 10), "userA");
+
+        // 仅审批中行的键进纠偏批（4 行 approvalId=null 不进键集）
+        ArgumentCaptor<ApprovalStatusQueryInnerRequest> captor = ArgumentCaptor.forClass(ApprovalStatusQueryInnerRequest.class);
+        verify(approvalClient).statusList(captor.capture());
+        assertThat(captor.getValue().getBusinessKeys()).containsExactly("5");
+        verify(leaveMapper).updateStatusById(eq(5L), eq(StatusEnum.APPROVED.getCode()), eq("userA"), any());
+        verify(leaveMapper, never()).updateStatusById(eq(4L), anyInt(), anyString(), any());
+        assertThat(result.getRows().get(0).getStatus()).isEqualTo("4");
+    }
+
     // ---- 分批铁律（§4.2 单批 ≤100）----
 
     @Test

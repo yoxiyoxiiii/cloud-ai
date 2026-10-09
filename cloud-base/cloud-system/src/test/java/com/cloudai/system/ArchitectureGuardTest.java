@@ -317,6 +317,31 @@ class ArchitectureGuardTest {
         assertThat(violations).as("api 模块 @FeignClient 必须声明 fallbackFactory").isEmpty();
     }
 
+    // ---- 规则 v6（2026-10-09 RocketMQ 事务消息化）：MQ 消费幂等双层强制 ----
+
+    /**
+     * 服务模块 @RocketMQMessageListener 消费者必须走幂等双层之一（注解与类声明同文件，内容判定可靠）：
+     * L1 继承 DedupRocketMQListener（通用去重表）或 L2 标注 @UkIdempotentListener（业务 uk 豁免）。
+     */
+    @Test
+    void rocketmqConsumers_mustUseIdempotentListener() throws IOException {
+        List<String> violations = new ArrayList<>();
+        for (String svc : List.of("../cloud-sso", "../cloud-system", "../cloud-bpmn")) {
+            Path root = Paths.get(svc, "src", "main", "java");
+            for (Path file : listFiles(root, "*.java")) {
+                String source = Files.readString(file, StandardCharsets.UTF_8);
+                if (source.contains("@RocketMQMessageListener")
+                        && !source.contains("extends DedupRocketMQListener")
+                        && !source.contains("@UkIdempotentListener")) {
+                    violations.add(svc + "/" + root.relativize(file));
+                }
+            }
+        }
+        assertThat(violations)
+                .as("MQ 消费者必须走幂等双层：继承 DedupRocketMQListener（L1 去重表）或标注 @UkIdempotentListener（L2 业务 uk）")
+                .isEmpty();
+    }
+
     /** 提取第 idx 行的方法声明名；注释/注解/private/protected/语句关键字行返回 null */
     private String extractMethodName(String[] lines, int idx) {
         String line = lines[idx];

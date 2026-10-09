@@ -48,7 +48,7 @@ curl http://localhost:18080/system/demo/ping
 
 ### 版本矩阵（全部收敛在 cloud-base/pom.xml，子模块一律免版本号）
 
-JDK 17 / Spring Boot 3.3.4 / Spring Cloud 2023.0.3 / Spring Cloud Alibaba 2023.0.3.3（Nacos discovery+config）/ MyBatis-Plus 3.5.7 / jjwt 0.12.6 / springdoc 2.6.0 / hutool 5.8.32。**surefire 必须固定 3.2.5**（不用 spring-boot-starter-parent 时 Maven 默认 2.12.4 会让 JUnit 5 假绿）；jjwt-impl/jackson 为 runtime scope。
+JDK 17 / Spring Boot 3.3.4 / Spring Cloud 2023.0.3 / Spring Cloud Alibaba 2023.0.3.3（Nacos discovery+config）/ MyBatis-Plus 3.5.7 / jjwt 0.12.6 / springdoc 2.6.0 / hutool 5.8.32 / rocketmq-spring-boot-starter 2.3.3。**surefire 必须固定 3.2.5**（不用 spring-boot-starter-parent 时 Maven 默认 2.12.4 会让 JUnit 5 假绿）；jjwt-impl/jackson 为 runtime scope。
 
 ### 模块拓扑
 
@@ -61,7 +61,9 @@ cloud-base/
 │   ├── cloud-common-security-starter # JwtUtil（HS512 静态工具，密钥由调用方传入）
 │   │                              #   （资源端 header 认证自动配置，仅 servlet；网关 WebFlux 自带 GatewaySecurityConfig permitAll）
 │   ├── cloud-common-mybatis-starter  # BaseEntity（审计填充+@TableLogic）、分页插件（maxLimit 200）
-│   └── cloud-common-redis-starter    # RedisTemplate（String key + JSON value，@AutoConfigureBefore Boot 的 RedisAutoConfiguration）
+│   ├── cloud-common-redis-starter    # RedisTemplate（String key + JSON value，@AutoConfigureBefore Boot 的 RedisAutoConfiguration）
+│   └── cloud-common-rocketmq-starter # 事务消息 TxMessageSender/TxLocalExecutor（mq_tx_log 回查审计）、
+│                                  #   DedupRocketMQListener（mq_consume_dedup L1 消费幂等）、JsonPayloads 统一序列化口径
 ├── cloud-api/                     # 服务间契约 api 模块聚合（结构同 cloud-common 惯例，GAV 不变）
 │   ├── cloud-bpmn-api                 # bpmn 服务间契约 jar（Feign 客户端+fallbackFactory+inner 契约模型，自动装配注册降级 bean）
 │   └── cloud-system-api               # system 服务间契约 jar（同上；UserEntry/LoginUserDTO 归位）
@@ -82,6 +84,7 @@ cloud-base/
 - **Redis 会话契约**：sso:online:{jti} = OnlineSession 纯 JSON（无 @class，网关以 OnlineSessionView 投影解析）；sso:refresh:{userId} = {"tokenId","token"} 纯 JSON（多会话精确失效）。
 - **鉴权数据流**：权限标识 sys_menu.perms → 登录时快照进 OnlineSession → 网关透传 X-User-Perms → HeaderAuthFilter 构建 authorities → @PreAuthorize。权限变更需重新登录或 refresh 生效；删除/停用不自动踢会话（手动 sso:online:kick）。
 - **服务间 Feign 规范**：跨服务调用一律走提供方 `-api` 模块（cloud-<svc>-api，包 `com.cloudai.<svc>.api`：`client/` Feign 接口+fallbackFactory、`fallback/` 降级实现、`domain/` 契约模型——类名与 API 契约术语一致）；api 模块仅依赖 core-starter（可加 validation-api），fallbackFactory bean 经自动装配注册（引 jar 即生效）。消费方三件套：引 api jar + resilience4j starter、`@EnableFeignClients(clients = {...})` 显式列表、yml 开 `spring.cloud.openfeign.circuitbreaker.enabled` + 超时 connect 1s/read 5s（TimeLimiter 处置见 backend-spec）。`@FeignClient` 必带 `fallbackFactory`（守护测试检查）；调用方保留 `catch (FeignException)` 二层兜底，降级 R 走既有 `code!=SUCCESS` 分支转译域码（等价语义）；熔断打开期行为差异：半开恢复前降级持续，属预期。特例记档：translate-remote-starter 程序式 client（common 包不可扫描 + 缓存层降级自洽）。
+- **事务消息与消费幂等（cloud-common-rocketmq-starter，2026-10-09）**：跨服务最终一致写路径用 RocketMQ 事务消息（同步接口签名/返回语义保持，远端动作事务消息化+结果事件回写收敛）。**生产方法编排化去 @Transactional**——本地写全在 `TxLocalExecutor.executeInTx`，与 mq_tx_log insert 同在 starter listener 单事务（COMMIT 决策返回前本地事务必已提交，双事务边界即违规）；主键 snowflake 预生成显式写（半消息体先于落库需知 businessKey）；`TxMessageSendException`=半消息失败**本地零写**。两表口径：`mq_tx_log`（uk_tx_no 回查依据+business_type/key 审计）、`mq_consume_dedup`（uk(consumer_group,msg_key)）。消费幂等**双层**：L1 继承 `DedupRocketMQListener`（先插 dedup→DuplicateKey=已消费 ACK 跳过→doConsume 异常删行放行重试）；L2 业务 uk 幂等（建单类）标注 `@UkIdempotentListener` 豁免+catch DuplicateKeyException 吸收——二者必有其一（守护测试检查）；回写 UPDATE 用条件写幂等三防（`WHERE approval_id IS NULL`/`WHERE status=0`，重投/乱序/双写同值无害）。消费失败三分类：幂等吸收→ACK；确定性业务失败白名单→转结果事件+ACK；未知/系统异常→重试 maxReconsumeTimes=3→%DLQ% 死信人工。命名：topic 大写蛇形、producer group `p_<svc>_tx`、consumer group `g_<svc>_<域>`；rocketmq.name-server/producer.group 配置走 Nacos 不进仓库。消息契约（topic/tag/KEYS/消息体/消费分支）随 API 契约文档维护（跨服务唯一对齐物），事件消息模型归提供方 api 模块 `mq/` 子包。
 - **Nacos 配置**：各服务 `spring.config.import: optional:nacos:${spring.application.name}.yaml`，共享配置 `cloud-common-{profile}.yaml`；JWT 密钥、Redis 连接等放 Nacos 不进仓库。
 - **公共模块自动装配**：业务服务引依赖即生效；用户自定义同名 bean 会覆盖（@ConditionalOnMissingBean）。网关是 WebFlux——**不得引入 spring-boot-starter-web**；GlobalExceptionHandler 的 advice 只覆盖 WebMVC controller（网关鉴权拒绝由 AuthGlobalFilter 直接写 R JSON，见"认证链路"）。
 - **DDL**（阶段2起）：逻辑删除列必须 `deleted TINYINT NOT NULL DEFAULT 0`（NULL 行会被 @TableLogic 过滤隐身）。

@@ -160,12 +160,16 @@
 
 ### 5.1 发起请假 `POST /system/leave`（perms `system:leave:add`）
 
+> **附记（2026-10-09）**：发起链路已改 RocketMQ 事务消息（事务化+同步返回语义保持——**签名/响应零变化**：仍同步返 R\<Long\> 新单 id；语义修订版与 4013 前置/3025 新增/3022·3024 退役见 `docs/superpowers/contracts/2026-10-09-rocketmq-tx-approval-api.md` §2.1/§3）。
+
 - 入参 `LeaveCreateRequest`（字段与 v1 §2.1 逐字相同：title/leaveType(`^[123]$`)/startDate/endDate/reason/approver）
 - 语义：本地事务内 insert sys_leave(status=0) → Feign §4.1（businessType=leave, businessKey=leaveId, title, applyUser=当前登录人, approver）→ 回填 approval_id → 提交（Feign 失败全回滚 3022；平台 4013→3023、4015→3024 转译，其余 4xxx→3022）
 - 返回 `R<Long>`：新请假单 id
 - 错误码：1001 / 3019（请假日期无效）/ 3023（审批人无效: {approver}）/ 3024（该请假单已存在审批）/ 3022（审批服务不可用）
 
 ### 5.2 我的请假分页 `GET /system/leave/page`（perms `system:leave:list`）
+
+> **附记（2026-10-09）**：status 值域扩 **4=发起失败**（终态，仅 system 产生，bpmn_approval 永不落 4；字典 bpmn_approval_status 增项）——发起异步化后消费端确定性失败的诚实终态；approvalId 亦为异步收敛（正常秒级，读时纠偏兜底），详见 `docs/superpowers/contracts/2026-10-09-rocketmq-tx-approval-api.md` §2.2。
 
 - 入参：`PageQuery`（恒按当前登录人）
 - 语义：本地分页 → Feign §4.2 批量纠偏（不一致回写 sys_leave）→ 返回实时状态；**分批责任在调用方，单批 ≤100**（本端点 pageSize 上限 200（分页插件 maxLimit）而 §4.2 单批上限 100——纠偏须按键 ≤100 分批调用，防整页撞 1001 触发降级）；**Feign 失败降级返回本地快照**（log.error，状态可能滞后记档）
@@ -205,6 +209,8 @@
 - 错误码：无业务码（本库查询）
 
 ## 6. 错误码汇总（双域增量权威）
+
+> **附记（2026-10-09）**：system 3xxx 增量与退役——**3025（消息服务不可用）新增**；**3022/3024 自 POST /system/leave 退役**（发起走 MQ 事务消息不再调 Feign create，4015 场景不可能；两码账本保留，3022 继续用于 page 降级与 cancel）——权威台账见 `docs/superpowers/contracts/2026-10-09-rocketmq-tx-approval-api.md` §3。bpmn 4xxx 零变化。
 
 **bpmn 4xxx（4010-4017 新增；4008/4009 继续现行；4001-4007 废弃）**：
 

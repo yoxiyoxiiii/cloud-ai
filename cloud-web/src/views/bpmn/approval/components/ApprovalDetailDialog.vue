@@ -1,6 +1,9 @@
 <script setup lang="ts">
 /**
  * 审批单详情弹窗（设计 D9，新）：平台单源拼装——approval descriptions + 时间线 + 流程图
+ * 双入口（契约 2026-10-09-rocketmq-tx-approval-api §2.2「查看审批」跳转协议，同请假页模式）：
+ * - 列表行 approval（id 驱动）
+ * - 直达 approvalId（query.approval 落点）：仅 id，主体以弹窗内新拉为准
  * 数据链（契约 §3.2/§3.4 + diagram 契约 §1 两段式）：
  *   GET /bpmn/approval/{id}（approval 主体 + steps 时间线）
  *   → GET /bpmn/approval/{id}/diagram → definitionId 非空则 GET /bpmn/definition/{definitionId}/xml
@@ -19,12 +22,21 @@ interface Props {
   modelValue: boolean
   /** 列表行数据（提供 id；展示以弹窗内新拉的 detail 为准——行数据可能已过期） */
   approval?: ApprovalVo
+  /** 直达入口（query.approval = 审批单 id）：与 approval 二选一，行入口优先 */
+  approvalId?: string
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  /** 关闭动画结束（父页清落点 query 与入口数据） */
+  closed: []
 }>()
+
+/** 双入口归一：列表行 id 优先，其次直达 approvalId（均缺=不打开发据链） */
+function resolveApprovalId(): string | undefined {
+  return props.approval?.id ?? props.approvalId
+}
 
 /** 公共 Viewer 按需分包（设计 D9 分包铁律）：defineAsyncComponent 引入，bpmn-js 及其 CSS 一并入 async chunk */
 const BpmnViewer = defineAsyncComponent(() => import('../../../../components/bpmn/BpmnViewer.vue'))
@@ -63,7 +75,8 @@ const activeHighlightIds = computed<string[]>(() => {
 
 /** 图区数据链（契约 diagram §1 两段式）：diagram → definitionId 非空再取 xml；失败留图区空态 */
 async function loadDiagram(seq: number): Promise<void> {
-  if (!props.approval) {
+  const approvalId = resolveApprovalId()
+  if (!approvalId) {
     return
   }
   diagram.value = undefined
@@ -71,7 +84,7 @@ async function loadDiagram(seq: number): Promise<void> {
   diagramFailed.value = false
   diagramLoading.value = true
   try {
-    const dg = await getApprovalDiagram(props.approval.id)
+    const dg = await getApprovalDiagram(approvalId)
     if (seq !== openSeq) {
       return
     }
@@ -97,7 +110,8 @@ async function loadDiagram(seq: number): Promise<void> {
 /**
  * 打开时按 id 拉取最新详情，就绪后拉图：失败 catch 留空（拦截器已统一 toast，如 4010）。
  * immediate 必须有：同 LeaveDetailDialog（F9 走查 A3）——若调用方在挂载前已置
- * modelValue=true（如未来的 query 直达入口），无 false→true 变更可侦听将零请求空白
+ * modelValue=true（如 query 直达入口 /bpmn/approval?approval={id}），无 false→true
+ * 变更可侦听将零请求空白
  */
 watch(
   () => props.modelValue,
@@ -110,11 +124,12 @@ watch(
     diagram.value = undefined
     diagramXml.value = ''
     diagramFailed.value = false
-    if (!props.approval) {
+    const approvalId = resolveApprovalId()
+    if (!approvalId) {
       return
     }
     loading.value = true
-    getApprovalDetail(props.approval.id)
+    getApprovalDetail(approvalId)
       .then((data) => {
         if (seq !== openSeq) {
           return
@@ -141,6 +156,7 @@ watch(
     title="审批单详情"
     width="860px"
     @update:model-value="(value: boolean) => emit('update:modelValue', value)"
+    @closed="emit('closed')"
   >
     <div v-loading="loading">
       <template v-if="detail">

@@ -3,18 +3,23 @@
  * 发起请假弹窗（设计 D9，自 /bpmn/leave 迁移）：
  * - 请假类型下拉：GET /system/dict/data/type/system_leave_type（契约 §7 字典迁名；translation-api §2.1 既有消费端点）
  * - 审批人下拉：GET /system/leave/approvers（契约 §5.5 投影，**仅启用账号**——迁移收紧语义）
- * - 提交 POST /system/leave（契约 §5.1）：system 本地事务 + 平台 Feign 发起编排
+ * - 提交 POST /system/leave（契约 §5.1；语义修订 2026-10-09-rocketmq-tx-approval-api §2.1：
+ *   MQ 事务消息，同步仍返 R<Long> 新单 id；消费端确定性失败异步转 status=4 不阻塞响应）
  * - 起止日期 el-date-picker daterange，value-format YYYY-MM-DD 对齐契约 §5.1 入参形态
+ * - initial 预填入参（契约 2026-10-09-rocketmq-tx-approval-api §2.2 / 计划 F2）：status=4 单「重新发起」
+ *   复制本单六字段预填（同 2026-10-08 移交备忘 6「驳回重报」预留形态）；提交=创建**新单据**，原单保留 4 不变
  */
-import { reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { addLeave, getLeaveApprovers } from '../../../../api/systemLeave'
 import { getDictItems } from '../../../../api/dict'
-import type { DictItemVo, UserOptionVo } from '../../../../types/api'
+import type { DictItemVo, LeaveCreatePayload, UserOptionVo } from '../../../../types/api'
 
 interface Props {
   modelValue: boolean
+  /** 重新发起预填初始值（undefined=普通发起）：字段同 LeaveCreatePayload，打开时一次性快照应用 */
+  initial?: LeaveCreatePayload
 }
 
 const props = defineProps<Props>()
@@ -73,7 +78,10 @@ const rules: FormRules<LeaveFormData> = {
   approver: [{ required: true, message: '请选择审批人', trigger: 'change' }],
 }
 
-/** 打开时重置表单并拉取两下拉数据源（量级小，每次打开取最新） */
+/** 弹窗标题：预填入口=重新发起（提示用户提交将创建新单据），普通入口=发起请假 */
+const dialogTitle = computed(() => (props.initial ? '重新发起请假' : '发起请假'))
+
+/** 打开时重置表单（重新发起入口再应用预填快照）并拉取两下拉数据源（量级小，每次打开取最新） */
 watch(
   () => props.modelValue,
   (visible) => {
@@ -81,11 +89,14 @@ watch(
       return
     }
     formRef.value?.clearValidate()
-    form.title = ''
-    form.leaveType = ''
-    form.dateRange = []
-    form.reason = ''
-    form.approver = ''
+    form.title = props.initial?.title ?? ''
+    form.leaveType = props.initial?.leaveType ?? ''
+    form.dateRange =
+      props.initial?.startDate && props.initial?.endDate
+        ? [props.initial.startDate, props.initial.endDate]
+        : []
+    form.reason = props.initial?.reason ?? ''
+    form.approver = props.initial?.approver ?? ''
     void loadOptions()
   },
 )
@@ -126,7 +137,8 @@ async function handleSubmit(): Promise<void> {
     emit('success')
     emit('update:modelValue', false)
   } catch {
-    // 拦截器已统一 toast（如 3019 日期无效 / 3023 审批人无效 / 3024 已存在审批）
+    // 拦截器已统一 toast（如 3019 日期无效 / 3023 审批人无效 / 3025 消息服务不可用——
+    // 契约 2026-10-09 §2.1/§3：3022/3024 已自本端点退役）
   } finally {
     loading.value = false
   }
@@ -136,7 +148,7 @@ async function handleSubmit(): Promise<void> {
 <template>
   <el-dialog
     :model-value="modelValue"
-    title="发起请假"
+    :title="dialogTitle"
     width="520px"
     @update:model-value="(value: boolean) => emit('update:modelValue', value)"
   >

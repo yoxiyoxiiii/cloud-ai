@@ -3,8 +3,11 @@
  * 我的审批页（/bpmn/approval，设计 D9 / 契约 §3，新）：跨业务审批单中心
  * 数据源 /bpmn/approval/page（契约 §3.1，恒按当前登录人 applyUser、id 倒序、含全部状态与业务类型）
  * 撤销仅审批中且本人行可点（契约 §3.3 语义；终态行按钮禁用置灰，后端 4011/4012 为最终防线）
+ * 直达落点（契约 2026-10-09-rocketmq-tx-approval-api §2.2「查看审批」跳转协议）：识别
+ * query.approval（=审批单 id，请假页「查看审批」等业务侧入口跳入）自动开对应详情弹窗
  */
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { cancelApproval, getApprovalPage } from '../../../api/bpmn'
 import { useAuthStore } from '../../../stores/auth'
@@ -20,13 +23,15 @@ const STATUS_APPROVING = '0'
 
 /**
  * 状态→tag 颜色映射（契约 §3.1 status 字典 bpmn_approval_status）：
- * tagType 是颜色映射本体，永远按原字段 status 取值（译文不含颜色语义——契约 §1 红线）
+ * tagType 是颜色映射本体，永远按原字段 status 取值（译文不含颜色语义——契约 §1 红线）；
+ * 4=发起失败在本域不可达（bpmn_approval 永不落 4——契约 2026-10-09 §2.2，仅保字典镜像完整）
  */
 const APPROVAL_STATUS_TAG: Record<string, 'warning' | 'success' | 'danger' | 'info'> = {
   '0': 'warning', // 审批中
   '1': 'success', // 已通过
   '2': 'danger', // 已拒绝
   '3': 'info', // 已撤销
+  '4': 'danger', // 发起失败（仅 system 产生，本域不可达）
 }
 
 /**
@@ -38,13 +43,18 @@ function rowOf(row: unknown): ApprovalVo {
 }
 
 const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const loading = ref(false)
 const rows = ref<ApprovalVo[]>([])
 const total = ref(0)
 const query = reactive({ pageNum: 1, pageSize: 10 })
 
 const detailDialogVisible = ref(false)
+/** 列表行入口（提供 id；展示以弹窗内新拉的 detail 为准） */
 const detailApproval = ref<ApprovalVo>()
+/** 直达入口（query.approval=审批单 id，请假页「查看审批」等跳入；仅 id 驱动弹窗自取数据） */
+const detailApprovalId = ref('')
 
 /** 加载分页（契约 §3.1）：total 为 Long→String，分页组件需 Number() */
 async function loadApprovalPage(pageNum: number = query.pageNum): Promise<void> {
@@ -63,7 +73,34 @@ async function loadApprovalPage(pageNum: number = query.pageNum): Promise<void> 
 
 function openDetail(approval: ApprovalVo): void {
   detailApproval.value = approval
+  detailApprovalId.value = ''
   detailDialogVisible.value = true
+}
+
+/**
+ * 直达落点（契约 2026-10-09 §2.2）：query.approval = 审批单 id。
+ * watch 而非 onMounted——keep-alive 缓存复用时再次跳入（同 path 不同 query）不重挂载；
+ * 弹窗独立加载数据（与列表行数据无关）
+ */
+watch(
+  () => route.query.approval,
+  (value) => {
+    if (typeof value === 'string' && value) {
+      detailApproval.value = undefined
+      detailApprovalId.value = value
+      detailDialogVisible.value = true
+    }
+  },
+  { immediate: true },
+)
+
+/** 详情弹窗关闭动画后清除落点 query（防刷新重弹），并清两入口数据 */
+function handleDetailClosed(): void {
+  detailApproval.value = undefined
+  detailApprovalId.value = ''
+  if (route.path === '/bpmn/approval' && typeof route.query.approval === 'string' && route.query.approval) {
+    void router.replace({ query: { ...route.query, approval: undefined } })
+  }
 }
 
 /** 撤销可点：仅审批中且申请人本人行（契约 §3.3；页面恒本人数据，applyUser 判断为防御性冗余）；终态行按钮禁用置灰 */
@@ -170,7 +207,12 @@ onMounted(() => {
       @size-change="handleSizeChange"
     />
 
-    <ApprovalDetailDialog v-model="detailDialogVisible" :approval="detailApproval" />
+    <ApprovalDetailDialog
+      v-model="detailDialogVisible"
+      :approval="detailApproval"
+      :approval-id="detailApprovalId"
+      @closed="handleDetailClosed"
+    />
   </el-card>
 </template>
 

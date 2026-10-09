@@ -278,6 +278,7 @@ export interface ApprovalStepVo {
  *   （statusLabel ?? APPROVAL_STATUS_MAP[status] ?? status；*Name ?? 原 account），
  *   业务判断（tag 颜色/撤销按钮显隐）永远用原字段，原字段永不因翻译被覆盖（契约 §1 红线）
  * - 状态语义（字典 bpmn_approval_status，契约 §7）：0=审批中 1=已通过 2=已拒绝 3=已撤销
+ *   （bpmn_approval 永不落 4=发起失败——该终态仅 system 产生，契约 2026-10-09 §2.2）
  */
 export interface ApprovalVo {
   id: string
@@ -395,13 +396,16 @@ export interface TaskCompletePayload {
 
 /**
  * 审批状态本地降级映射（契约 §9 降级链 / §10，字典 bpmn_approval_status）：status 值 → 中文文案，
- * 仅作 statusLabel 缺位时的展示兜底（防翻译链路抖动）；tag 颜色映射用原 status 字段
+ * 仅作 statusLabel 缺位时的展示兜底（防翻译链路抖动）；tag 颜色映射用原 status 字段。
+ * 4=发起失败（契约 2026-10-09-rocketmq-tx-approval-api §2.2/§4：字典增项，仅 system 域产生——
+ * bpmn 域（ApprovalVo/TaskDoneVo）永不落 4，本映射保字典镜像完整）
  */
 export const APPROVAL_STATUS_MAP: Record<string, string> = {
   '0': '审批中',
   '1': '已通过',
   '2': '已拒绝',
   '3': '已撤销',
+  '4': '发起失败',
 }
 
 /** 请假类型本地降级映射（契约 §9 / §10，字典 system_leave_type）：leaveType 值 → 中文文案，leaveTypeLabel 缺位兜底 */
@@ -411,7 +415,14 @@ export const LEAVE_TYPE_MAP: Record<string, string> = {
   '3': '年假',
 }
 
-/* ============ system 请假域（契约 §5，自 v1 §2 迁移 cloud-system） ============ */
+/* ============ system 请假域（契约 §5，自 v1 §2 迁移 cloud-system；状态域修订 2026-10-09-rocketmq-tx-approval-api §2.2） ============ */
+
+/**
+ * 请假单状态值域（契约 2026-10-09-rocketmq-tx-approval-api §5）：0=审批中 1=已通过 2=已拒绝
+ * 3=已撤销 4=发起失败（终态，仅 system 产生——bpmn_approval 永不落 4；approvalId 恒 null，
+ * 无审批跳转/图/时间线）。文案走字典 bpmn_approval_status（新项 4=发起失败），降级兜底 APPROVAL_STATUS_MAP
+ */
+export type LeaveStatus = '0' | '1' | '2' | '3' | '4'
 
 /**
  * 请假单 VO（契约 §5.2）：列表与详情共用主体（恒按当前登录人，id 倒序）。
@@ -419,12 +430,14 @@ export const LEAVE_TYPE_MAP: Record<string, string> = {
  * - 译文字段随 translation-api §8 体系（必返但值可 null）：展示走降级链
  *   （statusLabel ?? APPROVAL_STATUS_MAP[status] ?? status；leaveTypeLabel ?? LEAVE_TYPE_MAP；
  *   *Name ?? 原 account），业务判断（tag 颜色/撤销按钮显隐）永远用原字段（契约 §1 红线）
- * - 状态语义（字典 bpmn_approval_status，与审批单同值域）：0=审批中 1=已通过 2=已拒绝 3=已撤销；
+ * - 状态语义（字典 bpmn_approval_status，与审批单同值域）：0=审批中 1=已通过 2=已拒绝 3=已撤销
+ *   4=发起失败（终态，仅 system 产生，approvalId 恒 null——契约 2026-10-09 §2.2）；
  *   类型语义（字典 system_leave_type）：1=事假 2=病假 3=年假
+ * - approvalId 为异步收敛（MQ 事件回填，正常秒级；发起后短暂 null 窗口前端按 §2.2 容错）
  */
 export interface SysLeaveVo {
   id: string
-  /** 审批单 id（撤销后仍在；发起失败无 → null）；详情弹窗经它拼装平台时间线+图（契约 §5.3） */
+  /** 审批单 id（撤销后仍在；发起失败 status=4 恒 null；发起后至事件回填前短暂 null）；详情弹窗经它拼装平台时间线+图（契约 §5.3） */
   approvalId: string | null
   title: string
   leaveType: string
@@ -433,7 +446,7 @@ export interface SysLeaveVo {
   startDate: string
   endDate: string
   reason: string | null
-  status: string
+  status: LeaveStatus
   /** 状态译文（字典 bpmn_approval_status）；null 时降级 APPROVAL_STATUS_MAP[status] */
   statusLabel: string | null
   applyUser: string

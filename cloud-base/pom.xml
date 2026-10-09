@@ -32,6 +32,7 @@
         <springdoc.version>2.6.0</springdoc.version>
         <hutool.version>5.8.32</hutool.version>
         <flowable.version>7.2.0</flowable.version>
+        <rocketmq-spring.version>2.3.3</rocketmq-spring.version>
     </properties>
 
     <!-- 所有子模块继承：Lombok 与测试依赖 -->
@@ -102,6 +103,11 @@
                 <artifactId>cloud-common-translate-remote-starter</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.cloudai</groupId>
+                <artifactId>cloud-common-rocketmq-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <!-- 服务间契约 api 模块（2026-10-09 Feign 统一接口层） -->
             <dependency>
                 <groupId>com.cloudai</groupId>
@@ -151,6 +157,12 @@
                 <groupId>org.flowable</groupId>
                 <artifactId>flowable-spring-boot-starter-process</artifactId>
                 <version>${flowable.version}</version>
+            </dependency>
+            <!-- RocketMQ 事务消息（2026-10-09 rocketmq-tx-approval 设计 D1：2.3.3 SB3/JDK17 基线） -->
+            <dependency>
+                <groupId>org.apache.rocketmq</groupId>
+                <artifactId>rocketmq-spring-boot-starter</artifactId>
+                <version>${rocketmq-spring.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

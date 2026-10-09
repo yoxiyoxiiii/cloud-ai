@@ -501,6 +501,33 @@ public class XxxYyyController {
 
 **特例记档**：translate-remote-starter 程序式 client（FeignClientBuilder，common 包不可扫描 + 缓存层降级自洽）不在本模型内。
 
+## 步骤 8：RocketMQ 事务消息与消费（cloud-common-rocketmq-starter）
+
+**何时用**：跨服务写路径有分布式一致性缺口（本地写 + 远端写不能同事务）——同步语义保持（接口签名/返回零变化），远端动作事务消息化 + 结果事件回写收敛（范本：请假发起 → TX_APPROVAL_CREATE → bpmn 建单 → CREATE_RESULT 事件回填 approvalId）。
+
+**生产端三件套**：
+
+1. 生产方法**编排化（去 @Transactional——事务边界归 starter listener）**：校验前置（fail-fast 防白跑 broker）→ 组装实体（id `IdUtil.getSnowflakeNextId()` **预生成**——半消息体先于落库序列化需知 businessKey；审计四值显式）→ `txMessageSender.sendTransactional(topic, tag, keys, payload, channel, bizArg)`。
+   - keys=`{businessType}:{businessKey}`；bizArg=预组装实体 **JVM 内透传**（不经 broker 序列化）；`TxMessageSendException`=半消息失败**本地零写**，catch 转「消息服务不可用」业务码（可重试）。
+2. `TxLocalExecutor<P>` 实现（@Component，范本 `LeaveCreateTxExecutor`）：`channel()` 通道名 / `payloadType()` / `executeInTx(payload, ctx)`——完整业务写 + **必调 `ctx.setBusinessRef(type, key)`**（mq_tx_log 审计列来源，缺失整体回滚）；实现内**禁 @Transactional**（双事务边界撕裂——COMMIT 决策返回前本地事务必须已提交）。
+3. 结果事件通知（反向回写）：普通消息 `syncSend(TOPIC + ":" + tag)`，KEYS=`{businessType}:{businessKey}:{eventType}`；**事件消息模型归提供方 api 模块 `mq/` 子包**（与 Feign 契约同位，范本 `ApprovalEventMessage`/`ApprovalMqTopics`）；事件发送失败语义区分：结果事件失败→重抛重试（确定性重放一致），通知事件失败→log.error+ACK（纠偏兜底）。
+
+**消费端幂等——双层二选一（守护测试检查，二者必有其一）**：
+
+- **L1 通用去重表**（回写/通知类，无业务 uk）：继承 `DedupRocketMQListener`，实现 `dedupGroup()`（与 consumerGroup 同名）+`doConsume(msg)`——基类先插 mq_consume_dedup→DuplicateKey=已消费 ACK 跳过→doConsume 异常**删行放行重试**（失败不删行=后续重投被吞=消息丢失）。
+- **L2 业务 uk 幂等**（建单类，业务表有 uk_business）：不继承基类，类上标注 `@UkIdempotentListener("uk 说明")` 豁免 + catch `DuplicateKeyException` 幂等吸收（log+ACK，重投至多建一单）。
+- 回写 UPDATE 用**条件写**幂等三防：`WHERE approval_id IS NULL` / `WHERE status=0`（重投/乱序/双写同值无害，未命中=空更新 ACK 记档）。
+
+**消费失败三分类**：
+
+| 分类 | 处置 |
+|---|---|
+| 幂等吸收（DuplicateKey） | log + ACK（至多一次生效） |
+| 确定性业务失败白名单（码固定可枚举，如审批人无效/已终态） | 转结果事件（FAILED）通知上游收敛 + ACK |
+| 未知/系统异常 | 抛出 → 重试 `maxReconsumeTimes=3` → %DLQ% 死信人工（dashboard 巡检，禁止无限重试） |
+
+**配置与陷阱**：`rocketmq.name-server`/`rocketmq.producer.group` 走 Nacos 不进仓库（未配 name-server 时 RocketMQTemplate 不装配，服务可起）；消费组由 `@RocketMQMessageListener(consumerGroup=...)` 自持；**消费无用户上下文**——审计 operator 用系统操作者记档（如 "bpmn-event"）；消息体字段一律 String（Long→String 全局 Jackson 口径，防精度/类型漂移）。
+
 ## 通用约束（全后端强制；机械项由守护测试保证）
 
 - 同前缀多值配置用 `@ConfigurationProperties` 对象（参考 security-starter 的 JwtProperties），同文件 ≥2 个 @Value 违规
@@ -524,3 +551,4 @@ public class XxxYyyController {
 - [ ] 起服务按契约 curl 新端点（经网关带 admin token）+ DB 抽查审计字段？
 - [ ] 服务模块 `@FeignClient` 零命中（守护测试）？
 - [ ] api 模块 `@FeignClient` 均带 `fallbackFactory`（守护测试）？
+- [ ] **MQ（涉事务消息/消费时）**：生产 executor 形态（编排化+executeInTx 内 setBusinessRef，实现内无 @Transactional）/ 消费 L1L2 二选一（DedupRocketMQListener 或 @UkIdempotentListener，守护测试检查）/ 失败三分类归位 / topic·group·KEYS·消息体与消息契约逐字一致？

@@ -78,6 +78,11 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
         </dependency>
+        <!-- RocketMQ 事务消息封装（契约 2026-10-09-rocketmq-tx-approval：TX_APPROVAL_CREATE 生产 + 事件通知消费） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-rocketmq-starter</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

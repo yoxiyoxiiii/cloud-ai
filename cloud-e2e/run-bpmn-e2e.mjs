@@ -69,6 +69,20 @@
  *
  * 实操注意（F6/F9 联调结论沿袭）：el-date-picker 走日历面板点击（键盘输入会触发 EP Invalid user input
  * 警告污染 console 断言）；办理弹窗同意 radio 默认选中；两页撤销均有 ElMessageBox 二段确认
+ *
+ * Round J MQ 事务消息迁移（契约 2026-10-09-rocketmq-tx-approval-api，对 2026-10-08 契约的修订）：
+ * - 发起链路 MQ 事务消息化：POST /system/leave 签名/返回零变化（返回新单 id=snowflake 预生成=businessKey）；
+ *   approvalId 改由 CREATE_RESULT/SUCCESS 事件秒级回填（异步收敛时窗——纠偏只纠 status 且仅限已带
+ *   approvalId 的行，回填只靠事件消费者条件 UPDATE 落库）——createLeaveViaUi 内置收敛轮询
+ *   waitForApprovalId（GET /system/leave/{id} 至 approvalId 非 null，timeout 15s，契约 §6）
+ * - 终态收敛主路径改 TERMINAL 事件回写（读时纠偏降级兜底）——BP3/BP4 纠偏原值断言语义不变（读仍纠偏）
+ * - 消息不删纪律（契约 §6）：断言一律锚本轮 stamp 新单据；历史消息经幂等路径（业务 uk/L1 去重表/
+ *   条件 UPDATE）静默吸收，不污染断言
+ * - 预热纪律（契约 §6 + 2026-10-09 Feign D5 教训迁移）：preflight 后 MQ 全链预热
+ *   （create→approvalId 收敛→complete→终态收敛）——producer 长闲后冷首发实测超默认 sendMsgTimeout
+ *   （→1002「消息服务不可用」，重试即愈）+ 消费组冷启动首投递 ~25s（rebalance），四角色
+ *   （p_system_tx/g_bpmn_approval_create/p_bpmn_tx/g_system_approval_event）一并暖；预热失败 SKIP 不硬跑
+ * - 预热单 e2emqwarm 前缀（非本轮 stamp——不进 CLEANUP 计数），办结归终态留档（清扫纪律允许）
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -135,10 +149,58 @@ async function preflight() {
     if (!db || db.code !== 200) {
       return { ok: false, reason: `bpmn 域探测失败（9203 经网关不可达或未就绪）: HTTP ${dr.status} body=${JSON.stringify(db).slice(0, 200)}` }
     }
-    return { ok: true, defTotal: db.data?.total }
+    return { ok: true, defTotal: db.data?.total, token: lb.data.accessToken }
   } catch (e) {
     return { ok: false, reason: `网络层异常: ${String(e)}` }
   }
+}
+
+/** MQ 全链预热（契约 §6 预热纪律）：create（p_system_tx 冷首发重试一次）→ approvalId 收敛
+ *  （g_bpmn_approval_create + g_system_approval_event 冷启动预算 60s）→ complete（p_bpmn_tx）
+ *  → 终态收敛（TERMINAL 事件回写）。预热单 e2emqwarm 前缀，办结归终态留档（不清零纪律）。 */
+async function mqWarmup(accessToken) {
+  const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${accessToken}` }
+  const title = `e2emqwarm${Date.now()}`
+  const gw = (path) => fetch(`${GATEWAY}${path}`, { headers: { Authorization: headers.Authorization } })
+  let leaveId = null
+  // 发起（producer 冷首发实测 1002——重试一次即愈，F4 联调实证）
+  for (let attempt = 1; attempt <= 2 && !leaveId; attempt++) {
+    const body = await fetch(`${GATEWAY}/system/leave`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ title, leaveType: '1', startDate: '2026-11-25', endDate: '2026-11-26', reason: 'mq warmup', approver: 'admin' }),
+    }).then((r) => r.json()).catch(() => null)
+    if (body?.code === 200 && typeof body.data === 'string') leaveId = body.data
+    else log(`  预热发起第 ${attempt} 次未成: code=${body?.code} msg="${body?.msg}"（producer 冷首发→1002 属实测已知，重试）`)
+  }
+  if (!leaveId) return { ok: false, reason: '预热发起两次失败（MQ 生产链路不可用？）' }
+  // approvalId 收敛（消费组冷启动首投递 ~25s——预算 60s；详情 VO 是嵌套 {leave} 包装）
+  let approvalId = null
+  for (let i = 0; i < 120 && !approvalId; i++) {
+    const body = await gw(`/system/leave/${leaveId}`).then((r) => r.json()).catch(() => null)
+    approvalId = body?.data?.leave?.approvalId || null
+    if (!approvalId) await new Promise((r) => setTimeout(r, 500))
+  }
+  if (!approvalId) return { ok: false, reason: `预热单 approvalId 60s 未收敛（消费链路不可用？leaveId=${leaveId}）`, leaveId }
+  // 办结（bpmn 侧生产冷首发同防——重试一次）
+  let done = null
+  for (let attempt = 1; attempt <= 2 && done?.code !== 200; attempt++) {
+    const todo = await gw('/bpmn/task/todo').then((r) => r.json()).catch(() => null)
+    const task = (todo?.data || []).find((t) => String(t.approvalId) === String(approvalId))
+    if (!task) return { ok: false, reason: `预热单待办未出现（leaveId=${leaveId} approvalId=${approvalId}）`, leaveId }
+    done = await fetch(`${GATEWAY}/bpmn/task/complete`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ taskId: task.taskId, approve: 'true', comment: 'mq warmup approve' }),
+    }).then((r) => r.json()).catch(() => null)
+    if (done?.code !== 200) log(`  预热办结第 ${attempt} 次未成: code=${done?.code} msg="${done?.msg}"（冷首发重试）`)
+  }
+  if (done?.code !== 200) return { ok: false, reason: `预热办结两次失败: code=${done?.code} msg="${done?.msg}"`, leaveId }
+  // 终态收敛确认（TERMINAL 事件回写为主、读时纠偏兜底——15s；status 同嵌套 {leave} 包装）
+  for (let i = 0; i < 30; i++) {
+    const body = await gw(`/system/leave/${leaveId}`).then((r) => r.json()).catch(() => null)
+    if (body?.data?.leave?.status === '1') return { ok: true, title }
+    await new Promise((r) => setTimeout(r, 500))
+  }
+  return { ok: false, reason: `预热单终态 15s 未收敛（TERMINAL 事件链路？leaveId=${leaveId}）`, leaveId }
 }
 
 const pre = await preflight()
@@ -149,6 +211,21 @@ if (!pre.ok) {
   process.exit(0)
 }
 log(`前置健康探测通过（经网关 /system/leave/page + /bpmn/definition/page，流程定义 total=${pre.defTotal}）`)
+
+// ---- MQ 全链预热（失败即 SKIP——契约 §6 预热纪律；残留预热单尽力撤销清理） ----
+const warm = await mqWarmup(pre.token)
+if (!warm.ok) {
+  log(`\n[SKIP] MQ 链路预热未通过: ${warm.reason}`)
+  if (warm.leaveId) {
+    await fetch(`${GATEWAY}/system/leave/cancel/${warm.leaveId}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${pre.token}` },
+    }).then((r) => r.json()).catch(() => null)
+    log(`已尽力撤销残留预热单 leaveId=${warm.leaveId}`)
+  }
+  h.summary({ extras: [`\nSKIP 原因: ${warm.reason}`] })
+  process.exit(0)
+}
+log(`MQ 全链预热通过（create→approvalId 收敛→complete→终态；预热单 ${warm.title} 归终态留档）`)
 
 // ---------- 主流程（默认有头 + slowMo 300，与其余七脚本一致） ----------
 const HEADLESS = process.env.E2E_HEADLESS === '1' || process.argv.includes('--headless')
@@ -286,7 +363,25 @@ async function pickDateRange(dlg, startDay, endDay) {
   return { sv, ev }
 }
 
-/** 发起请假全流程（开弹窗 → 填五字段 → 提交 → 发起成功 toast + 弹窗关闭 + 列表刷新落定）；返回新单 id */
+/** approvalId 收敛轮询（契约 2026-10-09 §2.2/§6）：发起后 approvalId 短暂 null（CREATE_RESULT 事件回填前），
+ *  轮询 GET /system/leave/{id} 至非空（timeout 15s 窗口内必达；纠偏不回填 approvalId——只等事件消费者
+ *  条件 UPDATE 落库）。跳转入口/图渲染/待办锚点均以 approvalId 非空为前置——本 helper 即收敛闸门。 */
+async function waitForApprovalId(leaveId, timeoutMs = 15000) {
+  const t0 = Date.now()
+  for (let i = 0; i < Math.ceil(timeoutMs / 500); i++) {
+    const detail = await pageFetch(`/api/system/leave/${leaveId}`)
+    const approvalId = detail.data?.leave?.approvalId
+    if (detail.code === 200 && approvalId) {
+      log(`  approvalId 收敛: ${approvalId}（${Date.now() - t0}ms——MQ CREATE_RESULT 事件回填）`)
+      return approvalId
+    }
+    await sleep(500)
+  }
+  assert(false, `approvalId 应在 ${timeoutMs}ms 内收敛（MQ CREATE_RESULT 事件回填），leaveId=${leaveId}`)
+}
+
+/** 发起请假全流程（开弹窗 → 填五字段 → 提交 → 发起成功 toast + 弹窗关闭 + 列表刷新落定 →
+ *  approvalId 收敛轮询——契约 §6「approvalId 相关场景改收敛轮询」统一闸门）；返回新单 id */
 async function createLeaveViaUi({ title, typeLabel, reason }) {
   // 发起按钮只在 /system/leave（调用方可能在任务/定义/审批页——先归位再开弹窗）
   if (!page.url().includes(LEAVE_PATH)) await loadLeavePage()
@@ -316,6 +411,8 @@ async function createLeaveViaUi({ title, typeLabel, reason }) {
   await waitTableIdle(page)
   await sleep(300)
   log(`  发起成功: title=${title} type=${typeLabel}(${TYPE_LABELS[typeLabel]}) ${sv}~${ev} leaveId=${body.data}`)
+  // MQ 形态收敛闸门（BP2 approvalId 非空断言/锚定/待办/跳转/图渲染全依赖此后置成立）
+  await waitForApprovalId(body.data)
   return body.data
 }
 

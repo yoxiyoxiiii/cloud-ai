@@ -39,7 +39,8 @@ public class SysLeave extends BaseEntity {
     /** 事由说明 */
     private String reason;
 
-    /** 状态快照：0审批中 1已通过 2已拒绝 3已撤销（字典 bpmn_approval_status；真相源在平台侧） */
+    /** 状态快照：0审批中 1已通过 2已拒绝 3已撤销 4发起失败（字典 bpmn_approval_status；真相源在平台侧；
+     *  4=MQ 消费端确定性失败终态仅 system 产生，approvalId=null，bpmn_approval 表永不落 4） */
     private Integer status;
 
     /** 审批单ID（bpmn_approval.id，发起 Feign 成功后回填；撤销后仍保留） */
@@ -75,9 +76,10 @@ public class SysLeave extends BaseEntity {
         }
     }
 
-    /** 状态快照枚举（与平台 bpmn_approval.status 同值域；值语义以契约 §6/字典 bpmn_approval_status 为准） */
+    /** 状态快照枚举（与平台 bpmn_approval.status 同值域 + 4 发起失败仅 system 产生；
+     *  值语义以契约 §6/字典 bpmn_approval_status 为准） */
     public enum StatusEnum {
-        APPROVING(0), APPROVED(1), REJECTED(2), CANCELLED(3);
+        APPROVING(0), APPROVED(1), REJECTED(2), CANCELLED(3), FAILED(4);
 
         private final int code;
 
@@ -98,7 +100,7 @@ public class SysLeave extends BaseEntity {
             throw new IllegalArgumentException("未知状态: " + code);
         }
 
-        /** 终态判定（1已通过/2已拒绝/3已撤销不可再变更） */
+        /** 终态判定（1已通过/2已拒绝/3已撤销/4发起失败不可再变更——4 可重新发起新单，原单不再变更） */
         public boolean isTerminal() {
             return this != APPROVING;
         }

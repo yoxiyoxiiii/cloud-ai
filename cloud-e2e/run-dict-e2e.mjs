@@ -7,7 +7,7 @@
  * 测试数据（删净纪律最高优先）：
  * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；内置种子零放行触碰——SEED_KEYS 四类型（user_status/common_status
  *   翻译契约 §0.3/§8.3 + bpmn_approval_status/system_leave_type 契约 2026-10-08-approval-platform-api §7，is_builtin=1 自动落入 3015/3016 保护；
- *   Round I 审批平台化：-bpmn_leave_status/-bpmn_leave_type 种子行已 DELETE，+bpmn_approval_status（审批状态 4 项）/+system_leave_type（请假类型 3 项），总数 4 不变）；
+ *   Round I 审批平台化：-bpmn_leave_status/-bpmn_leave_type 种子行已 DELETE， +bpmn_approval_status（审批状态 4 项→Round J 增 4=发起失败共 5 项）/+system_leave_type（请假类型 3 项），总数 4 不变）；
  *   D5b 内置保护：user_status 行徽标/禁用面 + 直连 3015/3016 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
  * - 结束清扫全部 e2e 前缀类型（含 D5 的 e2econs；先删项后删类型，3011 禁删约束）并断言左表无 e2e 残留、残留 ⊇ SEED_KEYS（宽松，不锁上限）
  * 核心断言（契约 §2 §3 §5；界面重构后字典项管理在弹框内——2026-10-07-dict-ui-list-dialog plan D4）：
@@ -23,7 +23,7 @@
  * - D4 删除约束：有项删类型 3011 toast 行保留 → 弹框内删净项 → 删类型（确认框含类型名）→ 类型行消失
  * - D5 消费端点（契约 2026-10-07-translation-api §2.1/§8.3）：造 e2econs 类型+3 项（sort 3/1/2，1 项停用）→
  *   消费断言停用过滤/长度 2/sort 升序/字段恰 value-label-sort；未知 dictKey → 200 data:[]；
- *   无 token 直调网关 401；种子 user_status/common_status 消费回归各恰 2 项 + bpmn_approval_status 恰 4 项
+ *   无 token 直调网关 401；种子 user_status/common_status 消费回归各恰 2 项 + bpmn_approval_status 恰 5 项（Round J 增 4=发起失败）
  *   （value "0"-"3" 文案断言，契约 2026-10-08-approval-platform-api §7；CLEANUP 一并删 e2econs，种子零触碰）
  */
 import { chromium } from 'playwright'
@@ -590,7 +590,7 @@ try {
   })
 
   // ================= D5 消费端点（契约 2026-10-07-translation-api §2.1，D4 后 CLEANUP 前） =================
-  await step('D5', '消费端点：e2econs 停用过滤 + sort 升序 + 字段恰 value/label/sort；未知键 200 空数组；无 token 直调网关 401；种子 user_status/common_status 各 2 项 + bpmn_approval_status 恰 4 项', async () => {
+  await step('D5', '消费端点：e2econs 停用过滤 + sort 升序 + 字段恰 value/label/sort；未知键 200 空数组；无 token 直调网关 401；种子 user_status/common_status 各 2 项 + bpmn_approval_status 恰 5 项（Round J 增 4=发起失败）', async () => {
     // ---- 5a. 造数（页内 fetch，admin 会话）：类型 + 3 项（sort 3/1/2 乱序，其中 1 项停用）----
     const made = await page.evaluate(async (args) => {
       const { dictName, dictKey } = args
@@ -679,8 +679,9 @@ try {
     assertEq(common.data[0].value, '0', 'common_status 首项 value 应为 "0"')
     assertEq(common.data[1].label, '停用', 'common_status 次项应为 停用（sort 2）')
     assertEq(common.data[1].value, '1', 'common_status 次项 value 应为 "1"')
-    // ---- 5f. bpmn_approval_status 消费回归（E1 补→Round I 迁移：契约 2026-10-08-approval-platform-api §7——
-    //      恰 4 项，value "0"-"3" 文案断言；bpmn_leave_status 种子行已 DELETE，旧键消费面随迁移收敛到新键）----
+    // ---- 5f. bpmn_approval_status 消费回归（E1 补→Round I 迁移：契约 2026-10-08 §7 → Round J 增项：
+    //      契约 2026-10-09-rocketmq-tx-approval §4 字典种子增量 4=发起失败（sort=5）——恰 5 项 value "0"-"4"；
+    //      bpmn_leave_status 种子行已 DELETE，旧键消费面随迁移收敛到新键）----
     const approvalStatus = await page.evaluate(async () => {
       const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
       const res = await fetch('/api/system/dict/data/type/bpmn_approval_status', { headers: { Authorization: `Bearer ${token}` } })
@@ -689,9 +690,9 @@ try {
     log(`  bpmn_approval_status 种子消费: ${JSON.stringify(approvalStatus)}`)
     assertEq(approvalStatus.code, 200, 'bpmn_approval_status 消费业务码应为 200')
     assert(Array.isArray(approvalStatus.data), `bpmn_approval_status data 应为数组，实际 ${typeof approvalStatus.data}`)
-    assertEq(approvalStatus.data.length, 4, `bpmn_approval_status 种子应恰 4 项，实际 ${JSON.stringify(approvalStatus.data)}`)
-    const APPROVAL_STATUS_LABELS = { 0: '审批中', 1: '已通过', 2: '已拒绝', 3: '已撤销' }
-    for (let i = 0; i < 4; i++) {
+    assertEq(approvalStatus.data.length, 5, `bpmn_approval_status 种子应恰 5 项（Round J 增 4=发起失败），实际 ${JSON.stringify(approvalStatus.data)}`)
+    const APPROVAL_STATUS_LABELS = { 0: '审批中', 1: '已通过', 2: '已拒绝', 3: '已撤销', 4: '发起失败' }
+    for (let i = 0; i < 5; i++) {
       assertEq(approvalStatus.data[i].value, String(i), `bpmn_approval_status 第 ${i + 1} 项 value 应为 "${i}"（sort 升序），实际 ${JSON.stringify(approvalStatus.data[i])}`)
       assertEq(approvalStatus.data[i].label, APPROVAL_STATUS_LABELS[i], `bpmn_approval_status value "${i}" 文案应为 ${APPROVAL_STATUS_LABELS[i]}，实际 "${approvalStatus.data[i].label}"`)
     }

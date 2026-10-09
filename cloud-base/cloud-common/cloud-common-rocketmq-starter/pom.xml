@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.cloudai</groupId>
+        <artifactId>cloud-common</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>cloud-common-rocketmq-starter</artifactId>
+    <name>cloud-common-rocketmq-starter</name>
+    <description>RocketMQ 事务消息与消费幂等封装（tx_log 回查 / 去重表 / 清理任务）</description>
+
+    <dependencies>
+        <!-- 复用全局 Jackson 口径（消息体序列化/反序列化）与 R/BusinessException -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-core-starter</artifactId>
+        </dependency>
+        <!-- RocketMQ 官方 starter（RocketMQTemplate / @RocketMQMessageListener / 事务监听） -->
+        <dependency>
+            <groupId>org.apache.rocketmq</groupId>
+            <artifactId>rocketmq-spring-boot-starter</artifactId>
+        </dependency>
+        <!-- tx_log / 去重表 JdbcTemplate 手写 SQL（零侵入宿主 mybatis 配置，设计 D1 取舍） -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-jdbc</artifactId>
+        </dependency>
+    </dependencies>
+</project>

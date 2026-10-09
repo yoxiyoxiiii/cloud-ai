@@ -2,22 +2,28 @@ package com.cloudai.bpmn.service;
 
 import com.cloudai.bpmn.api.domain.ApprovalCancelInnerRequest;
 import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
+import com.cloudai.bpmn.api.domain.ApprovalEventMessage;
 import com.cloudai.bpmn.api.domain.ApprovalStatusQueryInnerRequest;
 import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
 import com.cloudai.bpmn.api.domain.InnerApprovalStatusVo;
 import com.cloudai.bpmn.api.domain.VariableItem;
+import com.cloudai.bpmn.api.mq.ApprovalMqTopics;
 import com.cloudai.bpmn.dto.TaskCompleteRequest;
 import com.cloudai.bpmn.entity.BpmnApproval;
 import com.cloudai.bpmn.entity.BpmnApproval.StatusEnum;
 import com.cloudai.bpmn.entity.BpmnBusinessType;
 import com.cloudai.bpmn.mapper.BpmnApprovalMapper;
+import com.cloudai.bpmn.mq.ApprovalCancelTxExecutor;
+import com.cloudai.bpmn.mq.ApprovalCompleteTxExecutor;
+import com.cloudai.bpmn.mq.ApprovalEventPublisher;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
+import com.cloudai.common.rocketmq.tx.TxMessageSendException;
+import com.cloudai.common.rocketmq.tx.TxMessageSender;
 import com.cloudai.system.api.client.SystemUserClient;
 import com.cloudai.system.api.domain.UserEntry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.flowable.common.engine.impl.identity.Authentication;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
@@ -36,9 +42,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 通用审批编排（设计 D1/D3/D6）：发起/撤销/办理三方法 + 状态批量查询。
- * bpmn_approval 表写与引擎写同一本地事务（@Transactional rollbackFor——平台内部共库同事务语义保留，
- * D3 同事务 IT 保障）；错误码 4xxx 账本见契约 2026-10-08-approval-platform-api §6（4008/4009 归定义面）。
+ * 通用审批编排（设计 2026-10-09 D1/D3 + 事务消息 D2 形态裁定）：发起/撤销/办理三方法 + 状态批量查询。
+ * createApproval 仍 @Transactional——消费侧业务（MQ 消费与 /inner 端点复用）非事务消息生产方，不受
+ * executor 形态裁定约束；completeTask/cancelApproval/cancelByBusiness 为 MQ 终态通知生产方，一律编排化
+ * （去 @Transactional）：前置校验 + TxMessageSender 半消息发送，完整业务写在 executor.executeInTx 内
+ * 与 mq_tx_log 同在 starter listener 单事务。错误码 4xxx 账本见契约 2026-10-08-approval-platform-api §6。
  */
 @Slf4j
 @Service
@@ -53,14 +61,10 @@ public class ApprovalWorkflowService {
     private static final int ERR_TASK_INVALID = 4016;
     private static final int ERR_DEFINITION_MISSING = 4017;
 
-    private static final String VAR_APPROVE = "approve";
     private static final String VAR_APPROVAL_ID = "approvalId";
     private static final String VAR_APPLY_USER = "applyUser";
     private static final String VAR_APPROVER = "approver";
     private static final String VAR_TITLE = "title";
-
-    private static final String ACTIVITY_END_APPROVE = "endApprove";
-    private static final String ACTIVITY_END_REJECT = "endReject";
 
     private final BpmnApprovalMapper approvalMapper;
     private final BusinessTypeRegistry businessTypeRegistry;
@@ -68,6 +72,8 @@ public class ApprovalWorkflowService {
     private final TaskService taskService;
     private final HistoryService historyService;
     private final SystemUserClient systemUserClient;
+    private final TxMessageSender txMessageSender;
+    private final ApprovalEventPublisher eventPublisher;
 
     /** 发起审批（契约 §4.1）：配置校验 4014 → 审批人校验 4013 → uk 查重 4015 →
      *  insert bpmn_approval(审批中) → 启动实例（businessKey=id，平台四变量+variables）→ 同事务回填实例关联 */
@@ -107,17 +113,15 @@ public class ApprovalWorkflowService {
         return out;
     }
 
-    /** 按审批单 id 撤销（契约 §3.3）：4010→4012→4011（先身份后状态）→ 删流程实例 → 置已撤销（实例关联清空） */
-    @Transactional(rollbackFor = Exception.class)
+    /** 按审批单 id 撤销（契约 §3.3，编排化）：4010→4012→4011 前置校验 → TERMINAL/3 事务半消息
+     *  （executor 内复查+删实例+置 3 与 mq_tx_log 同单事务，消息投递即本地已提交——审查 R-1 不变式） */
     public void cancelApproval(Long id, String operator) {
-        BpmnApproval approval = requireApproval(id);
-        checkCancelable(approval, operator);
-        deleteProcessInstance(approval);
-        approvalMapper.updateStatusById(id, StatusEnum.CANCELLED.getCode(), null, operator, LocalDateTime.now());
+        BpmnApproval approval = findCancelableApproval(id, operator);
+        sendTerminalEvent(approval, StatusEnum.CANCELLED.getCode(),
+                ApprovalCancelTxExecutor.CHANNEL, new ApprovalCancelTxExecutor.CancelCommand(id, operator));
     }
 
-    /** 按业务键撤销（契约 §4.3 /inner 通道）：(businessType, businessKey) 定位 → 4010 → 复用 id 撤销校验序 */
-    @Transactional(rollbackFor = Exception.class)
+    /** 按业务键撤销（契约 §4.3 /inner 通道）：(businessType, businessKey) 定位 → 4010 → 复用 id 撤销编排 */
     public void cancelByBusiness(ApprovalCancelInnerRequest req) {
         BpmnApproval approval = approvalMapper.findByBusiness(req.getBusinessType(), req.getBusinessKey());
         if (approval == null) {
@@ -126,29 +130,20 @@ public class ApprovalWorkflowService {
         cancelApproval(approval.getId(), req.getOperator());
     }
 
-    /** 办理任务（契约 §2.3）：意见落 ACT_HI_COMMENT（操作人经引擎 Authentication 记入）→ complete(approve) →
-     *  实例结束按 endActivityId 回写 bpmn_approval.status（endApprove→1/endReject→2；
-     *  未结束=未来多节点模型不回写，记档） */
-    @Transactional(rollbackFor = Exception.class)
+    /** 办理任务（契约 §2.3，编排化）：4016 前置 → 定位审批单 → terminalStatus 按 approve 推断
+     *  （单节点模型与 endActivityId 映射一致）→ TERMINAL 事务半消息（executor 内 addComment+complete+
+     *  回写置 1/2，实际与推断不一致整体回滚——多节点演进防御，设计 D2） */
     public void completeTask(TaskCompleteRequest req, String opUser) {
         Task task = taskService.createTaskQuery().taskId(req.getTaskId()).singleResult();
         if (task == null) {
             throw new BusinessException(ERR_TASK_INVALID, "任务不存在或已被办理");
         }
-        Authentication.setAuthenticatedUserId(opUser);
-        try {
-            taskService.addComment(task.getId(), task.getProcessInstanceId(), req.getComment());
-            taskService.complete(task.getId(), Map.of(VAR_APPROVE, Boolean.parseBoolean(req.getApprove())));
-        } catch (org.flowable.common.engine.api.FlowableObjectNotFoundException e) {
-            log.error("任务已不存在或已被办理: {}", req.getTaskId(), e);
-            throw new BusinessException(ERR_TASK_INVALID, "任务不存在或已被办理");
-        } catch (org.flowable.common.engine.api.FlowableException e) {
-            log.error("流程引擎办理异常: {}", req.getTaskId(), e);
-            throw new BusinessException("流程引擎办理异常");
-        } finally {
-            Authentication.setAuthenticatedUserId(null);
-        }
-        writeBackStatus(task, opUser);
+        BpmnApproval approval = requireApprovalByTask(task);
+        Integer expected = Boolean.parseBoolean(req.getApprove())
+                ? StatusEnum.APPROVED.getCode() : StatusEnum.REJECTED.getCode();
+        sendTerminalEvent(approval, expected, ApprovalCompleteTxExecutor.CHANNEL,
+                new ApprovalCompleteTxExecutor.CompleteCommand(
+                        task.getId(), req.getApprove(), req.getComment(), opUser, expected));
     }
 
     // ---- 发起脚手架 ----
@@ -240,7 +235,7 @@ public class ApprovalWorkflowService {
         return vo;
     }
 
-    // ---- 撤销脚手架 ----
+    // ---- 撤销脚手架（public：生产前置校验与 executor 复用，同一错误语义源） ----
 
     private BpmnApproval requireApproval(Long id) {
         BpmnApproval approval = approvalMapper.findById(id);
@@ -250,7 +245,14 @@ public class ApprovalWorkflowService {
         return approval;
     }
 
-    /** 撤销校验序（契约 §3.3/§4.3）：4010（已由调用方查行）→ 4012 仅申请人本人 → 4011 已终态 */
+    /** 撤销校验序（契约 §3.3/§4.3）：4010 行在 → 4012 仅申请人本人 → 4011 已终态；
+     *  public 供 ApprovalCancelTxExecutor 复查复用（发送前置校验后到者防御） */
+    public BpmnApproval findCancelableApproval(Long id, String operator) {
+        BpmnApproval approval = requireApproval(id);
+        checkCancelable(approval, operator);
+        return approval;
+    }
+
     private void checkCancelable(BpmnApproval approval, String operator) {
         if (!approval.getApplyUser().equals(operator)) {
             throw new BusinessException(ERR_NOT_APPLIER, "仅申请人本人可撤销");
@@ -261,7 +263,7 @@ public class ApprovalWorkflowService {
     }
 
     /** 删流程实例；实例已不存在=并发办理竞态（后到者感知 4011）——历史终态防御不透传引擎栈 */
-    private void deleteProcessInstance(BpmnApproval approval) {
+    public void deleteProcessInstance(BpmnApproval approval) {
         String processInstanceId = approval.getProcessInstanceId();
         if (processInstanceId == null) {
             return;
@@ -274,33 +276,32 @@ public class ApprovalWorkflowService {
         }
     }
 
-    // ---- 办理回写脚手架 ----
+    // ---- 办理脚手架 ----
 
-    /** 结束态回写：历史实例（含运行中）取 businessKey（=审批单 id）；未结束不回写（多节点模型演进项记档） */
-    private void writeBackStatus(Task task, String opUser) {
+    /** 任务→审批单定位：历史实例 businessKey（=审批单 id）→ findById；businessKey 缺失=非平台审批域任务（防御 4010） */
+    private BpmnApproval requireApprovalByTask(Task task) {
         HistoricProcessInstance historic = historyService.createHistoricProcessInstanceQuery()
                 .processInstanceId(task.getProcessInstanceId())
                 .singleResult();
-        if (historic == null || historic.getBusinessKey() == null || historic.getEndTime() == null) {
-            return;
+        String businessKey = historic == null ? null : historic.getBusinessKey();
+        if (businessKey == null) {
+            log.error("任务未关联平台审批单: taskId={}, processInstanceId={}", task.getId(), task.getProcessInstanceId());
+            throw new BusinessException(ERR_APPROVAL_NOT_FOUND, "审批单不存在");
         }
-        Integer newStatus = mapEndActivityToStatus(historic.getEndActivityId());
-        if (newStatus == null) {
-            log.warn("未知 endActivityId，不回写审批单状态: {}", historic.getEndActivityId());
-            return;
-        }
-        approvalMapper.updateStatusById(Long.valueOf(historic.getBusinessKey()), newStatus,
-                task.getProcessInstanceId(), opUser, LocalDateTime.now());
+        return requireApproval(Long.valueOf(businessKey));
     }
 
-    /** endApprove→已通过 / endReject→已拒绝；其余（未知）null 不回写 */
-    private Integer mapEndActivityToStatus(String endActivityId) {
-        if (ACTIVITY_END_APPROVE.equals(endActivityId)) {
-            return StatusEnum.APPROVED.getCode();
+    /** TERMINAL 事件半消息发送（两通道共用）：TxMessageSendException=半消息失败（本地零写）转 1002 系 */
+    private void sendTerminalEvent(BpmnApproval approval, Integer terminalStatus, String channel, Object bizArg) {
+        ApprovalEventMessage event = eventPublisher.terminal(
+                approval.getBusinessType(), approval.getBusinessKey(), terminalStatus);
+        try {
+            txMessageSender.sendTransactional(ApprovalMqTopics.TOPIC_APPROVAL_EVENT_NOTIFY,
+                    ApprovalMqTopics.TAG_TERMINAL, eventPublisher.notifyKeys(event), event, channel, bizArg);
+        } catch (TxMessageSendException e) {
+            log.error("终态通知事务半消息发送失败: channel={}, keys={}",
+                    channel, eventPublisher.notifyKeys(event), e);
+            throw new BusinessException("消息服务不可用");
         }
-        if (ACTIVITY_END_REJECT.equals(endActivityId)) {
-            return StatusEnum.REJECTED.getCode();
-        }
-        return null;
     }
 }

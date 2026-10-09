@@ -27,9 +27,15 @@ public interface SysLeaveMapper {
                          @Param("updateBy") String updateBy,
                          @Param("updateTime") LocalDateTime updateTime);
 
-    /** 发起审批后回填审批单关联（同事务内） */
-    int updateApprovalId(@Param("id") Long id,
-                         @Param("approvalId") Long approvalId,
-                         @Param("updateBy") String updateBy,
-                         @Param("updateTime") LocalDateTime updateTime);
+    /** 事件回填审批单关联（MQ 消费 CREATE_RESULT/SUCCESS；WHERE approval_id IS NULL 幂等三防） */
+    int updateApprovalIdIfAbsent(@Param("id") Long id,
+                                 @Param("approvalId") Long approvalId,
+                                 @Param("updateBy") String updateBy,
+                                 @Param("updateTime") LocalDateTime updateTime);
+
+    /** 事件状态回写（MQ 消费 TERMINAL/CREATE_RESULT/FAILED；WHERE status=0 已终态空更新幂等） */
+    int updateStatusIfApproving(@Param("id") Long id,
+                                @Param("status") Integer status,
+                                @Param("updateBy") String updateBy,
+                                @Param("updateTime") LocalDateTime updateTime);
 }

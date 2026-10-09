@@ -8,6 +8,9 @@
  *   getApprovalDetail（steps 时间线）→ getApprovalDiagram → definitionId 非空则
  *   GET /bpmn/definition/{definitionId}/xml → BpmnViewer 三态高亮
  * definitionId=null 为历史实例缺失防御态 → 隐藏图区（契约 §3.4）
+ * 发起失败终态（契约 2026-10-09-rocketmq-tx-approval-api §2.2）：status=4（approvalId 恒 null）
+ * 仅业务主体 + danger 标签 +「发起失败，可重新发起」说明，不渲染审批跳转/图/时间线；
+ * 「查看审批」入口以 approvalId 非空为渲染条件（发起后秒级瞬态 null 不渲染，不设 loading 态）
  */
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { getApprovalDetail, getApprovalDiagram, getDefinitionXml } from '../../../../api/bpmn'
@@ -33,6 +36,8 @@ interface Props {
 const props = defineProps<Props>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  /** 「查看审批」：approvalId 非空时由 footer 入口发出，父页关弹窗并跳平台审批页（?approval= 协议） */
+  viewApproval: [approvalId: string]
   /** 关闭动画结束（父页清落点 query 与入口数据） */
   closed: []
 }>()
@@ -40,12 +45,16 @@ const emit = defineEmits<{
 /** 公共 Viewer 按需分包（设计 D9 分包铁律）：defineAsyncComponent 引入，bpmn-js 及其 CSS 一并入 async chunk */
 const BpmnViewer = defineAsyncComponent(() => import('../../../../components/bpmn/BpmnViewer.vue'))
 
-/** 状态→tag 颜色映射（与列表页同款，契约 §5.2 status 字典 bpmn_approval_status）：永远按原字段 status 取值 */
+/** 发起失败终态值（契约 2026-10-09 §2.2）：仅 system 产生，approvalId 恒 null */
+const STATUS_FAILED = '4'
+
+/** 状态→tag 颜色映射（与列表页同款，契约 §5.2 status 字典 bpmn_approval_status；值域扩 4）：永远按原字段 status 取值 */
 const APPROVAL_STATUS_TAG: Record<string, 'warning' | 'success' | 'danger' | 'info'> = {
   '0': 'warning', // 审批中
   '1': 'success', // 已通过
   '2': 'danger', // 已拒绝
   '3': 'info', // 已撤销
+  '4': 'danger', // 发起失败（终态，仅 system 产生）
 }
 
 const loading = ref(false)
@@ -204,6 +213,14 @@ watch(
   },
   { immediate: true },
 )
+
+/** 「查看审批」：跳平台审批页冷开对应详情（事件交父页导航）；approvalId 非空才可达（v-if 闸+防御再判） */
+function handleViewApproval(): void {
+  const approvalId = detail.value?.leave.approvalId
+  if (approvalId) {
+    emit('viewApproval', approvalId)
+  }
+}
 </script>
 
 <template>
@@ -244,6 +261,18 @@ watch(
           <el-descriptions-item label="事由" :span="2">{{ detail.leave.reason ?? '-' }}</el-descriptions-item>
         </el-descriptions>
 
+        <!-- 发起失败终态说明（契约 2026-10-09 §2.2）：无审批单（approvalId 恒 null）——
+             平台链不发起（下方图/时间线区块均不渲染），重新发起入口在请假列表行 -->
+        <el-alert
+          v-if="detail.leave.status === STATUS_FAILED"
+          class="leave-failed-tip"
+          type="warning"
+          :closable="false"
+          show-icon
+          title="发起失败，可重新发起"
+          description="该单据未生成审批单（无审批进度与流程图）。可在请假列表对本单「重新发起」，以本单内容创建新的申请。"
+        />
+
         <!-- 流程图区块（契约 §3.4 两段式）：防御态（definitionId=null）与加载失败分治 -->
         <div v-if="diagramLoading" class="diagram-placeholder" v-loading="true"></div>
         <BpmnViewer
@@ -279,6 +308,9 @@ watch(
       <el-empty v-else-if="!loading" description="暂无数据" />
     </div>
     <template #footer>
+      <!-- 查看审批：跳平台审批页冷开对应详情；approvalId 非空为渲染条件
+           （status=4 恒 null 与发起后秒级瞬态 null 均不渲染——契约 2026-10-09 §2.2） -->
+      <el-button v-if="detail?.leave.approvalId" type="primary" @click="handleViewApproval">查看审批</el-button>
       <el-button @click="emit('update:modelValue', false)">关闭</el-button>
     </template>
   </el-dialog>
@@ -288,6 +320,11 @@ watch(
 /* 图区与时间线拉开间距（BpmnViewer 自带 360px 高与边框） */
 .diagram-block {
   margin-top: 20px;
+}
+
+/* 发起失败终态说明（契约 2026-10-09 §2.2）：与业务主体/图区拉开间距 */
+.leave-failed-tip {
+  margin-top: 16px;
 }
 
 /* 加载占位/失败空态：与 Viewer 容器同高同边框，视觉无跳变 */

@@ -11,6 +11,9 @@ DROP TABLE IF EXISTS sys_role;
 DROP TABLE IF EXISTS sys_menu;
 DROP TABLE IF EXISTS sys_dict_data;
 DROP TABLE IF EXISTS sys_dict_type;
+DROP TABLE IF EXISTS sys_leave;
+DROP TABLE IF EXISTS mq_tx_log;
+DROP TABLE IF EXISTS mq_consume_dedup;
 
 -- 用户
 CREATE TABLE sys_user (
@@ -105,14 +108,14 @@ CREATE TABLE sys_dict_data (
 --   WHERE apply_user=? AND deleted=0 ORDER BY id DESC；uk_ 无（title 可重名，同一业务单据唯一审批
 --   由平台侧 bpmn_approval.uk_business 保证——本表 approval_id 发起 Feign 成功后回填，一单一审批自然成立）。
 CREATE TABLE sys_leave (
-    id           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '请假单ID（即平台 bpmn_approval.business_key）',
+    id           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '请假单ID（即平台 bpmn_approval.business_key；MQ 事务消息形态下 snowflake 预生成显式插入）',
     title        VARCHAR(100) NOT NULL COMMENT '请假标题（e2e 前缀锚点）',
     leave_type   TINYINT      NOT NULL COMMENT '请假类型：1事假 2病假 3年假（字典 system_leave_type）',
     start_date   DATE         NOT NULL COMMENT '开始日期',
     end_date     DATE         NOT NULL COMMENT '结束日期',
     reason       VARCHAR(500) NULL     COMMENT '事由说明',
-    status       TINYINT      NOT NULL DEFAULT 0 COMMENT '状态：0审批中 1已通过 2已拒绝 3已撤销（缓存快照，真相源=bpmn_approval.status，读时纠偏；字典 bpmn_approval_status）',
-    approval_id  BIGINT       NULL     COMMENT '审批单ID（bpmn_approval.id，发起 Feign 成功后回填；撤销后仍保留）',
+    status       TINYINT      NOT NULL DEFAULT 0 COMMENT '状态：0审批中 1已通过 2已拒绝 3已撤销 4发起失败（缓存快照，真相源=bpmn_approval.status，读时纠偏；4=消费端确定性失败终态仅 system 产生；字典 bpmn_approval_status）',
+    approval_id  BIGINT       NULL     COMMENT '审批单ID（bpmn_approval.id，事件通知回填，读时纠偏兜底；发起失败为 NULL 可重新发起；撤销后仍保留）',
     apply_user   VARCHAR(30)  NOT NULL COMMENT '申请人账号（sys_user.account）',
     approver     VARCHAR(30)  NOT NULL COMMENT '审批人账号（发起时指定，引擎 assignee）',
     create_by    VARCHAR(30)  NULL     COMMENT '创建人',
@@ -143,6 +146,38 @@ CREATE TABLE sys_role_menu (
     UNIQUE KEY uk_role_menu (role_id, menu_id),
     KEY idx_menu_id (menu_id)
 ) ENGINE = InnoDB COMMENT = '角色菜单关联（纯关系表：物理删除，无逻辑删除列）';
+
+-- MQ 事务消息本地事务流水（MQ 化改造，契约 2026-10-09-rocketmq-tx-approval-api / 设计 D8；
+-- 与增量脚本 2026-10-09-rocketmq-tx-approval.sql 语义等价。索引取舍：uk_tx_no 命中回查点查、
+-- idx_business 命中运维排查；无按时间查询路径不建 create_time 索引——清理低峰全表扫可接受）
+CREATE TABLE mq_tx_log (
+    id            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    tx_no         VARCHAR(64)  NOT NULL COMMENT '事务消息流水号（发送前预生成 UUID，userProperty TX_NO 回传；回查唯一依据：行存在=COMMIT 行缺失=ROLLBACK）',
+    topic         VARCHAR(64)  NOT NULL COMMENT '目标 topic（TX_APPROVAL_CREATE / APPROVAL_EVENT_NOTIFY）',
+    channel       VARCHAR(64)  NOT NULL COMMENT '业务通道标识（starter TxLocalExecutor.channel，如 leave-create/terminal-complete/terminal-cancel）',
+    business_type VARCHAR(50)  NOT NULL COMMENT '业务类型（消息业务维度，如 leave）',
+    business_key  VARCHAR(64)  NOT NULL COMMENT '业务键（流1=leaveId 流2=approvalId）',
+    result_digest VARCHAR(500) NULL     COMMENT '本地事务结果摘要（executor 返回值 JSON 截断，仅运维观测）',
+    create_time   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（=本地事务提交时间）',
+    update_time   DATETIME     NULL     COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_tx_no (tx_no),
+    KEY idx_business (business_type, business_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  COMMENT='MQ 事务消息本地事务流水（starter 回查依据；审计保留 N 天后定时清理）';
+
+-- MQ 消费通用去重表（先插后消费/失败删行放行重试；仅事件消费方 cloud_system 库。
+-- 索引取舍：uk_group_key 即约束即索引；idx_create_time 命中清理范围删除）
+CREATE TABLE mq_consume_dedup (
+    id             BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    consumer_group VARCHAR(64)  NOT NULL COMMENT '消费组（g_<svc>_<purpose>，如 g_system_approval_event）',
+    msg_key        VARCHAR(190) NOT NULL COMMENT '消息幂等键（优先消息 KEYS 业务键，缺省 msgId）',
+    create_time    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（=消费开始时间，清理锚点）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_group_key (consumer_group, msg_key),
+    KEY idx_create_time (create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  COMMENT='MQ 消费通用去重表（先插后消费/失败删行放行重试；N 天定时清理）';
 
 -- ---------- 初始数据 ----------
 -- 内置种子一律显式 is_builtin=1（内置保护契约 §1：后续新增内置种子 SQL 须带 is_builtin=1）
@@ -220,7 +255,9 @@ INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_buil
 -- 内置字典种子 bpmn_approval_status/system_leave_type（审批平台化迁移，契约 2026-10-08-approval-platform-api §7；
 -- 与增量脚本 2026-10-08-approval-platform.sql 语义等价；基线 dict_type id=5/6 头注释 id 非契约内容——
 -- 存量环境 AUTO_INCREMENT 分配，内置保护按 is_builtin 判定与 id 无关。原 bpmn_leave_status/bpmn_leave_type
--- 随请假域废弃删除（状态字典平台共用 bpmn_approval_status，类型字典键迁 system_leave_type））
+-- 随请假域废弃删除（状态字典平台共用 bpmn_approval_status，类型字典键迁 system_leave_type）。
+-- 「发起失败」(4) 为 MQ 化改造新增（契约 2026-10-09-rocketmq-tx-approval-api §1.2，与增量
+-- 2026-10-09-rocketmq-tx-approval.sql 语义等价——增量环境 dict_data id 由 AUTO_INCREMENT 分配））
 INSERT INTO sys_dict_type (id, dict_name, dict_key, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
 (5, '审批状态', 'bpmn_approval_status', 0, 1, 'system', NOW(), 'system', NOW()),
 (6, '请假类型', 'system_leave_type',    0, 1, 'system', NOW(), 'system', NOW());
@@ -230,6 +267,7 @@ INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_buil
 (6,  5, '已通过', '1', 2, 0, 1, 'system', NOW(), 'system', NOW()),
 (7,  5, '已拒绝', '2', 3, 0, 1, 'system', NOW(), 'system', NOW()),
 (8,  5, '已撤销', '3', 4, 0, 1, 'system', NOW(), 'system', NOW()),
+(12, 5, '发起失败', '4', 5, 0, 1, 'system', NOW(), 'system', NOW()),
 (9,  6, '事假',   '1', 1, 0, 1, 'system', NOW(), 'system', NOW()),
 (10, 6, '病假',   '2', 2, 0, 1, 'system', NOW(), 'system', NOW()),
 (11, 6, '年假',   '3', 3, 0, 1, 'system', NOW(), 'system', NOW());

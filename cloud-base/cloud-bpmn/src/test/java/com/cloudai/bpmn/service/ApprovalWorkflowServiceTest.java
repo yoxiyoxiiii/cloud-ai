@@ -1,22 +1,30 @@
 package com.cloudai.bpmn.service;
 
-import com.cloudai.system.api.client.SystemUserClient;
+import com.cloudai.bpmn.api.domain.ApprovalEventMessage;
 import com.cloudai.bpmn.api.domain.ApprovalCancelInnerRequest;
 import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
 import com.cloudai.bpmn.api.domain.ApprovalStatusQueryInnerRequest;
+import com.cloudai.bpmn.api.mq.ApprovalMqTopics;
 import com.cloudai.bpmn.dto.TaskCompleteRequest;
 import com.cloudai.bpmn.api.domain.VariableItem;
 import com.cloudai.bpmn.entity.BpmnApproval;
 import com.cloudai.bpmn.entity.BpmnApproval.StatusEnum;
 import com.cloudai.bpmn.entity.BpmnBusinessType;
 import com.cloudai.bpmn.mapper.BpmnApprovalMapper;
+import com.cloudai.bpmn.mq.ApprovalCancelTxExecutor;
+import com.cloudai.bpmn.mq.ApprovalCompleteTxExecutor;
+import com.cloudai.bpmn.mq.ApprovalEventPublisher;
 import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
 import com.cloudai.bpmn.api.domain.InnerApprovalStatusVo;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
+import com.cloudai.common.rocketmq.consume.JsonPayloads;
+import com.cloudai.common.rocketmq.tx.TxMessageSendException;
+import com.cloudai.common.rocketmq.tx.TxMessageSender;
+import com.cloudai.system.api.client.SystemUserClient;
 import com.cloudai.system.api.domain.UserEntry;
-import org.flowable.common.engine.api.FlowableException;
-import org.flowable.common.engine.api.FlowableObjectNotFoundException;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
@@ -29,10 +37,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
 
-import java.util.Date;
 import java.util.List;
 import java.util.Map;
 
@@ -45,7 +53,6 @@ import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -53,8 +60,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 通用审批编排单测（契约 2026-10-08-approval-platform-api §4/§3/§2.3：
- * 4010-4017 全触发 + 平台四变量注入/覆盖 + 状态机迁移 + endActivityId 回写映射 + 全键回包）。
+ * 通用审批编排单测（契约 2026-10-08-approval-platform-api §4/§3/§2.3 + 2026-10-09 MQ 事务消息 §1.3）：
+ * createApproval 4010-4017 全触发 + 平台四变量注入（消费侧业务 @Transactional 不变）；
+ * completeTask/cancelApproval 编排化断言面——前置校验失败零发送即抛（4016/4010/4012/4011）、
+ * TERMINAL 半消息发送参数（topic/tag/KEYS/事件体/通道/bizArg）、TxMessageSendException→1002 系转译。
  */
 @ExtendWith(MockitoExtension.class)
 class ApprovalWorkflowServiceTest {
@@ -71,10 +80,16 @@ class ApprovalWorkflowServiceTest {
     private HistoryService historyService;
     @Mock
     private SystemUserClient systemUserClient;
+    @Mock
+    private TxMessageSender txMessageSender;
+    /** 真实组装逻辑（spy 仅注入）：事件体/KEYS 断言看真实产物 */
+    @Spy
+    private ApprovalEventPublisher eventPublisher =
+            new ApprovalEventPublisher(new RocketMQTemplate(), new JsonPayloads(new ObjectMapper()));
     @InjectMocks
     private ApprovalWorkflowService service;
 
-    // ---- createApproval ----
+    // ---- createApproval（消费侧业务，行为不变） ----
 
     @Test
     void createApproval_happyPath_insertsStartsAndBackfills() {
@@ -102,6 +117,9 @@ class ApprovalWorkflowServiceTest {
         assertThat(captor.getValue().getProcessInstanceId()).isNull();
         verify(approvalMapper).updateStatusById(eq(12L), eq(StatusEnum.APPROVING.getCode()),
                 eq("pid-1"), eq("userA"), any());
+        // 消费入口不直接发事件——SUCCESS 补偿事件由 ApprovalCreateConsumer 负责（契约 §1.2）
+        verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
+                any(), anyString(), any());
     }
 
     @Test
@@ -215,7 +233,7 @@ class ApprovalWorkflowServiceTest {
         stubApproverProjection("admin");
         stubBusinessAbsent();
         when(runtimeService.startProcessInstanceByKey(anyString(), anyString(), anyMap()))
-                .thenThrow(new FlowableObjectNotFoundException("no processes deployed with key"));
+                .thenThrow(new org.flowable.common.engine.api.FlowableObjectNotFoundException("no processes deployed with key"));
         doAnswer(inv -> {
             inv.getArgument(0, BpmnApproval.class).setId(12L);
             return 1;
@@ -252,58 +270,71 @@ class ApprovalWorkflowServiceTest {
         assertThat(out.get(2).getStatus()).isEqualTo("0");
     }
 
-    // ---- cancelApproval / cancelByBusiness ----
+    // ---- cancelApproval / cancelByBusiness（编排化断言面） ----
 
     @Test
-    void cancelApproval_notFoundRejected_4010() {
+    void cancelApproval_notFoundRejected_4010_noSend() {
         when(approvalMapper.findById(9L)).thenReturn(null);
         assertThatThrownBy(() -> service.cancelApproval(9L, "admin"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4010);
+        verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
+                any(), anyString(), any());
     }
 
     @Test
-    void cancelApproval_notApplierRejected_4012() {
+    void cancelApproval_notApplierRejected_4012_noSend() {
         when(approvalMapper.findById(5L)).thenReturn(approval(5L, StatusEnum.APPROVING.getCode()));
         assertThatThrownBy(() -> service.cancelApproval(5L, "userB"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4012);
-        verify(runtimeService, never()).deleteProcessInstance(anyString(), anyString());
+        verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
+                any(), anyString(), any());
     }
 
     @Test
-    void cancelApproval_terminalRejected_4011() {
+    void cancelApproval_terminalRejected_4011_noSend() {
         when(approvalMapper.findById(5L)).thenReturn(approval(5L, StatusEnum.APPROVED.getCode()));
         assertThatThrownBy(() -> service.cancelApproval(5L, "userA"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4011);
-        verify(runtimeService, never()).deleteProcessInstance(anyString(), anyString());
+        verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
+                any(), anyString(), any());
     }
 
     @Test
-    void cancelApproval_happyPath_deletesInstanceAndMarksCancelled() {
+    void cancelApproval_happyPath_sendsTerminalCancelEvent() {
         when(approvalMapper.findById(5L)).thenReturn(approval(5L, StatusEnum.APPROVING.getCode()));
+
         service.cancelApproval(5L, "userA");
-        verify(runtimeService).deleteProcessInstance(eq("pid-5"), anyString());
-        // 撤销传 processInstanceId=null 清空实例关联（契约 §3.1）
-        verify(approvalMapper).updateStatusById(eq(5L), eq(StatusEnum.CANCELLED.getCode()),
-                eq(null), eq("userA"), any());
+
+        ArgumentCaptor<ApprovalEventMessage> event = ArgumentCaptor.forClass(ApprovalEventMessage.class);
+        verify(txMessageSender).sendTransactional(eq(ApprovalMqTopics.TOPIC_APPROVAL_EVENT_NOTIFY),
+                eq(ApprovalMqTopics.TAG_TERMINAL), eq("leave:7:TERMINAL"), event.capture(),
+                eq(ApprovalCancelTxExecutor.CHANNEL), any(ApprovalCancelTxExecutor.CancelCommand.class));
+        assertThat(event.getValue().getEventType()).isEqualTo("TERMINAL");
+        assertThat(event.getValue().getTerminalStatus()).isEqualTo("3");
+        assertThat(event.getValue().getBusinessKey()).isEqualTo("7");
+        // 引擎删实例与置 3 已迁入 executor（本地事务内）——service 不再直接写
+        verify(runtimeService, never()).deleteProcessInstance(anyString(), anyString());
+        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
     }
 
     @Test
-    void cancelApproval_instanceAlreadyGoneRejected_4011() {
-        // 并发竞态：审批先完成删除实例（后到者感知终态）——转译 4011 不透传引擎栈
+    void cancelApproval_senderFailure_translated_1002() {
         when(approvalMapper.findById(5L)).thenReturn(approval(5L, StatusEnum.APPROVING.getCode()));
-        doThrow(new FlowableObjectNotFoundException("no process instance"))
-                .when(runtimeService).deleteProcessInstance(anyString(), anyString());
-        assertThatThrownBy(() -> service.cancelApproval(5L, "userA"))
-                .isInstanceOf(BusinessException.class)
-                .extracting("code")
-                .isEqualTo(4011);
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
+        when(txMessageSender.sendTransactional(anyString(), anyString(), anyString(), any(), anyString(), any()))
+                .thenThrow(new TxMessageSendException("half message failed", null));
+
+        BusinessException ex = catchThrowableOfType(() -> service.cancelApproval(5L, "userA"),
+                BusinessException.class);
+
+        // 半消息发送失败本地零写——1002 系（bpmn 无 3xxx 账本，契约 §3 只增 system 3025）
+        assertThat(ex.getMessage()).isEqualTo("消息服务不可用");
+        assertThat(ex.getCode()).isEqualTo(1002);
     }
 
     @Test
@@ -321,7 +352,7 @@ class ApprovalWorkflowServiceTest {
     }
 
     @Test
-    void cancelByBusiness_found_delegatesToIdCancel() {
+    void cancelByBusiness_found_delegatesToIdSend() {
         when(approvalMapper.findByBusiness("leave", "7")).thenReturn(approval(5L, StatusEnum.APPROVING.getCode()));
         // cancelApproval 内部按 id 复查行（requireApproval）
         when(approvalMapper.findById(5L)).thenReturn(approval(5L, StatusEnum.APPROVING.getCode()));
@@ -332,15 +363,15 @@ class ApprovalWorkflowServiceTest {
 
         service.cancelByBusiness(req);
 
-        verify(runtimeService).deleteProcessInstance(eq("pid-5"), anyString());
-        verify(approvalMapper).updateStatusById(eq(5L), eq(StatusEnum.CANCELLED.getCode()),
-                eq(null), eq("userA"), any());
+        verify(txMessageSender).sendTransactional(eq(ApprovalMqTopics.TOPIC_APPROVAL_EVENT_NOTIFY),
+                eq(ApprovalMqTopics.TAG_TERMINAL), eq("leave:7:TERMINAL"), any(),
+                eq(ApprovalCancelTxExecutor.CHANNEL), any(ApprovalCancelTxExecutor.CancelCommand.class));
     }
 
-    // ---- completeTask ----
+    // ---- completeTask（编排化断言面） ----
 
     @Test
-    void completeTask_taskMissingRejected_4016() {
+    void completeTask_taskMissingRejected_4016_noSend() {
         TaskQuery query = mock(TaskQuery.class);
         when(taskService.createTaskQuery()).thenReturn(query);
         when(query.taskId("t-404")).thenReturn(query);
@@ -349,62 +380,85 @@ class ApprovalWorkflowServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4016);
+        verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
+                any(), anyString(), any());
     }
 
     @Test
-    void completeTask_approve_writesBackApproved() {
-        stubTaskAndInstance("t-1", "pid-1", "12", "endApprove", new Date());
+    void completeTask_approve_sendsTerminalCompleteEvent() {
+        stubTaskAndInstance("t-1", "pid-1", "12");
+        when(approvalMapper.findById(12L)).thenReturn(approval(12L, StatusEnum.APPROVING.getCode()));
+
         service.completeTask(complete("t-1", "true"), "admin");
-        verify(taskService).addComment(eq("t-1"), eq("pid-1"), eq("ok"));
-        verify(taskService).complete(eq("t-1"), eq(Map.of("approve", Boolean.TRUE)));
-        verify(approvalMapper).updateStatusById(eq(12L), eq(StatusEnum.APPROVED.getCode()),
-                eq("pid-1"), eq("admin"), any());
+
+        ArgumentCaptor<ApprovalEventMessage> event = ArgumentCaptor.forClass(ApprovalEventMessage.class);
+        ArgumentCaptor<Object> bizArg = ArgumentCaptor.forClass(Object.class);
+        verify(txMessageSender).sendTransactional(eq(ApprovalMqTopics.TOPIC_APPROVAL_EVENT_NOTIFY),
+                eq(ApprovalMqTopics.TAG_TERMINAL), eq("leave:7:TERMINAL"), event.capture(),
+                eq(ApprovalCompleteTxExecutor.CHANNEL), bizArg.capture());
+        // terminalStatus 按 approve 推断（单节点模型与 endActivityId 映射一致，设计 D2）
+        assertThat(event.getValue().getTerminalStatus()).isEqualTo("1");
+        ApprovalCompleteTxExecutor.CompleteCommand cmd =
+                (ApprovalCompleteTxExecutor.CompleteCommand) bizArg.getValue();
+        assertThat(cmd.taskId()).isEqualTo("t-1");
+        assertThat(cmd.approve()).isEqualTo("true");
+        assertThat(cmd.comment()).isEqualTo("ok");
+        assertThat(cmd.opUser()).isEqualTo("admin");
+        assertThat(cmd.expectedStatus()).isEqualTo(StatusEnum.APPROVED.getCode());
+        // 引擎推进已迁 executor——service 不再直接写引擎/审批表
+        verify(taskService, never()).complete(anyString(), anyMap());
+        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
     }
 
     @Test
-    void completeTask_reject_writesBackRejected() {
-        stubTaskAndInstance("t-1", "pid-1", "12", "endReject", new Date());
+    void completeTask_reject_infersRejected() {
+        stubTaskAndInstance("t-1", "pid-1", "12");
+        when(approvalMapper.findById(12L)).thenReturn(approval(12L, StatusEnum.APPROVING.getCode()));
+
         service.completeTask(complete("t-1", "false"), "userB");
-        verify(taskService).complete(eq("t-1"), eq(Map.of("approve", Boolean.FALSE)));
-        verify(approvalMapper).updateStatusById(eq(12L), eq(StatusEnum.REJECTED.getCode()),
-                eq("pid-1"), eq("userB"), any());
+
+        ArgumentCaptor<ApprovalEventMessage> event = ArgumentCaptor.forClass(ApprovalEventMessage.class);
+        verify(txMessageSender).sendTransactional(anyString(), anyString(), anyString(), event.capture(),
+                eq(ApprovalCompleteTxExecutor.CHANNEL), any());
+        assertThat(event.getValue().getTerminalStatus()).isEqualTo("2");
     }
 
     @Test
-    void completeTask_instanceUnfinished_noWriteBack() {
-        // 未结束=未来多节点模型：不回写，保持审批中（记档）
-        stubTaskAndInstance("t-1", "pid-1", "12", null, null);
-        service.completeTask(complete("t-1", "true"), "admin");
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
-    }
-
-    @Test
-    void completeTask_unknownEndActivity_noWriteBack() {
-        stubTaskAndInstance("t-1", "pid-1", "12", "endUnknown", new Date());
-        service.completeTask(complete("t-1", "true"), "admin");
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
-    }
-
-    @Test
-    void completeTask_alreadyCompletedRejected_4016() {
-        stubTaskAndInstance("t-1", "pid-1", null, null, null);
-        doThrow(new FlowableObjectNotFoundException("task already completed"))
-                .when(taskService).complete(eq("t-1"), anyMap());
+    void completeTask_taskWithoutApprovalDomain_4010_noSend() {
+        // 历史实例 businessKey 缺失=非平台审批域任务：无法组装事件（防御 4010）
+        stubTaskAndInstance("t-1", "pid-1", null);
         assertThatThrownBy(() -> service.completeTask(complete("t-1", "true"), "admin"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
-                .isEqualTo(4016);
+                .isEqualTo(4010);
+        verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
+                any(), anyString(), any());
     }
 
     @Test
-    void completeTask_engineFailureRejected_1002() {
-        stubTaskAndInstance("t-1", "pid-1", null, null, null);
-        doThrow(new FlowableException("engine broken"))
-                .when(taskService).complete(eq("t-1"), anyMap());
+    void completeTask_approvalRowMissing_4010_noSend() {
+        stubTaskAndInstance("t-1", "pid-1", "12");
+        when(approvalMapper.findById(12L)).thenReturn(null);
         assertThatThrownBy(() -> service.completeTask(complete("t-1", "true"), "admin"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
-                .isEqualTo(1002);
+                .isEqualTo(4010);
+        verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
+                any(), anyString(), any());
+    }
+
+    @Test
+    void completeTask_senderFailure_translated_1002() {
+        stubTaskAndInstance("t-1", "pid-1", "12");
+        when(approvalMapper.findById(12L)).thenReturn(approval(12L, StatusEnum.APPROVING.getCode()));
+        when(txMessageSender.sendTransactional(anyString(), anyString(), anyString(), any(), anyString(), any()))
+                .thenThrow(new TxMessageSendException("half message failed", null));
+
+        BusinessException ex = catchThrowableOfType(
+                () -> service.completeTask(complete("t-1", "true"), "admin"), BusinessException.class);
+
+        assertThat(ex.getMessage()).isEqualTo("消息服务不可用");
+        assertThat(ex.getCode()).isEqualTo(1002);
     }
 
     // ---- 脚手架 ----
@@ -434,13 +488,12 @@ class ApprovalWorkflowServiceTest {
         when(approvalMapper.findByBusiness("leave", "7")).thenReturn(null);
     }
 
-    private void stubTaskAndInstance(String taskId, String processInstanceId, String businessKey,
-                                     String endActivityId, Date endTime) {
+    private void stubTaskAndInstance(String taskId, String processInstanceId, String businessKey) {
         TaskQuery query = mock(TaskQuery.class);
         when(taskService.createTaskQuery()).thenReturn(query);
         when(query.taskId(taskId)).thenReturn(query);
         Task task = mock(Task.class);
-        when(task.getId()).thenReturn(taskId);
+        lenient().when(task.getId()).thenReturn(taskId);
         when(task.getProcessInstanceId()).thenReturn(processInstanceId);
         when(query.singleResult()).thenReturn(task);
         org.flowable.engine.history.HistoricProcessInstanceQuery hq =
@@ -449,8 +502,6 @@ class ApprovalWorkflowServiceTest {
         lenient().when(hq.processInstanceId(processInstanceId)).thenReturn(hq);
         HistoricProcessInstance historic = mock(HistoricProcessInstance.class);
         lenient().when(historic.getBusinessKey()).thenReturn(businessKey);
-        lenient().when(historic.getEndTime()).thenReturn(endTime);
-        lenient().when(historic.getEndActivityId()).thenReturn(endActivityId);
         lenient().when(hq.singleResult()).thenReturn(historic);
     }
 

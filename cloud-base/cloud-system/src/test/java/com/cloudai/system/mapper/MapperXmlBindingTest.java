@@ -45,11 +45,11 @@ class MapperXmlBindingTest {
         SqlSessionFactory factory = new SqlSessionFactoryBuilder().build(configuration);
 
         Collection<String> mappings = factory.getConfiguration().getMappedStatementNames();
-        // 11(User) + 7(Role) + 7(Menu) + 4(UserRole) + 4(RoleMenu) + 6(DictType) + 8(DictData) + 5(Leave) = 52
-        // （2026-10-08 审批平台化 +User.listEnabledOptions(审批人投影) +SysLeave 域 5 语句，
-        //   覆盖扩张同上轮 31→44→46 先例）
+        // 11(User) + 7(Role) + 7(Menu) + 4(UserRole) + 4(RoleMenu) + 6(DictType) + 8(DictData) + 6(Leave) = 53
+        // （2026-10-09 RocketMQ 事务消息化：SysLeave 域 5→6 语句——updateApprovalId 退役，
+        //   +updateApprovalIdIfAbsent/updateStatusIfApproving 条件 UPDATE 双保险，覆盖扩张同先例）
         assertThat(mappings.stream().filter(n -> n.startsWith("com.cloudai.system.mapper")).count())
-                .isEqualTo(52);
+                .isEqualTo(53);
         // 抽查关键语句存在（JOIN 聚合 / 插件分页 / 动态 SQL / 批量插入 / 字典域 / 翻译回源 / 请假域）
         assertThat(mappings).contains(
                 "com.cloudai.system.mapper.SysUserMapper.listPermsByAccount",
@@ -64,6 +64,8 @@ class MapperXmlBindingTest {
                 "com.cloudai.system.mapper.SysUserMapper.listTransAll",
                 "com.cloudai.system.mapper.SysDictDataMapper.listEnabledByDictKey",
                 "com.cloudai.system.mapper.SysLeaveMapper.pageList",
-                "com.cloudai.system.mapper.SysLeaveMapper.updateStatusById");
+                "com.cloudai.system.mapper.SysLeaveMapper.updateStatusById",
+                "com.cloudai.system.mapper.SysLeaveMapper.updateApprovalIdIfAbsent",
+                "com.cloudai.system.mapper.SysLeaveMapper.updateStatusIfApproving");
     }
 }

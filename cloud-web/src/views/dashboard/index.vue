@@ -22,12 +22,14 @@ import {
  * keep-alive include 按组件名匹配会失效（升级设计 D5 红字坑） */
 defineOptions({ name: 'Dashboard' })
 
-/** 状态→tag 颜色映射（契约 §3.1 status 字典 bpmn_approval_status，我的审批页同款）：永远按原字段 status 取值 */
+/** 状态→tag 颜色映射（契约 §3.1 status 字典 bpmn_approval_status，我的审批页同款）：永远按原字段 status 取值；
+ * 4=发起失败在本卡不可达（我的审批卡为 bpmn 域，bpmn_approval 永不落 4——契约 2026-10-09 §2.2，仅保字典镜像完整） */
 const APPROVAL_STATUS_TAG: Record<string, 'warning' | 'success' | 'danger' | 'info'> = {
   '0': 'warning', // 审批中
   '1': 'success', // 已通过
   '2': 'danger', // 已拒绝
   '3': 'info', // 已撤销
+  '4': 'danger', // 发起失败（仅 system 产生，本卡不可达）
 }
 
 const router = useRouter()

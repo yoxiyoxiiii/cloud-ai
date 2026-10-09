@@ -34,6 +34,12 @@ management:
       exposure:
         include: health,info
 
+# RocketMQ（契约 2026-10-09 §1.1）——连接配置走 Nacos 不进仓库（cloud-system.yaml 增：
+#   rocketmq.name-server: 127.0.0.1:9876
+#   rocketmq.producer.group: p_system_tx               # 事务半消息生产组（TX_APPROVAL_CREATE）
+# 消费组 g_system_approval_event 由 @RocketMQMessageListener 注解自持无需配置；
+# name-server 未配置时 RocketMQTemplate 不装配，MQ 生产/消费 bean 启动即缺——本地起服前先核对 Nacos）。
+
 mybatis-plus:
   configuration:
     # XML resultType 实体映射依赖驼峰映射；MP 默认开启，此处显式声明防将来配置漂移静默断列
