@@ -24,6 +24,8 @@ public class RocketMqTxListener implements RocketMQLocalTransactionListener {
     private final TxExecutorRegistry executorRegistry;
     private final TxLogDao txLogDao;
     private final JsonPayloads jsonPayloads;
+
+    // spring 本地事务管理
     private final TransactionTemplate transactionTemplate;
 
     public RocketMqTxListener(TxExecutorRegistry executorRegistry, TxLogDao txLogDao,
@@ -48,8 +50,11 @@ public class RocketMqTxListener implements RocketMQLocalTransactionListener {
         TxContext ctx = new TxContext(command.getTxNo(), command.getTopic(), command.getTag(),
                 command.getKeys(), command.getChannel(), command.getBizArg());
         try {
+            // 消息表和本地写在一个事务里面
             Object result = transactionTemplate.execute((TransactionCallback<Object>) status -> {
+                // 本地事务执行器
                 Object value = executor.executeInTx(payload, ctx);
+                // 消息写表
                 txLogDao.insert(command.getTxNo(), command.getTopic(), command.getChannel(),
                         ctx.getBusinessType(), ctx.getBusinessKey(), digest(value));
                 return value;
