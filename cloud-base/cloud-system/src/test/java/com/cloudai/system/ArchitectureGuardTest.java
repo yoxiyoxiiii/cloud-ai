@@ -279,6 +279,44 @@ class ArchitectureGuardTest {
         assertThat(violations).as("实体内嵌枚举必须以 Enum 为后缀（如 StatusEnum/DeletedEnum）").isEmpty();
     }
 
+    // ---- 规则 v5（2026-10-09）：服务间 Feign 声明归位与降级强制 ----
+
+    /** Feign 声明归位：服务模块内不得出现 @FeignClient（合法地 = cloud-*-api 模块；common 程序式特例豁免） */
+    @Test
+    void feignClients_mustNotBeDeclaredInServiceModules() throws IOException {
+        List<String> violations = new ArrayList<>();
+        for (String svc : List.of("../cloud-sso", "../cloud-system", "../cloud-bpmn")) {
+            Path root = Paths.get(svc, "src", "main", "java");
+            for (Path file : listFiles(root, "*.java")) {
+                if (Files.readString(file, StandardCharsets.UTF_8).contains("@FeignClient")) {
+                    violations.add(svc + "/" + root.relativize(file));
+                }
+            }
+        }
+        assertThat(violations)
+                .as("服务模块不得声明 @FeignClient——统一放提供方 cloud-<svc>-api 模块（CLAUDE.md 服务间 Feign 规范）")
+                .isEmpty();
+    }
+
+    /** api 模块内 @FeignClient 必须声明 fallbackFactory（等价降级语义的前提） */
+    @Test
+    void feignClients_inApiModules_mustDeclareFallbackFactory() throws IOException {
+        Pattern annotation = Pattern.compile("@FeignClient\\([^)]*\\)", Pattern.DOTALL);
+        List<String> violations = new ArrayList<>();
+        for (String api : List.of("../cloud-bpmn-api", "../cloud-system-api")) {
+            Path root = Paths.get(api, "src", "main", "java");
+            for (Path file : listFiles(root, "*.java")) {
+                Matcher m = annotation.matcher(Files.readString(file, StandardCharsets.UTF_8));
+                while (m.find()) {
+                    if (!m.group().contains("fallbackFactory")) {
+                        violations.add(api + "/" + root.relativize(file));
+                    }
+                }
+            }
+        }
+        assertThat(violations).as("api 模块 @FeignClient 必须声明 fallbackFactory").isEmpty();
+    }
+
     /** 提取第 idx 行的方法声明名；注释/注解/private/protected/语句关键字行返回 null */
     private String extractMethodName(String[] lines, int idx) {
         String line = lines[idx];

@@ -1,6 +1,6 @@
 package com.cloudai.bpmn.it;
 
-import com.cloudai.bpmn.dto.ApprovalCreateInnerRequest;
+import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
 import com.cloudai.bpmn.entity.BpmnApproval;
 import com.cloudai.bpmn.mapper.BpmnApprovalMapper;
 import com.cloudai.bpmn.service.ApprovalWorkflowService;

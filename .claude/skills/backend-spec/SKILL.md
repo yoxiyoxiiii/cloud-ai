@@ -483,6 +483,24 @@ public class XxxYyyController {
 
 说明：两行式只约束"有返回值"的端点（service 结果先落局部变量再 `R.ok(x)`）；无数据端点保持 `service 调用; return R.ok();` 两行；**每个方法必须有 javadoc**；`@PathVariable("id")` 显式命名；领域动作端点用独立 DTO（重置密码/分配角色参考 `SysUserController.resetPassword/assignRoles`）；服务间内部接口放 `controller/feign/` 子包，路径 `/inner/xxx/**`，**首个 /inner 端点必须与网关屏蔽规则同任务落地**。
 
+## 步骤 7：服务间 Feign 客户端（cloud-<svc>-api 模块）
+
+提供 /inner 端点的服务建 api 模块（依赖仅 core-starter，可加 jakarta.validation-api；禁业务/mybatis/web 依赖），结构 `com.cloudai.<svc>.api`：`client/` 接口、`fallback/` 降级工厂、`domain/` 契约模型（类名与 API 契约术语一致）。
+
+**模板 A client**：`@FeignClient(name = "cloud-<svc>", contextId = "<消费语义>Client", path = "/inner/xxx", fallbackFactory = XxxClientFallbackFactory.class)`；方法 `@PostMapping/@GetMapping` + `@PathVariable("x")` 显式命名；返回 `R<契约模型>`。
+
+**模板 B fallbackFactory**：`implements FallbackFactory<XxxClient>`，`create(Throwable cause)` 返回匿名实现——每方法 `log.error("xx服务降级（方法）: 键={}", key, cause)` 后 `R.fail(降级码, "cloud-<svc> 服务不可用")`；降级码按消费方既有终态定制（等价迁移口径，中性码演进记移交）。
+
+**模板 C domain**：契约模型 Serializable + serialVersionUID + 校验注解（@NotBlank/@Size），DB 实体禁直出（投影子集）。
+
+**模板 D 自动装配**：`@AutoConfiguration` 类 @Bean 注册 fallbackFactory + `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports` 一行——api 包不在消费方扫描范围，必须自动装配（引 jar 即生效）。
+
+**消费方接入三件套**：① pom 引 api jar + `spring-cloud-starter-circuitbreaker-resilience4j`（BOM 免版本号）；② `@EnableFeignClients(clients = {XxxClient.class})` 显式列表；③ application.yml：`spring.cloud.openfeign.circuitbreaker.enabled: true` + `client.config.default.connect-timeout: 1000` / `read-timeout: 5000` + `spring.cloud.circuitbreaker.resilience4j.disable-time-limiter: true`。
+
+**陷阱两条**：TimeLimiter 默认 1s 会截短 read 超时（必处置，见上）；开关关闭时 fallback 静默不生效——调用方 `catch (FeignException)` 二层兜底必须保留，降级 R 走既有 `code != SUCCESS` 分支转译域码。
+
+**特例记档**：translate-remote-starter 程序式 client（FeignClientBuilder，common 包不可扫描 + 缓存层降级自洽）不在本模型内。
+
 ## 通用约束（全后端强制；机械项由守护测试保证）
 
 - 同前缀多值配置用 `@ConfigurationProperties` 对象（参考 security-starter 的 JwtProperties），同文件 ≥2 个 @Value 违规
@@ -504,3 +522,5 @@ public class XxxYyyController {
 - [ ] 唯一键查重 + DuplicateKey 兜底（catch 内先 log.error）？错误码按服务分段接续分配？
 - [ ] `mvn -f cloud-base/pom.xml clean install -pl cloud-<service> -am` 全绿（含 ArchitectureGuardTest/MapperXmlBindingTest；新 DB 服务复制这两个守护测试）？
 - [ ] 起服务按契约 curl 新端点（经网关带 admin token）+ DB 抽查审计字段？
+- [ ] 服务模块 `@FeignClient` 零命中（守护测试）？
+- [ ] api 模块 `@FeignClient` 均带 `fallbackFactory`（守护测试）？

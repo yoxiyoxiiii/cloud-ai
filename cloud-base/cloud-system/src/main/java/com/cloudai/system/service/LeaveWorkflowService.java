@@ -3,14 +3,14 @@ package com.cloudai.system.service;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.ErrorCode;
 import com.cloudai.common.core.exception.BusinessException;
-import com.cloudai.system.client.BpmnApprovalClient;
-import com.cloudai.system.dto.ApprovalCancelRequest;
-import com.cloudai.system.dto.ApprovalCreateRequest;
+import com.cloudai.bpmn.api.client.BpmnApprovalClient;
+import com.cloudai.bpmn.api.domain.ApprovalCancelInnerRequest;
+import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
 import com.cloudai.system.dto.LeaveCreateRequest;
 import com.cloudai.system.entity.SysLeave;
 import com.cloudai.system.entity.SysLeave.StatusEnum;
 import com.cloudai.system.mapper.SysLeaveMapper;
-import com.cloudai.system.vo.ApprovalCreateVo;
+import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -58,8 +58,8 @@ public class LeaveWorkflowService {
         SysLeave leave = buildLeave(req, range, operator);
         leaveMapper.save(leave);
 
-        ApprovalCreateRequest createReq = buildCreateRequest(leave, operator);
-        ApprovalCreateVo created = createApproval(createReq, req.getApprover());
+        ApprovalCreateInnerRequest createReq = buildCreateRequest(leave, operator);
+        InnerApprovalCreateVo created = createApproval(createReq, req.getApprover());
 
         leaveMapper.updateApprovalId(leave.getId(), Long.valueOf(created.getApprovalId()),
                 operator, LocalDateTime.now());
@@ -72,7 +72,7 @@ public class LeaveWorkflowService {
         SysLeave leave = requireLeave(id);
         checkCancelable(leave, operator);
 
-        ApprovalCancelRequest cancelReq = new ApprovalCancelRequest();
+        ApprovalCancelInnerRequest cancelReq = new ApprovalCancelInnerRequest();
         cancelReq.setBusinessType(BUSINESS_TYPE_LEAVE);
         cancelReq.setBusinessKey(String.valueOf(id));
         cancelReq.setOperator(operator);
@@ -127,8 +127,8 @@ public class LeaveWorkflowService {
         return leave;
     }
 
-    private ApprovalCreateRequest buildCreateRequest(SysLeave leave, String operator) {
-        ApprovalCreateRequest createReq = new ApprovalCreateRequest();
+    private ApprovalCreateInnerRequest buildCreateRequest(SysLeave leave, String operator) {
+        ApprovalCreateInnerRequest createReq = new ApprovalCreateInnerRequest();
         createReq.setBusinessType(BUSINESS_TYPE_LEAVE);
         createReq.setBusinessKey(String.valueOf(leave.getId()));
         createReq.setTitle(leave.getTitle());
@@ -138,8 +138,8 @@ public class LeaveWorkflowService {
     }
 
     /** Feign 发起 + 平台码转译；传输异常直接抛（@Transactional 回滚本地 insert） */
-    private ApprovalCreateVo createApproval(ApprovalCreateRequest req, String approver) {
-        R<ApprovalCreateVo> response;
+    private InnerApprovalCreateVo createApproval(ApprovalCreateInnerRequest req, String approver) {
+        R<InnerApprovalCreateVo> response;
         try {
             response = approvalClient.create(req);
         } catch (Exception e) {
@@ -153,7 +153,7 @@ public class LeaveWorkflowService {
     }
 
     /** 发起失败转译：4013→3023（msg 逐字「审批人无效: {approver}」）/ 4015→3024（「该请假单已存在审批」）/ 其余→3022 */
-    private BusinessException translateCreateFailure(R<ApprovalCreateVo> response, String approver) {
+    private BusinessException translateCreateFailure(R<InnerApprovalCreateVo> response, String approver) {
         int platformCode = response == null ? 0 : response.getCode();
         if (platformCode == PLATFORM_APPROVER_INVALID) {
             return new BusinessException(ERR_APPROVER_INVALID, "审批人无效: " + approver);

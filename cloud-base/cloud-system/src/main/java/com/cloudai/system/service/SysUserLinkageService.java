@@ -1,6 +1,6 @@
 package com.cloudai.system.service;
 
-import com.cloudai.system.dto.LoginUserDTO;
+import com.cloudai.system.api.domain.LoginUserDTO;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysUserMapper;
 import lombok.RequiredArgsConstructor;

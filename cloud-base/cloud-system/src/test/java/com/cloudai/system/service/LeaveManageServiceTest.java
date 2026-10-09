@@ -6,14 +6,14 @@ import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.translate.core.TranslationCacheService;
-import com.cloudai.system.client.BpmnApprovalClient;
-import com.cloudai.system.dto.ApprovalStatusQueryRequest;
+import com.cloudai.bpmn.api.client.BpmnApprovalClient;
+import com.cloudai.bpmn.api.domain.ApprovalStatusQueryInnerRequest;
 import com.cloudai.system.entity.SysLeave;
 import com.cloudai.system.entity.SysLeave.StatusEnum;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
-import com.cloudai.system.vo.ApprovalStatusVo;
+import com.cloudai.bpmn.api.domain.InnerApprovalStatusVo;
 import com.cloudai.system.vo.SysLeaveVo;
 import com.cloudai.system.vo.UserOptionVo;
 import org.junit.jupiter.api.Test;
@@ -111,8 +111,8 @@ class LeaveManageServiceTest {
         when(leaveMapper.pageList(any(Page.class), eq("userA"))).thenReturn(pageOf(rows));
         // 逐批回显：每键返回与快照一致的 0 → 只验证分批，不触发回写
         when(approvalClient.statusList(any())).thenAnswer(inv -> {
-            ApprovalStatusQueryRequest req = inv.getArgument(0);
-            List<ApprovalStatusVo> echo = new ArrayList<>();
+            ApprovalStatusQueryInnerRequest req = inv.getArgument(0);
+            List<InnerApprovalStatusVo> echo = new ArrayList<>();
             for (String key : req.getBusinessKeys()) {
                 echo.add(statusVo(key, "0"));
             }
@@ -121,9 +121,9 @@ class LeaveManageServiceTest {
 
         service.pageListMy(query(1, 200), "userA");
 
-        ArgumentCaptor<ApprovalStatusQueryRequest> captor = ArgumentCaptor.forClass(ApprovalStatusQueryRequest.class);
+        ArgumentCaptor<ApprovalStatusQueryInnerRequest> captor = ArgumentCaptor.forClass(ApprovalStatusQueryInnerRequest.class);
         verify(approvalClient, times(3)).statusList(captor.capture());
-        List<ApprovalStatusQueryRequest> batches = captor.getAllValues();
+        List<ApprovalStatusQueryInnerRequest> batches = captor.getAllValues();
         assertThat(batches).extracting(req -> req.getBusinessKeys().size()).containsExactly(100, 100, 1);
         verify(leaveMapper, never()).updateStatusById(anyLong(), anyInt(), anyString(), any());
     }
@@ -270,8 +270,8 @@ class LeaveManageServiceTest {
         return leave;
     }
 
-    private ApprovalStatusVo statusVo(String businessKey, String status) {
-        ApprovalStatusVo vo = new ApprovalStatusVo();
+    private InnerApprovalStatusVo statusVo(String businessKey, String status) {
+        InnerApprovalStatusVo vo = new InnerApprovalStatusVo();
         vo.setBusinessKey(businessKey);
         vo.setStatus(status);
         return vo;

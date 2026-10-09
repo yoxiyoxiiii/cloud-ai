@@ -1,7 +1,7 @@
 package com.cloudai.common.translate.remote.config;
 
 import com.cloudai.common.translate.domain.DictItemEntry;
-import com.cloudai.common.translate.domain.UserEntry;
+import com.cloudai.system.api.domain.UserEntry;
 import com.cloudai.common.translate.provider.DictSourceProvider;
 import com.cloudai.common.translate.provider.UserSourceProvider;
 import com.cloudai.common.translate.remote.client.SystemTranslateClient;

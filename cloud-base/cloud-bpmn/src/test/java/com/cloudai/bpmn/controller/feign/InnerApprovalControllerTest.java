@@ -1,11 +1,11 @@
 package com.cloudai.bpmn.controller.feign;
 
-import com.cloudai.bpmn.dto.ApprovalCancelInnerRequest;
-import com.cloudai.bpmn.dto.ApprovalCreateInnerRequest;
-import com.cloudai.bpmn.dto.ApprovalStatusQueryInnerRequest;
+import com.cloudai.bpmn.api.domain.ApprovalCancelInnerRequest;
+import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
+import com.cloudai.bpmn.api.domain.ApprovalStatusQueryInnerRequest;
 import com.cloudai.bpmn.service.ApprovalWorkflowService;
-import com.cloudai.bpmn.vo.InnerApprovalCreateVo;
-import com.cloudai.bpmn.vo.InnerApprovalStatusVo;
+import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
+import com.cloudai.bpmn.api.domain.InnerApprovalStatusVo;
 import com.cloudai.common.core.domain.R;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

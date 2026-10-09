@@ -1,6 +1,6 @@
 package com.cloudai.system.service.translate;
 
-import com.cloudai.common.translate.domain.UserEntry;
+import com.cloudai.system.api.domain.UserEntry;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysUserMapper;
 import lombok.RequiredArgsConstructor;

@@ -2,12 +2,12 @@ package com.cloudai.system.service;
 
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
-import com.cloudai.system.client.BpmnApprovalClient;
+import com.cloudai.bpmn.api.client.BpmnApprovalClient;
 import com.cloudai.system.dto.LeaveCreateRequest;
 import com.cloudai.system.entity.SysLeave;
 import com.cloudai.system.entity.SysLeave.StatusEnum;
 import com.cloudai.system.mapper.SysLeaveMapper;
-import com.cloudai.system.vo.ApprovalCreateVo;
+import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -251,8 +251,8 @@ class LeaveWorkflowServiceTest {
         return req;
     }
 
-    private ApprovalCreateVo createVo(String approvalId) {
-        ApprovalCreateVo vo = new ApprovalCreateVo();
+    private InnerApprovalCreateVo createVo(String approvalId) {
+        InnerApprovalCreateVo vo = new InnerApprovalCreateVo();
         vo.setApprovalId(approvalId);
         vo.setStatus("0");
         return vo;

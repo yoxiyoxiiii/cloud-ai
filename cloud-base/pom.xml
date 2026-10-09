@@ -13,6 +13,8 @@
 
     <modules>
         <module>cloud-common</module>
+        <module>cloud-bpmn-api</module>
+        <module>cloud-system-api</module>
         <module>cloud-gateway</module>
         <module>cloud-sso</module>
         <module>cloud-system</module>
@@ -99,6 +101,17 @@
             <dependency>
                 <groupId>com.cloudai</groupId>
                 <artifactId>cloud-common-translate-remote-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <!-- 服务间契约 api 模块（2026-10-09 Feign 统一接口层） -->
+            <dependency>
+                <groupId>com.cloudai</groupId>
+                <artifactId>cloud-bpmn-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.cloudai</groupId>
+                <artifactId>cloud-system-api</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <!-- 三方 -->

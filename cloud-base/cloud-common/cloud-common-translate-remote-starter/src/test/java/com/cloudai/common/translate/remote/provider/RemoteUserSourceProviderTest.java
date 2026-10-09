@@ -1,7 +1,7 @@
 package com.cloudai.common.translate.remote.provider;
 
 import com.cloudai.common.core.domain.R;
-import com.cloudai.common.translate.domain.UserEntry;
+import com.cloudai.system.api.domain.UserEntry;
 import com.cloudai.common.translate.remote.client.SystemTranslateClient;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

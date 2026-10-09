@@ -11,6 +11,19 @@ spring:
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+    # Feign 降级与超时（设计 D5/D6——架构口径进仓库）
+    openfeign:
+      circuitbreaker:
+        enabled: true
+      client:
+        config:
+          default:
+            connect-timeout: 1000
+            read-timeout: 5000
+    # TimeLimiter 默认 1s 会截短 read 5s（设计 D3 陷阱）：Feign 已有自身超时，双层冗余关闭之
+    circuitbreaker:
+      resilience4j:
+        disable-time-limiter: true
 
 management:
   endpoints:

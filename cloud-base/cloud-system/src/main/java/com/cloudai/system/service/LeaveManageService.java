@@ -7,13 +7,13 @@ import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.core.exception.ErrorCode;
-import com.cloudai.system.client.BpmnApprovalClient;
+import com.cloudai.bpmn.api.client.BpmnApprovalClient;
 import com.cloudai.system.convert.SysLeaveConvert;
-import com.cloudai.system.dto.ApprovalStatusQueryRequest;
+import com.cloudai.bpmn.api.domain.ApprovalStatusQueryInnerRequest;
 import com.cloudai.system.entity.SysLeave;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
-import com.cloudai.system.vo.ApprovalStatusVo;
+import com.cloudai.bpmn.api.domain.InnerApprovalStatusVo;
 import com.cloudai.system.vo.SysLeaveDetailVo;
 import com.cloudai.system.vo.SysLeaveVo;
 import com.cloudai.system.vo.UserOptionVo;
@@ -142,10 +142,10 @@ public class LeaveManageService {
         if (keys.isEmpty()) {
             return Map.of();
         }
-        ApprovalStatusQueryRequest req = new ApprovalStatusQueryRequest();
+        ApprovalStatusQueryInnerRequest req = new ApprovalStatusQueryInnerRequest();
         req.setBusinessType(BUSINESS_TYPE_LEAVE);
         req.setBusinessKeys(keys);
-        R<List<ApprovalStatusVo>> response;
+        R<List<InnerApprovalStatusVo>> response;
         try {
             response = approvalClient.statusList(req);
         } catch (Exception e) {
@@ -157,7 +157,7 @@ public class LeaveManageService {
             throw new BusinessException(ERR_APPROVAL_UNAVAILABLE, "审批服务不可用");
         }
         Map<String, String> truth = new HashMap<>();
-        for (ApprovalStatusVo vo : response.getData()) {
+        for (InnerApprovalStatusVo vo : response.getData()) {
             truth.put(vo.getBusinessKey(), vo.getStatus());
         }
         return truth;

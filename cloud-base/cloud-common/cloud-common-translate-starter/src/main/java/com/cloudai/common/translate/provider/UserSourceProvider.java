@@ -1,6 +1,6 @@
 package com.cloudai.common.translate.provider;
 
-import com.cloudai.common.translate.domain.UserEntry;
+import com.cloudai.system.api.domain.UserEntry;
 
 import java.util.List;
 

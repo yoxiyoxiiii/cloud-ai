@@ -55,6 +55,16 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- 服务间契约（消费 system 用户聚合 /inner/user）——统一声明归位 2026-10-09 -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-system-api</artifactId>
+        </dependency>
+        <!-- Feign 熔断包装（fallbackFactory 生效前提，设计 D3） -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

@@ -1,7 +1,7 @@
 package com.cloudai.common.translate.core;
 
 import com.cloudai.common.translate.domain.DictItemEntry;
-import com.cloudai.common.translate.domain.UserEntry;
+import com.cloudai.system.api.domain.UserEntry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import org.junit.jupiter.api.Test;
 

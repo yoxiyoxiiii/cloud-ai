@@ -2,7 +2,7 @@ package com.cloudai.common.translate.remote.client;
 
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.translate.domain.DictItemEntry;
-import com.cloudai.common.translate.domain.UserEntry;
+import com.cloudai.system.api.domain.UserEntry;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;

@@ -118,6 +118,8 @@
 
 ## 4. 平台 /inner 面（Feign 专用，网关屏蔽 /bpmn/inner/**）
 
+> **附记（2026-10-09）**：消费端统一为 cloud-bpmn-api `BpmnApprovalClient`（fallbackFactory 中性降级 → system 侧既有转译链不变——端点行为零变化，等价迁移）。
+
 ### 4.1 发起审批 `POST /inner/approval/create`
 
 - 入参 `ApprovalCreateInnerRequest`：

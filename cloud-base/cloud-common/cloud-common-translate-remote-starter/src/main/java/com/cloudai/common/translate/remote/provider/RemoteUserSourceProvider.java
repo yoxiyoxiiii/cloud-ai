@@ -2,8 +2,8 @@ package com.cloudai.common.translate.remote.provider;
 
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.ErrorCode;
-import com.cloudai.common.translate.domain.UserEntry;
 import com.cloudai.common.translate.provider.UserSourceProvider;
+import com.cloudai.system.api.domain.UserEntry;
 import com.cloudai.common.translate.remote.client.SystemTranslateClient;
 
 import java.util.List;

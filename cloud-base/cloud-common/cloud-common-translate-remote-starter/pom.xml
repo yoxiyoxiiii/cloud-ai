@@ -20,6 +20,11 @@
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-common-translate-starter</artifactId>
         </dependency>
+        <!-- UserEntry 归位 system-api（设计 D2）：契约模型共享，纯 jar 无装配副作用 -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-system-api</artifactId>
+        </dependency>
         <!-- 程序式 Feign 客户端（FeignClientBuilder + FeignAutoConfiguration）与负载均衡寻址（服务名 → 实例）；
              版本随根 pom dependencyManagement 收敛（sso 无版本号先例），不设 optional——模块存在的意义即引入 -->
         <dependency>

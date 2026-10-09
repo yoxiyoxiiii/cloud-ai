@@ -1,9 +1,9 @@
 package com.cloudai.system.controller.feign;
 
 import com.cloudai.common.core.domain.R;
-import com.cloudai.common.translate.domain.UserEntry;
+import com.cloudai.system.api.domain.UserEntry;
 import com.cloudai.common.translate.provider.UserSourceProvider;
-import com.cloudai.system.dto.LoginUserDTO;
+import com.cloudai.system.api.domain.LoginUserDTO;
 import com.cloudai.system.service.SysUserLinkageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;

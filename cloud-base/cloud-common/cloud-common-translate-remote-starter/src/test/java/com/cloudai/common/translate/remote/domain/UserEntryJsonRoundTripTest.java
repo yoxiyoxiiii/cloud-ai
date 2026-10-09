@@ -1,7 +1,7 @@
 package com.cloudai.common.translate.remote.domain;
 
 import com.cloudai.common.core.domain.R;
-import com.cloudai.common.translate.domain.UserEntry;
+import com.cloudai.system.api.domain.UserEntry;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;

@@ -19,6 +19,11 @@
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-common-core-starter</artifactId>
         </dependency>
+        <!-- UserEntry 归位 system-api（设计 D2）：契约模型共享，纯 jar 无装配副作用 -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-system-api</artifactId>
+        </dependency>
         <!-- 缓存是组件本体能力：compile 依赖 redis-starter（传递 spring-boot-starter-data-redis） -->
         <dependency>
             <groupId>com.cloudai</groupId>

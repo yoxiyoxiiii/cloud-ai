@@ -5,12 +5,12 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.constant.SecurityConstants;
 import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;
-import com.cloudai.sso.client.SystemUserClient;
 import com.cloudai.sso.domain.OnlineSession;
 import com.cloudai.sso.domain.RefreshTokenValue;
 import com.cloudai.sso.dto.CurrentUserVo;
 import com.cloudai.sso.dto.LoginResult;
-import com.cloudai.sso.dto.LoginUserDTO;
+import com.cloudai.system.api.client.SystemUserClient;
+import com.cloudai.system.api.domain.LoginUserDTO;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import feign.FeignException;
@@ -113,7 +113,14 @@ public class TokenService {
         LoginUserDTO latest;
         try {
             R<LoginUserDTO> resp = userClient.getUserByAccount(old.getAccount());
-            latest = resp == null ? null : resp.getData();
+            if (resp == null || resp.getCode() != 200) {
+                // 降级/远端失败统一 2002（设计 D4 表 1b：fallback 2002 走此分支端到端等价；
+                // 原 getData()==null→2005 会把服务故障误报为会话失效——边缘路径语义修正记档）
+                log.error("cloud-system 调用失败或返回失败，account={}, code={}", old.getAccount(),
+                        resp == null ? null : resp.getCode());
+                throw new BusinessException(2002, "用户服务不可用，请稍后重试");
+            }
+            latest = resp.getData();
         } catch (FeignException e) {
             log.error("cloud-system 调用失败，account={}", old.getAccount(), e);
             throw new BusinessException(2002, "用户服务不可用，请稍后重试");
