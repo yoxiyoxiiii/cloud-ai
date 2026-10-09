@@ -29,6 +29,8 @@
 
 ### 2.1 模块依赖图（迁移后）
 
+> 2026-10-09 目录聚合：两 api 模块迁入 cloud-api/ 聚合目录（结构对齐 cloud-common，GAV 不变），见 plans/2026-10-09-api-modules-aggregation.md
+
 ```
 cloud-base/pom.xml（版本收敛 + modules 增两行）
 ├── cloud-common/

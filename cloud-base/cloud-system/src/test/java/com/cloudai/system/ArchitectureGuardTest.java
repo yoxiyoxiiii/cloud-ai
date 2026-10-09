@@ -303,7 +303,7 @@ class ArchitectureGuardTest {
     void feignClients_inApiModules_mustDeclareFallbackFactory() throws IOException {
         Pattern annotation = Pattern.compile("@FeignClient\\([^)]*\\)", Pattern.DOTALL);
         List<String> violations = new ArrayList<>();
-        for (String api : List.of("../cloud-bpmn-api", "../cloud-system-api")) {
+        for (String api : List.of("../cloud-api/cloud-bpmn-api", "../cloud-api/cloud-system-api")) {
             Path root = Paths.get(api, "src", "main", "java");
             for (Path file : listFiles(root, "*.java")) {
                 Matcher m = annotation.matcher(Files.readString(file, StandardCharsets.UTF_8));

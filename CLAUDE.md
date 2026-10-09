@@ -62,8 +62,9 @@ cloud-base/
 │   │                              #   （资源端 header 认证自动配置，仅 servlet；网关 WebFlux 自带 GatewaySecurityConfig permitAll）
 │   ├── cloud-common-mybatis-starter  # BaseEntity（审计填充+@TableLogic）、分页插件（maxLimit 200）
 │   └── cloud-common-redis-starter    # RedisTemplate（String key + JSON value，@AutoConfigureBefore Boot 的 RedisAutoConfiguration）
-├── cloud-bpmn-api/                # bpmn 服务间契约 jar（Feign 客户端+fallbackFactory+inner 契约模型，自动装配注册降级 bean）
-├── cloud-system-api/              # system 服务间契约 jar（同上；UserEntry/LoginUserDTO 归位）
+├── cloud-api/                     # 服务间契约 api 模块聚合（结构同 cloud-common 惯例，GAV 不变）
+│   ├── cloud-bpmn-api                 # bpmn 服务间契约 jar（Feign 客户端+fallbackFactory+inner 契约模型，自动装配注册降级 bean）
+│   └── cloud-system-api               # system 服务间契约 jar（同上；UserEntry/LoginUserDTO 归位）
 ├── cloud-gateway/  :18080         # WebFlux。lb:// 路由 + StripPrefix=1（/sso/x → sso 服务 /x）+ globalcors + maxAge
 ├── cloud-sso/      :9201          # 认证中心（JWT 双 token + Redis 在线状态；Feign→system /inner 取用户；
 │                                 #   在线会话纯 JSON 存 Redis sso:online:{jti}，refresh 值含 tokenId 绑定）

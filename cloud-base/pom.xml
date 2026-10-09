@@ -13,8 +13,7 @@
 
     <modules>
         <module>cloud-common</module>
-        <module>cloud-bpmn-api</module>
-        <module>cloud-system-api</module>
+        <module>cloud-api</module>
         <module>cloud-gateway</module>
         <module>cloud-sso</module>
         <module>cloud-system</module>
