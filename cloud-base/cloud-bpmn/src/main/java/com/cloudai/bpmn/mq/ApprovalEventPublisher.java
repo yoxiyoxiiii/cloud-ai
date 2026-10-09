@@ -1,6 +1,7 @@
 package com.cloudai.bpmn.mq;
 
 import com.cloudai.bpmn.api.domain.ApprovalEventMessage;
+import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
 import com.cloudai.bpmn.api.mq.ApprovalMqTopics;
 import com.cloudai.common.rocketmq.consume.JsonPayloads;
 import lombok.RequiredArgsConstructor;
@@ -36,10 +37,12 @@ public class ApprovalEventPublisher {
         return event;
     }
 
-    /** CREATE_RESULT/SUCCESS 事件组装（流1 消费成功，approvalId 必填） */
-    public ApprovalEventMessage createResultSuccess(String businessType, String businessKey, Long approvalId) {
+    /** CREATE_RESULT/SUCCESS 事件组装（流1 消费成功 / 4015 补发共用；approvalId/pid 取 created 行数据） */
+    public ApprovalEventMessage createResultSuccess(String businessType, String businessKey,
+                                                    InnerApprovalCreateVo created) {
         ApprovalEventMessage event = baseEvent(ApprovalMqTopics.TAG_CREATE_RESULT, businessType, businessKey);
-        event.setApprovalId(String.valueOf(approvalId));
+        event.setApprovalId(created.getApprovalId());
+        event.setProcessInstanceId(created.getProcessInstanceId());
         event.setResult(ApprovalMqTopics.RESULT_SUCCESS);
         return event;
     }

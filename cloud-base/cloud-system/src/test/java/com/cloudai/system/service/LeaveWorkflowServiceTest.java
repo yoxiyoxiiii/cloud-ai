@@ -3,17 +3,18 @@ package com.cloudai.system.service;
 import com.cloudai.bpmn.api.client.BpmnApprovalClient;
 import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
 import com.cloudai.bpmn.api.mq.ApprovalMqTopics;
+import com.cloudai.bpmn.api.projection.ApprovalProjectionReconciler;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.system.dto.LeaveCreateRequest;
 import com.cloudai.system.entity.SysLeave;
-import com.cloudai.system.entity.SysLeave.StatusEnum;
+import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
 import com.cloudai.system.mq.LeaveCreateTxExecutor;
 import com.cloudai.common.rocketmq.tx.TxMessageSendException;
 import com.cloudai.common.rocketmq.tx.TxMessageSender;
-import com.cloudai.system.entity.SysUser;
+import com.cloudai.system.vo.SysLeaveVo;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -21,11 +22,12 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
-import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -34,9 +36,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 请假写路径单测（契约 2026-10-09-rocketmq-tx-approval-api §2.1 + §6 system 3xxx 账本）：
- * 发起 MQ 事务消息链路（3019/3023 msg 逐字/3025/半消息参数与 KEYS/同步返回 leaveId）+
- * 撤销 Feign 链路不变（3018/3020/3021/3022 转译 + 本地置 3）。
+ * 请假写路径单测（契约 2026-10-09-rocketmq-tx-approval-api §2.1 + §6 system 3xxx 账本；
+ * 投影轮 D6/D8 改版）：发起 MQ 事务消息链路（3019/3023 msg 逐字/3025/半消息参数与 KEYS/
+ * 同步返回 leaveId/纯业务行零状态列）+ 撤销 Feign 链路（3018/3020/3021/3022 转译 +
+ * 成功后框架对账按需即时回写投影）。
  */
 @ExtendWith(MockitoExtension.class)
 class LeaveWorkflowServiceTest {
@@ -49,6 +52,8 @@ class LeaveWorkflowServiceTest {
     private BpmnApprovalClient approvalClient;
     @Mock
     private TxMessageSender txMessageSender;
+    @Mock
+    private ApprovalProjectionReconciler projectionReconciler;
     @InjectMocks
     private LeaveWorkflowService service;
 
@@ -75,8 +80,9 @@ class LeaveWorkflowServiceTest {
         assertThat(payload.getApprover()).isEqualTo("admin");
         SysLeave leave = (SysLeave) bizArgCaptor.getValue();
         assertThat(leave.getId()).isEqualTo(id);
-        assertThat(leave.getStatus()).isEqualTo(StatusEnum.APPROVING.getCode());
         assertThat(leave.getCreateBy()).isEqualTo("userA");
+        // 纯业务行无状态列（投影轮 D6）：状态真相=投影 JOIN 派生
+        assertThat(leave.getTitle()).isEqualTo("annual leave");
         // insert 归 executor 本地事务——service 不直接写库
         verify(leaveMapper, never()).save(any());
     }
@@ -135,11 +141,11 @@ class LeaveWorkflowServiceTest {
         assertThat(ex.getMessage()).isEqualTo("消息服务不可用");
     }
 
-    // ---- cancelLeave（Feign 链路不变，契约 §2.3） ----
+    // ---- cancelLeave（Feign 主路径不变 + 对账收敛，契约 §4.2） ----
 
     @Test
     void cancelLeave_notFoundRejected_3018() {
-        when(leaveMapper.findById(9L)).thenReturn(null);
+        when(leaveMapper.findById("leave", 9L)).thenReturn(null);
         BusinessException ex = catchThrowableOfType(() -> service.cancelLeave(9L, "userA"),
                 BusinessException.class);
 
@@ -149,7 +155,7 @@ class LeaveWorkflowServiceTest {
 
     @Test
     void cancelLeave_notApplierRejected_3021() {
-        when(leaveMapper.findById(5L)).thenReturn(approvingLeave("userA"));
+        when(leaveMapper.findById("leave", 5L)).thenReturn(vo("0", 12L));
         BusinessException ex = catchThrowableOfType(() -> service.cancelLeave(5L, "userB"),
                 BusinessException.class);
 
@@ -159,9 +165,8 @@ class LeaveWorkflowServiceTest {
 
     @Test
     void cancelLeave_terminalRejected_3020() {
-        SysLeave approved = approvingLeave("userA");
-        approved.setStatus(StatusEnum.APPROVED.getCode());
-        when(leaveMapper.findById(5L)).thenReturn(approved);
+        // 终态判据=JOIN 派生 status（设计 D8）：1/2/3/4 全拒
+        when(leaveMapper.findById("leave", 5L)).thenReturn(vo("1", 12L));
         BusinessException ex = catchThrowableOfType(() -> service.cancelLeave(5L, "userA"),
                 BusinessException.class);
 
@@ -171,11 +176,8 @@ class LeaveWorkflowServiceTest {
 
     @Test
     void cancelLeave_failedTerminalRejected_3020() {
-        // status=4 发起失败同属终态：不可撤销（isTerminal 涵盖，契约 §2.2）
-        SysLeave failed = approvingLeave("userA");
-        failed.setStatus(StatusEnum.FAILED.getCode());
-        failed.setApprovalId(null);
-        when(leaveMapper.findById(5L)).thenReturn(failed);
+        // status=4 发起失败同属终态：不可撤销（LeaveStatus.isTerminal 涵盖，契约 §2.2）
+        when(leaveMapper.findById("leave", 5L)).thenReturn(vo("4", null));
         BusinessException ex = catchThrowableOfType(() -> service.cancelLeave(5L, "userA"),
                 BusinessException.class);
 
@@ -184,51 +186,52 @@ class LeaveWorkflowServiceTest {
     }
 
     @Test
-    void cancelLeave_feignFailure_3022_localUntouched() {
-        when(leaveMapper.findById(5L)).thenReturn(approvingLeave("userA"));
+    void cancelLeave_feignFailure_3022_noReconcile() {
+        when(leaveMapper.findById("leave", 5L)).thenReturn(vo("0", 12L));
         when(approvalClient.cancel(any())).thenThrow(new RuntimeException("connection refused"));
 
         BusinessException ex = catchThrowableOfType(() -> service.cancelLeave(5L, "userA"),
                 BusinessException.class);
 
         assertThat(ex.getCode()).isEqualTo(3022);
-        // Feign 失败本地不动（契约 §5.4）
-        verify(leaveMapper, never()).updateStatusById(anyLong(), anyInt(), anyString(), any());
+        // Feign 失败撤销未生效：不触发对账（投影状态不动）
+        verify(projectionReconciler, never()).reconcileByBusiness(anyString(), anyList());
     }
 
     @Test
-    void cancelLeave_platformTerminal_translated_3020_noLocalWrite() {
-        when(leaveMapper.findById(5L)).thenReturn(approvingLeave("userA"));
+    void cancelLeave_platformTerminal_translated_3020() {
+        when(leaveMapper.findById("leave", 5L)).thenReturn(vo("0", 12L));
         when(approvalClient.cancel(any())).thenReturn(R.fail(4011, "审批单已终态，不可撤销"));
 
         BusinessException ex = catchThrowableOfType(() -> service.cancelLeave(5L, "userA"),
                 BusinessException.class);
 
         assertThat(ex.getCode()).isEqualTo(3020);
-        verify(leaveMapper, never()).updateStatusById(anyLong(), anyInt(), anyString(), any());
+        verify(projectionReconciler, never()).reconcileByBusiness(anyString(), anyList());
     }
 
     @Test
     void cancelLeave_platformNotApplier_translated_3021() {
-        when(leaveMapper.findById(5L)).thenReturn(approvingLeave("userA"));
+        when(leaveMapper.findById("leave", 5L)).thenReturn(vo("0", 12L));
         when(approvalClient.cancel(any())).thenReturn(R.fail(4012, "仅申请人本人可撤销"));
 
         BusinessException ex = catchThrowableOfType(() -> service.cancelLeave(5L, "userA"),
                 BusinessException.class);
 
         assertThat(ex.getCode()).isEqualTo(3021);
-        verify(leaveMapper, never()).updateStatusById(anyLong(), anyInt(), anyString(), any());
+        verify(projectionReconciler, never()).reconcileByBusiness(anyString(), anyList());
     }
 
     @Test
-    void cancelLeave_happyPath_marksCancelled() {
-        when(leaveMapper.findById(5L)).thenReturn(approvingLeave("userA"));
+    void cancelLeave_happyPath_triggersImmediateReconcile() {
+        when(leaveMapper.findById("leave", 5L)).thenReturn(vo("0", 12L));
         when(approvalClient.cancel(any())).thenReturn(R.ok());
 
         service.cancelLeave(5L, "userA");
 
+        // 撤销成功 → 框架对账组件按需即时回写投影（best-effort，设计 D8）——替代原本地置 3
         verify(approvalClient).cancel(any());
-        verify(leaveMapper).updateStatusById(eq(5L), eq(StatusEnum.CANCELLED.getCode()), eq("userA"), any());
+        verify(projectionReconciler).reconcileByBusiness(eq("leave"), eq(List.of("5")));
     }
 
     // ---- 脚手架 ----
@@ -250,13 +253,14 @@ class LeaveWorkflowServiceTest {
         return req;
     }
 
-    private SysLeave approvingLeave(String applyUser) {
-        SysLeave leave = new SysLeave();
-        leave.setId(5L);
-        leave.setStatus(StatusEnum.APPROVING.getCode());
-        leave.setApplyUser(applyUser);
-        leave.setApprover("admin");
-        leave.setApprovalId(12L);
-        return leave;
+    /** JOIN 派生读返 VO（mapper mock 契约面；status 为派生 String 值） */
+    private SysLeaveVo vo(String status, Long approvalId) {
+        SysLeaveVo vo = new SysLeaveVo();
+        vo.setId(5L);
+        vo.setStatus(status);
+        vo.setApprovalId(approvalId);
+        vo.setApplyUser("userA");
+        vo.setApprover("admin");
+        return vo;
     }
 }

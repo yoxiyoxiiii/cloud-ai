@@ -95,7 +95,13 @@ public class ApprovalWorkflowService {
         String processInstanceId = startProcess(approval, req.getVariables());
         approvalMapper.updateStatusById(approval.getId(), StatusEnum.APPROVING.getCode(),
                 processInstanceId, req.getApplyUser(), LocalDateTime.now());
-        return buildCreateVo(approval.getId());
+        return buildCreateVo(approval.getId(), processInstanceId);
+    }
+
+    /** 按业务键查审批单行（投影轮设计 D5：ApprovalCreateConsumer 4015 补发分支取行数据
+     *  approvalId/processInstanceId——consumer 不直接触 mapper，分层） */
+    public BpmnApproval findApprovalViewByBusiness(String businessType, String businessKey) {
+        return approvalMapper.findByBusiness(businessType, businessKey);
     }
 
     /** 批量查状态（契约 §4.2）：businessKey 全集回包，无审批单的键 approvalId/status 均 null——
@@ -218,18 +224,22 @@ public class ApprovalWorkflowService {
         }
     }
 
-    private InnerApprovalCreateVo buildCreateVo(Long id) {
+    /** 出参透出流程实例 id（契约 2026-10-09 投影轮 §4.1：发起即回，同事务已有值——零新查询） */
+    private InnerApprovalCreateVo buildCreateVo(Long id, String processInstanceId) {
         InnerApprovalCreateVo vo = new InnerApprovalCreateVo();
         vo.setApprovalId(String.valueOf(id));
+        vo.setProcessInstanceId(processInstanceId);
         vo.setStatus(String.valueOf(StatusEnum.APPROVING.getCode()));
         return vo;
     }
 
+    /** pid 透出（契约投影轮 §4.2）：无审批单/撤销后 null——撤销 updateStatusById 传 null 清空列 */
     private InnerApprovalStatusVo toStatusVo(String businessKey, BpmnApproval approval) {
         InnerApprovalStatusVo vo = new InnerApprovalStatusVo();
         vo.setBusinessKey(businessKey);
         if (approval != null) {
             vo.setApprovalId(String.valueOf(approval.getId()));
+            vo.setProcessInstanceId(approval.getProcessInstanceId());
             vo.setStatus(approval.getStatus() == null ? null : String.valueOf(approval.getStatus()));
         }
         return vo;

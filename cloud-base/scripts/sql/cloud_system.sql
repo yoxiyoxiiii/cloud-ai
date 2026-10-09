@@ -14,6 +14,7 @@ DROP TABLE IF EXISTS sys_dict_type;
 DROP TABLE IF EXISTS sys_leave;
 DROP TABLE IF EXISTS mq_tx_log;
 DROP TABLE IF EXISTS mq_consume_dedup;
+DROP TABLE IF EXISTS approval_projection;
 
 -- 用户
 CREATE TABLE sys_user (
@@ -103,10 +104,12 @@ CREATE TABLE sys_dict_data (
     UNIQUE KEY uk_type_value (dict_type_id, value)
 ) ENGINE = InnoDB COMMENT = '字典项表';
 
--- 请假单（审批平台化：业务台账迁 cloud-system，契约 2026-10-08-approval-platform-api §5/设计 D4）
+-- 请假单（审批平台化：业务台账迁 cloud-system，契约 2026-10-08-approval-platform-api §5/设计 D4；
+-- 2026-10-09 投影改造：快照列 status/approval_id 退役物理删除（Q2=A）——对外 status/approvalId 由
+-- 读路径 LEFT JOIN approval_projection 派生/直出（契约 2026-10-09-approval-projection-api §4.1），
+-- 本表仅业务台账字段；同一业务单据唯一审批由平台侧 bpmn_approval.uk_business 保证）
 -- 索引设计（沿 bpmn_leave 先例）：idx_apply_user(apply_user, deleted)：唯一过滤面「我的请假」
---   WHERE apply_user=? AND deleted=0 ORDER BY id DESC；uk_ 无（title 可重名，同一业务单据唯一审批
---   由平台侧 bpmn_approval.uk_business 保证——本表 approval_id 发起 Feign 成功后回填，一单一审批自然成立）。
+--   WHERE apply_user=? AND deleted=0 ORDER BY id DESC；uk_ 无（title 可重名）
 CREATE TABLE sys_leave (
     id           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '请假单ID（即平台 bpmn_approval.business_key；MQ 事务消息形态下 snowflake 预生成显式插入）',
     title        VARCHAR(100) NOT NULL COMMENT '请假标题（e2e 前缀锚点）',
@@ -114,8 +117,6 @@ CREATE TABLE sys_leave (
     start_date   DATE         NOT NULL COMMENT '开始日期',
     end_date     DATE         NOT NULL COMMENT '结束日期',
     reason       VARCHAR(500) NULL     COMMENT '事由说明',
-    status       TINYINT      NOT NULL DEFAULT 0 COMMENT '状态：0审批中 1已通过 2已拒绝 3已撤销 4发起失败（缓存快照，真相源=bpmn_approval.status，读时纠偏；4=消费端确定性失败终态仅 system 产生；字典 bpmn_approval_status）',
-    approval_id  BIGINT       NULL     COMMENT '审批单ID（bpmn_approval.id，事件通知回填，读时纠偏兜底；发起失败为 NULL 可重新发起；撤销后仍保留）',
     apply_user   VARCHAR(30)  NOT NULL COMMENT '申请人账号（sys_user.account）',
     approver     VARCHAR(30)  NOT NULL COMMENT '审批人账号（发起时指定，引擎 assignee）',
     create_by    VARCHAR(30)  NULL     COMMENT '创建人',
@@ -178,6 +179,30 @@ CREATE TABLE mq_consume_dedup (
     KEY idx_create_time (create_time)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
   COMMENT='MQ 消费通用去重表（先插后消费/失败删行放行重试；N 天定时清理）';
+
+-- 审批状态本地投影（2026-10-09 投影改造，契约 2026-10-09-approval-projection-api §1 / 设计 D2；
+-- 与增量脚本 2026-10-09-approval-projection.sql 段① 语义等价）：bpmn_approval 只读副本（read model），
+-- 真相源不变；cloud-bpmn-api 框架组件写入（事件消费 upsert + 定时对账），业务表 JOIN 读，业务侧禁止直写。
+-- 索引取舍：uk_business 一索三用——业务 JOIN 探针 / 消费 upsert 依据 / 对账按键回写；
+--   idx_approval_status 命中对账范围扫描（低基数量小取舍记档，语义显式）；无按 approval_id 反查路径不建；
+--   无逻辑删除列：行永不删（审批留档语义同 bpmn_approval），无 deleted 过滤负担。
+CREATE TABLE approval_projection (
+    id                  BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    business_type       VARCHAR(50)  NOT NULL COMMENT '业务类型编码（同 bpmn_approval.business_type，如 leave）',
+    business_key        VARCHAR(64)  NOT NULL COMMENT '业务单据键（业务方主键字符串化，如请假单id）',
+    approval_id         BIGINT       NULL     COMMENT '审批单id（bpmn_approval.id；CREATE_RESULT/SUCCESS 事件或对账回填；发起失败为 NULL）',
+    process_instance_id VARCHAR(64)  NULL     COMMENT '流程实例ID（引擎实例标识；CREATE_RESULT/SUCCESS 事件或对账回填——Round E Q4 新增）',
+    create_result       TINYINT      NOT NULL DEFAULT 0 COMMENT '发起结果：0未知(结果事件未达) 1成功 2失败（CREATE_RESULT 事件回填；与 approval_status 独立收敛，互不覆盖）',
+    approval_status     TINYINT      NOT NULL DEFAULT 0 COMMENT '审批状态：0审批中 1已通过 2已拒绝 3已撤销（忠实投影 bpmn_approval.status，永不落4；对外 status=4 发起失败由读侧 CASE 从 create_result=2 派生）',
+    create_by           VARCHAR(30)  NULL     COMMENT '创建人（写入方标识：bpmn-event=事件消费 / approval-reconcile=对账回写）',
+    create_time         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_by           VARCHAR(30)  NULL     COMMENT '更新人（同 create_by 语义）',
+    update_time         DATETIME     NULL     COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_business (business_type, business_key),
+    KEY idx_approval_status (approval_status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  COMMENT='审批状态本地投影（bpmn_approval 只读副本，真相源不变；cloud-bpmn-api 框架组件写入：事件消费 upsert + 定时对账；业务表 JOIN 读，业务侧禁止直写）';
 
 -- ---------- 初始数据 ----------
 -- 内置种子一律显式 is_builtin=1（内置保护契约 §1：后续新增内置种子 SQL 须带 is_builtin=1）

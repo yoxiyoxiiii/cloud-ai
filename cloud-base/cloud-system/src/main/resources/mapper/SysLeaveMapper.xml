@@ -2,68 +2,43 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.cloudai.system.mapper.SysLeaveMapper">
 
-    <!-- 逻辑删除/审计显式维护，语义说明见 SysUserMapper.xml 头注（同款约定）；
-         本表无删除端点（业务台账留档），deleteById 不存在——deleted 列仅为 BaseEntity 规范一致性 -->
-    <sql id="allColumns">
-        id, title, leave_type, start_date, end_date, reason, status, approval_id,
-        apply_user, approver, create_by, create_time, update_by, update_time, deleted
+    <!-- 投影轮 2026-10-09 设计 D6：读路径 JOIN approval_projection 派生（写权归框架组件，业务侧只读——
+         守护规则 projection_table_readonly_for_business_sql）；
+         status = CASE WHEN create_result=2 THEN 4 ELSE IFNULL(approval_status,0) END（契约 §1.5 唯一口径），
+         CAST CHAR 规避 mybatis TINYINT→String 映射不确定性（风险 R4）；
+         CAST(l.id AS CHAR) 在驱动侧（l），p.business_key 裸列走 uk_business 探针（EXPLAIN 抽查记档） -->
+    <sql id="listColumns">
+        l.id, l.title, l.leave_type, l.start_date, l.end_date, l.reason, l.apply_user, l.approver, l.create_time,
+        p.approval_id,
+        CAST(CASE WHEN p.create_result = 2 THEN 4 ELSE IFNULL(p.approval_status, 0) END AS CHAR) AS status
     </sql>
 
-    <select id="findById" resultType="com.cloudai.system.entity.SysLeave">
-        SELECT <include refid="allColumns"/>
-          FROM sys_leave
-         WHERE id = #{id} AND deleted = 0
+    <!-- 详情读：投影无行（存量/事件未达）→ status=0、approval_id NULL（LEFT JOIN 语义） -->
+    <select id="findById" resultType="com.cloudai.system.vo.SysLeaveVo">
+        SELECT <include refid="listColumns"/>
+          FROM sys_leave l
+          LEFT JOIN approval_projection p
+            ON p.business_type = #{businessType} AND p.business_key = CAST(l.id AS CHAR)
+         WHERE l.id = #{id} AND l.deleted = 0
     </select>
 
     <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT；
          唯一过滤面（契约 §5.2 恒按申请人）命中 idx_apply_user(apply_user, deleted) -->
-    <select id="pageList" resultType="com.cloudai.system.entity.SysLeave">
-        SELECT <include refid="allColumns"/>
-          FROM sys_leave
-         WHERE apply_user = #{applyUser} AND deleted = 0
-         ORDER BY id DESC
+    <select id="pageList" resultType="com.cloudai.system.vo.SysLeaveVo">
+        SELECT <include refid="listColumns"/>
+          FROM sys_leave l
+          LEFT JOIN approval_projection p
+            ON p.business_type = #{businessType} AND p.business_key = CAST(l.id AS CHAR)
+         WHERE l.apply_user = #{applyUser} AND l.deleted = 0
+         ORDER BY l.id DESC
     </select>
 
-    <!-- MQ 事务消息形态：snowflake 预生成 id 显式插入（半消息体发送前需知 businessKey，设计 R2） -->
+    <!-- MQ 事务消息形态：snowflake 预生成 id 显式插入（半消息体发送前需知 businessKey，设计 R2）；
+         纯业务行无状态列（状态真相=投影派生读） -->
     <insert id="save">
-        INSERT INTO sys_leave (id, title, leave_type, start_date, end_date, reason, status,
+        INSERT INTO sys_leave (id, title, leave_type, start_date, end_date, reason,
                                apply_user, approver, create_by, create_time, update_by, update_time)
-        VALUES (#{id}, #{title}, #{leaveType}, #{startDate}, #{endDate}, #{reason}, #{status},
+        VALUES (#{id}, #{title}, #{leaveType}, #{startDate}, #{endDate}, #{reason},
                 #{applyUser}, #{approver}, #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
     </insert>
-
-    <!-- 状态快照回写（纠偏/撤销共用）；update_by 匿名保留原值：<if> 判空，逗号前置 -->
-    <update id="updateStatusById">
-        UPDATE sys_leave
-           SET status = #{status},
-               update_time = #{updateTime}
-               <if test="updateBy != null">
-                   , update_by = #{updateBy}
-               </if>
-         WHERE id = #{id} AND deleted = 0
-    </update>
-
-    <!-- 事件回填审批单关联（契约 2026-10-09 §1.3 消费三分支）：WHERE approval_id IS NULL——
-         重投/乱序（回填后终态事件再达）空更新，幂等三防 -->
-    <update id="updateApprovalIdIfAbsent">
-        UPDATE sys_leave
-           SET approval_id = #{approvalId},
-               update_time = #{updateTime}
-               <if test="updateBy != null">
-                   , update_by = #{updateBy}
-               </if>
-         WHERE id = #{id} AND approval_id IS NULL AND deleted = 0
-    </update>
-
-    <!-- 事件状态回写（TERMINAL 置 1/2/3、FAILED 置 4）：WHERE status=0——已终态行（含 4）空更新幂等；
-         撤销链路 Feign 同步置 3 与 TERMINAL/3 事件双写同值无害 -->
-    <update id="updateStatusIfApproving">
-        UPDATE sys_leave
-           SET status = #{status},
-               update_time = #{updateTime}
-               <if test="updateBy != null">
-                   , update_by = #{updateBy}
-               </if>
-         WHERE id = #{id} AND status = 0 AND deleted = 0
-    </update>
 </mapper>

@@ -51,15 +51,15 @@ public class LeaveController {
         return R.ok(page);
     }
 
-    /** 请假单详情（单行纠偏；不含时间线/图——前端按 approvalId 另调平台端点） */
+    /** 请假单详情（JOIN 投影派生实时状态；不含时间线/图——前端按 approvalId 另调平台端点） */
     @GetMapping("/{id}")
     @PreAuthorize("hasAuthority('system:leave:list')")
     public R<SysLeaveDetailVo> detail(@PathVariable("id") Long id) {
-        SysLeaveDetailVo detail = manageService.findById(id, SecurityUtils.currentAccount());
+        SysLeaveDetailVo detail = manageService.findById(id);
         return R.ok(detail);
     }
 
-    /** 撤销请假（3018→3021→3020 本地校验 → 平台撤销 → 本地置已撤销；Feign 失败本地不动） */
+    /** 撤销请假（3018→3021→3020 校验 → 平台撤销 → 框架对账即时回写投影；Feign 失败本地不动） */
     @PutMapping("/cancel/{id}")
     @PreAuthorize("hasAuthority('system:leave:cancel')")
     public R<Void> cancel(@PathVariable("id") Long id) {

@@ -516,7 +516,7 @@ public class XxxYyyController {
 
 - **L1 通用去重表**（回写/通知类，无业务 uk）：继承 `DedupRocketMQListener`，实现 `dedupGroup()`（与 consumerGroup 同名）+`doConsume(msg)`——基类先插 mq_consume_dedup→DuplicateKey=已消费 ACK 跳过→doConsume 异常**删行放行重试**（失败不删行=后续重投被吞=消息丢失）。
 - **L2 业务 uk 幂等**（建单类，业务表有 uk_business）：不继承基类，类上标注 `@UkIdempotentListener("uk 说明")` 豁免 + catch `DuplicateKeyException` 幂等吸收（log+ACK，重投至多建一单）。
-- 回写 UPDATE 用**条件写**幂等三防：`WHERE approval_id IS NULL` / `WHERE status=0`（重投/乱序/双写同值无害，未命中=空更新 ACK 记档）。
+- 回写 UPDATE 用**条件写**幂等三防：`WHERE approval_id IS NULL` / `WHERE status=0`（重投/乱序/双写同值无害，未命中=空更新 ACK 记档）——**审批状态回写已升级投影模式（见下方「审批状态投影接入」），业务表条件 UPDATE 模板自 2026-10-09 投影轮起退役**；非审批域的普通事件回写仍用本口径。
 
 **消费失败三分类**：
 
@@ -526,7 +526,34 @@ public class XxxYyyController {
 | 确定性业务失败白名单（码固定可枚举，如审批人无效/已终态） | 转结果事件（FAILED）通知上游收敛 + ACK |
 | 未知/系统异常 | 抛出 → 重试 `maxReconsumeTimes=3` → %DLQ% 死信人工（dashboard 巡检，禁止无限重试） |
 
-**配置与陷阱**：`rocketmq.name-server`/`rocketmq.producer.group` 走 Nacos 不进仓库（未配 name-server 时 RocketMQTemplate 不装配，服务可起）；消费组由 `@RocketMQMessageListener(consumerGroup=...)` 自持；**消费无用户上下文**——审计 operator 用系统操作者记档（如 "bpmn-event"）；消息体字段一律 String（Long→String 全局 Jackson 口径，防精度/类型漂移）。
+**审批状态投影接入（2026-10-09 投影轮起新默认，范本 sys_leave）**——业务服务接入审批流**不再自建事件消费者**，四件套：
+
+1. **业务表零状态列**：不建 status/approval_id 快照列（存量表出增量 ALTER DROP COLUMN——删列不可逆记档，状态可从平台反查重建）；终态判定用常量类（`constant/LeaveStatus` 先例：String 域 + `isTerminal`，禁魔法值）。
+2. **DDL 复制 approval_projection**（框架表落业务侧库：`uk_business(business_type,business_key)` 一索三用 + `idx_approval_status`，行永不删无 deleted 列——从基线 SQL 或增量脚本 `2026-10-09-approval-projection.sql` 复制）。
+3. **一行配置启用**（application.yml，仓库化非密钥）：`cloud.bpmn.projection.enabled: true` + `cloud.bpmn.projection.consumer-group: g_<svc>_approval_event`（**组名必须全新拟定或沿用既有**——改组名=broker offset 重置重放历史事件）。引 cloud-bpmn-api jar 即得唯一事件监听对象（三分支 upsert 投影表）+ 定时对账（默认 60s，Feign 失败本轮放弃不抛），业务零代码。
+4. **读路径 mapper JOIN 派生**（XML 手写，业务对投影表只读——守护规则：业务 SQL 禁写投影表/业务模块禁自建 APPROVAL_EVENT_NOTIFY 消费者）：
+
+```xml
+<sql id="listColumns">
+    l.id, l.title, <!-- ...业务列... -->, l.create_time,
+    p.approval_id,
+    CAST(CASE WHEN p.create_result = 2 THEN 4 ELSE IFNULL(p.approval_status, 0) END AS CHAR) AS status
+</sql>
+<!-- LEFT JOIN 投影：无行（存量/事件未达）→ status=0、approval_id NULL；CAST(l.id AS CHAR) 在驱动侧，
+     p.business_key 裸列走 uk_business 探针（EXPLAIN 抽查）；CAST CHAR 规避 TINYINT→String 映射 -->
+<select id="pageList" resultType="com.cloudai.<service>.vo.XxxYyyVo">
+    SELECT <include refid="listColumns"/>
+      FROM xxx_yyy l
+      LEFT JOIN approval_projection p
+        ON p.business_type = #{businessType} AND p.business_key = CAST(l.id AS CHAR)
+     WHERE l.apply_user = #{applyUser} AND l.deleted = 0
+     ORDER BY l.id DESC
+</select>
+```
+
+   派生列无实体承载——mapper 返回 VO（resultMap 直出，先例 selectPermsByAccount），convert 层本链路无实体可转；撤销等同步动作成功后调 `ApprovalProjectionReconciler.reconcileByBusiness(type, keys)` 即时对账（best-effort 不抛，事件兜底收敛）。
+
+**配置与陷阱**：`rocketmq.name-server`/`rocketmq.producer.group` 走 Nacos 不进仓库（未配 name-server 时 RocketMQTemplate 不装配，服务可起）；消费组由 `@RocketMQMessageListener(consumerGroup=...)` 自持（投影监听经 `cloud.bpmn.projection.consumer-group` 占位符注入）；**消费无用户上下文**——审计 operator 用系统操作者记档（如 "bpmn-event"）；消息体字段一律 String（Long→String 全局 Jackson 口径，防精度/类型漂移）。
 
 ## 通用约束（全后端强制；机械项由守护测试保证）
 
@@ -552,3 +579,4 @@ public class XxxYyyController {
 - [ ] 服务模块 `@FeignClient` 零命中（守护测试）？
 - [ ] api 模块 `@FeignClient` 均带 `fallbackFactory`（守护测试）？
 - [ ] **MQ（涉事务消息/消费时）**：生产 executor 形态（编排化+executeInTx 内 setBusinessRef，实现内无 @Transactional）/ 消费 L1L2 二选一（DedupRocketMQListener 或 @UkIdempotentListener，守护测试检查）/ 失败三分类归位 / topic·group·KEYS·消息体与消息契约逐字一致？
+- [ ] **审批流接入（投影轮起新默认）**：业务表零状态列 + approval_projection DDL 落库 + `cloud.bpmn.projection.enabled/consumer-group` 两行配置 + mapper LEFT JOIN 派生读（CAST CHAR）？未自建 APPROVAL_EVENT_NOTIFY 消费者、业务 SQL 未写投影表（守护两规则）？

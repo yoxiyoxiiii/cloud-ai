@@ -2,7 +2,6 @@ package com.cloudai.system.mq;
 
 import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
 import com.cloudai.system.entity.SysLeave;
-import com.cloudai.system.entity.SysLeave.StatusEnum;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.common.rocketmq.tx.TxContext;
 import org.junit.jupiter.api.Test;
@@ -15,8 +14,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.verify;
 
 /**
- * 发起请假本地事务 executor 单测（契约 2026-10-09 §1.2 生产语义 / 设计 R2）：
- * insert 走 bizArg 预组装实体（snowflake id 显式写入）+ tx_log 审计回执。
+ * 发起请假本地事务 executor 单测（契约 2026-10-09 §1.2 生产语义 / 设计 R2；投影轮 D6）：
+ * insert 走 bizArg 预组装实体（snowflake id 显式写入；纯业务行无状态列）+ tx_log 审计回执。
  */
 @ExtendWith(MockitoExtension.class)
 class LeaveCreateTxExecutorTest {
@@ -30,7 +29,7 @@ class LeaveCreateTxExecutorTest {
     void executeInTx_savesBizArgLeaveAndSetsBusinessRef() {
         SysLeave leave = new SysLeave();
         leave.setId(1234567890L);
-        leave.setStatus(StatusEnum.APPROVING.getCode());
+        leave.setTitle("annual leave");
         TxContext ctx = new TxContext("tx-no", "TX_APPROVAL_CREATE", null,
                 "leave:1234567890", LeaveCreateTxExecutor.CHANNEL, leave);
         ApprovalCreateInnerRequest payload = new ApprovalCreateInnerRequest();

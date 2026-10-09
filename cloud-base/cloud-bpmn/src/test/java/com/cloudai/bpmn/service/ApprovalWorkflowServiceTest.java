@@ -109,6 +109,8 @@ class ApprovalWorkflowServiceTest {
 
         assertThat(vo.getApprovalId()).isEqualTo("12");
         assertThat(vo.getStatus()).isEqualTo("0");
+        // 投影轮 D5：发起出参透出流程实例 id（同事务已有值，零新查询）
+        assertThat(vo.getProcessInstanceId()).isEqualTo("pid-1");
         ArgumentCaptor<BpmnApproval> captor = ArgumentCaptor.forClass(BpmnApproval.class);
         verify(approvalMapper).save(captor.capture());
         assertThat(captor.getValue().getStatus()).isEqualTo(StatusEnum.APPROVING.getCode());
@@ -252,6 +254,7 @@ class ApprovalWorkflowServiceTest {
     void listStatusByBusiness_echoesAllKeysWithNullFill() {
         BpmnApproval a1 = approval(12L, StatusEnum.APPROVED.getCode());
         a1.setBusinessKey("101");
+        a1.setProcessInstanceId("pid-101");
         BpmnApproval a2 = approval(13L, StatusEnum.APPROVING.getCode());
         a2.setBusinessKey("103");
         when(approvalMapper.listByBusinessKeys("leave", List.of("101", "102", "103")))
@@ -259,15 +262,26 @@ class ApprovalWorkflowServiceTest {
 
         List<InnerApprovalStatusVo> out = service.listStatusByBusiness(query("101", "102", "103"));
 
-        // 全键回包保序：无审批单的键 approvalId/status 均 null（契约 §4.2）
+        // 全键回包保序：无审批单的键 approvalId/status/pid 均 null（契约 §4.2 投影轮 additive）
         assertThat(out).extracting(InnerApprovalStatusVo::getBusinessKey)
                 .containsExactly("101", "102", "103");
         assertThat(out.get(0).getApprovalId()).isEqualTo("12");
         assertThat(out.get(0).getStatus()).isEqualTo("1");
+        assertThat(out.get(0).getProcessInstanceId()).isEqualTo("pid-101");
         assertThat(out.get(1).getApprovalId()).isNull();
         assertThat(out.get(1).getStatus()).isNull();
+        assertThat(out.get(1).getProcessInstanceId()).isNull();
         assertThat(out.get(2).getApprovalId()).isEqualTo("13");
         assertThat(out.get(2).getStatus()).isEqualTo("0");
+    }
+
+    @Test
+    void findApprovalViewByBusiness_delegatesToMapper() {
+        // 4015 补发分支取行数据入口（设计 D5：consumer 不直接触 mapper，分层）
+        BpmnApproval row = approval(12L, StatusEnum.APPROVING.getCode());
+        when(approvalMapper.findByBusiness("leave", "7")).thenReturn(row);
+
+        assertThat(service.findApprovalViewByBusiness("leave", "7")).isSameAs(row);
     }
 
     // ---- cancelApproval / cancelByBusiness（编排化断言面） ----

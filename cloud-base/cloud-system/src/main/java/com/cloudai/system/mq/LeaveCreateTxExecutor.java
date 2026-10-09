@@ -9,10 +9,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 /**
- * 发起请假本地事务 executor（通道 leave-create，契约 2026-10-09 §1.2 生产语义）。
- * executeInTx = insert sys_leave(status=0)（snowflake 预生成 id 显式写入，设计 R2），
- * 与 mq_tx_log insert 同在 starter listener 的 TransactionTemplate 单事务（审查 R-1 executor 形态，
- * 实现内禁 @Transactional）；bizArg=生产方法组装好的完整 SysLeave（审计四值已显式）。
+ * 发起请假本地事务 executor（通道 leave-create，契约 2026-10-09 §1.2 生产语义；投影轮 D6）。
+ * executeInTx = insert sys_leave 纯业务行（无状态列——状态真相=投影 JOIN 派生；snowflake 预生成
+ * id 显式写入，设计 R2），与 mq_tx_log insert 同在 starter listener 的 TransactionTemplate 单事务
+ * （审查 R-1 executor 形态，实现内禁 @Transactional）；bizArg=生产方法组装好的完整 SysLeave
+ * （审计四值已显式）。
  */
 @Component
 @RequiredArgsConstructor

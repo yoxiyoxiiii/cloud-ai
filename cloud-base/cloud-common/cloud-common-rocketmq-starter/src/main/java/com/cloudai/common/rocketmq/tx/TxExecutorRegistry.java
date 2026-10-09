@@ -6,6 +6,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
+ * 本地事务注册中心
  * channel → TxLocalExecutor 路由表（自动装配收集全部 executor bean 构建）。
  * channel 重复视为装配错误（启动即败，防静默路由错乱）。
  */

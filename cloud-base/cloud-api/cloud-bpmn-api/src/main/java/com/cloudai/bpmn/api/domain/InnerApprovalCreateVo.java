@@ -5,7 +5,8 @@ import lombok.Data;
 import java.io.Serializable;
 
 /**
- * 发起审批出参（契约 2026-10-08-approval-platform-api §4.1：{ approvalId, status } 全 string）。
+ * 发起审批出参（契约 2026-10-08-approval-platform-api §4.1：{ approvalId, status } 全 string；
+ * 2026-10-09 投影轮 §4.1 增 processInstanceId——additive）。
  * （cloud-bpmn-api 归位 2026-10-09）
  */
 @Data
@@ -15,6 +16,9 @@ public class InnerApprovalCreateVo implements Serializable {
 
     /** 审批单 id（字符串化） */
     private String approvalId;
+
+    /** 流程实例 ID（发起即回，同事务已有值；供消费方建审批单后即时透出） */
+    private String processInstanceId;
 
     /** 初始状态（"0" 审批中） */
     private String status;

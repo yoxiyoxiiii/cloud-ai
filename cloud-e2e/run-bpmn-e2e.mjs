@@ -83,6 +83,17 @@
  *   （→1002「消息服务不可用」，重试即愈）+ 消费组冷启动首投递 ~25s（rebalance），四角色
  *   （p_system_tx/g_bpmn_approval_create/p_bpmn_tx/g_system_approval_event）一并暖；预热失败 SKIP 不硬跑
  * - 预热单 e2emqwarm 前缀（非本轮 stamp——不进 CLEANUP 计数），办结归终态留档（清扫纪律允许）
+ *
+ * Round E 审批状态本地投影（契约 2026-10-09-approval-projection-api，对 Round J 契约的修订）：
+ * - sys_leave 删 status/approval_id 列，读路径改 LEFT JOIN approval_projection 派生
+ *   （create_result=2→4 发起失败；无行→0 审批中）——VO 字段面零变化，waitForApprovalId 语义保持
+ *   （事件写投影 approval_id 后 JOIN 即非空）
+ * - 读时纠偏退役：**办理/撤销后终态断言一律先过 waitForLeaveStatus 收敛闸门**
+ *   （轮询 GET /system/leave/{id} 至 leave.status===expected，timeout 15s——TERMINAL 事件回写投影
+ *   秒级；撤销链路即时对账基本即时，轮询统一兜底）。原「读时纠偏即时终态」断言语义弱化为
+ *   「收敛窗口内终态」，锚点单据不变
+ * - BP8 stale 撤销 3020：后台审批后先 waitForLeaveStatus(dId,'1') 再点撤销——保证 3020 走本地校验
+ *   路径（派生 status 已终态），msg 逐字断言稳定（stale DOM 语义不变：页面未刷新按钮仍在）
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -115,6 +126,8 @@ const COMMENT_D = `E2E后台同意${stamp}`
 const COMMENT_E = `E2E通过意见${stamp}`
 /** 审批单 id 锚点（BP2 起逐单累积——detailPath/审批面交叉断言用） */
 const approvalIdOf = {}
+/** 请假单 id 锚点（createLeaveViaUi 统一记录——waitForLeaveStatus 收敛闸门用，Round E） */
+const leaveIdOf = {}
 
 const LEAVE_PATH = '/system/leave'
 const APPROVAL_PATH = '/bpmn/approval'
@@ -194,7 +207,7 @@ async function mqWarmup(accessToken) {
     if (done?.code !== 200) log(`  预热办结第 ${attempt} 次未成: code=${done?.code} msg="${done?.msg}"（冷首发重试）`)
   }
   if (done?.code !== 200) return { ok: false, reason: `预热办结两次失败: code=${done?.code} msg="${done?.msg}"`, leaveId }
-  // 终态收敛确认（TERMINAL 事件回写为主、读时纠偏兜底——15s；status 同嵌套 {leave} 包装）
+  // 终态收敛确认（TERMINAL 事件回写为主、定时对账兜底——15s；status 同嵌套 {leave} 包装）
   for (let i = 0; i < 30; i++) {
     const body = await gw(`/system/leave/${leaveId}`).then((r) => r.json()).catch(() => null)
     if (body?.data?.leave?.status === '1') return { ok: true, title }
@@ -380,6 +393,23 @@ async function waitForApprovalId(leaveId, timeoutMs = 15000) {
   assert(false, `approvalId 应在 ${timeoutMs}ms 内收敛（MQ CREATE_RESULT 事件回填），leaveId=${leaveId}`)
 }
 
+/** 终态收敛闸门（契约 2026-10-09-approval-projection §4.1/§7——Round E）：读时纠偏已退役，
+ *  办理/撤销后对外 status 由 TERMINAL 事件回写投影派生（秒级；撤销链路即时对账基本即时）——
+ *  终态断言前先轮询 GET /system/leave/{id} 至 leave.status===expected（timeout 15s 窗口内必达）。 */
+async function waitForLeaveStatus(leaveId, expected, timeoutMs = 15000) {
+  const t0 = Date.now()
+  for (let i = 0; i < Math.ceil(timeoutMs / 500); i++) {
+    const detail = await pageFetch(`/api/system/leave/${leaveId}`)
+    const status = detail.data?.leave?.status
+    if (detail.code === 200 && status === expected) {
+      log(`  leave status 收敛: ${status}（${Date.now() - t0}ms——TERMINAL 事件/对账回写投影）`)
+      return status
+    }
+    await sleep(500)
+  }
+  assert(false, `leave status 应在 ${timeoutMs}ms 内收敛为 ${expected}（TERMINAL 事件回写投影），leaveId=${leaveId}`)
+}
+
 /** 发起请假全流程（开弹窗 → 填五字段 → 提交 → 发起成功 toast + 弹窗关闭 + 列表刷新落定 →
  *  approvalId 收敛轮询——契约 §6「approvalId 相关场景改收敛轮询」统一闸门）；返回新单 id */
 async function createLeaveViaUi({ title, typeLabel, reason }) {
@@ -413,6 +443,7 @@ async function createLeaveViaUi({ title, typeLabel, reason }) {
   log(`  发起成功: title=${title} type=${typeLabel}(${TYPE_LABELS[typeLabel]}) ${sv}~${ev} leaveId=${body.data}`)
   // MQ 形态收敛闸门（BP2 approvalId 非空断言/锚定/待办/跳转/图渲染全依赖此后置成立）
   await waitForApprovalId(body.data)
+  leaveIdOf[title] = body.data
   return body.data
 }
 
@@ -686,6 +717,8 @@ try {
     await loadTaskTodo()
     await completeTaskViaUi({ title: T_A, approveLabel: '同意', comment: COMMENT_A })
     assert(!(await visibleRowByText(T_A).isVisible()), `办理后待办应消行（无 "${T_A}"）`)
+    // 终态收敛闸门（Round E：TERMINAL 事件回写投影秒级——后续行内/原值断言的前置）
+    await waitForLeaveStatus(leaveIdOf[T_A], '1')
     // 已办 tab：1 行同意
     await switchDoneTab()
     const doneRow = visibleRowByText(T_A)
@@ -698,7 +731,7 @@ try {
     assertEq(doneCells[6], '已通过', '当前单状态列应为 已通过（approvalStatusLabel）')
     const doneTag = doneRow.locator('td .el-tag').first()
     assert(((await doneTag.getAttribute('class')) || '').includes('el-tag--success'), '同意结果 tag 应为 success 色')
-    // 请假申请变已通过（撤销按钮随终态消失）——读时纠偏后的实时状态
+    // 请假申请变已通过（撤销按钮随终态消失）——Round E 投影派生实时状态（收敛闸门已过）
     const row = await leaveRow(T_A)
     assert(row, `请假申请应仍含 "${T_A}" 行`)
     const cells = await rowCells(row)
@@ -706,7 +739,7 @@ try {
     const tag = await statusTag(row)
     assert(tag.cls.includes('el-tag--success'), `已通过 tag 应为 success 色，实际 class="${tag.cls}"`)
     assertEq(await row.getByRole('button', { name: '撤销' }).count(), 0, '终态行不应再有 撤销 按钮（v-if 关闸）')
-    // API 层纠偏终态断言（语义不弱化：办理通过 → system page 原值即时变 "1"）
+    // API 层终态断言（Round E：收敛闸门已过——投影派生 status 为 "1"）
     const fetched = await pageFetch('/api/system/leave/page?pageNum=1&pageSize=10')
     const frow = fetched.data.rows.find((r) => r.title === T_A)
     assert(frow, 'fetch 应含 A 行')
@@ -722,6 +755,8 @@ try {
     await anchorApprovalId(T_R)
     await loadTaskTodo()
     await completeTaskViaUi({ title: T_R, approveLabel: '拒绝', comment: COMMENT_R })
+    // 终态收敛闸门（Round E：拒绝 → TERMINAL 事件回写投影 → 派生 "2"）
+    await waitForLeaveStatus(leaveIdOf[T_R], '2')
     // 已办累积：A=同意 / R=拒绝 同屏
     await switchDoneTab()
     const rRow = visibleRowByText(T_R)
@@ -773,6 +808,8 @@ try {
     await waitToast(page, '撤销成功')
     await waitTableIdle(page)
     await sleep(300)
+    // 终态收敛闸门（Round E：撤销链路即时对账基本即时，轮询统一兜底 → 派生 "3"）
+    await waitForLeaveStatus(id, '3')
     // 行内状态变已撤销（success 事件已刷新列表）
     const rowAfter = await leaveRow(T_C, { reload: false })
     const cells = await rowCells(rowAfter)
@@ -877,6 +914,9 @@ try {
     const done = await directApi('POST', '/bpmn/task/complete', { taskId: dTask.taskId, approve: 'true', comment: COMMENT_D })
     log(`  直连后台审批 D: HTTP ${done.httpStatus} code=${done.body.code}`)
     assertEq(done.body.code, 200, '后台审批应 body 200')
+    // 终态收敛闸门（Round E）：保证后续 stale 撤销走本地校验 3020 路径（派生 status 已终态），
+    // msg 逐字断言稳定——stale DOM 语义不变（页面未刷新、撤销按钮仍在）
+    await waitForLeaveStatus(dId, '1')
     // 页面未刷新：撤销按钮仍在 → 点击走 UI 撤销 → 后端 3020 → 拦截器 toast（HTTP 200 + body 错误码）
     const putP = page.waitForResponse(
       (r) => apiPath(r.url(), `/api/system/leave/cancel/${dId}`) && r.request().method() === 'PUT',
@@ -977,6 +1017,8 @@ try {
     const done = await directApi('POST', '/bpmn/task/complete', { taskId: eTask.taskId, approve: 'true', comment: COMMENT_E })
     log(`  直连后台办结 E: HTTP ${done.httpStatus} code=${done.body.code}`)
     assertEq(done.body.code, 200, '后台办结 E 应 body 200')
+    // 终态收敛闸门（Round E：E 归终态——保 CLEANUP 六单全终态断言稳定）
+    await waitForLeaveStatus(eId, '1')
   })
 
   // ================= BP10 定义页「查看图」弹窗：五节点四连线零高亮（零变化保留） =================
@@ -1259,6 +1301,8 @@ try {
     await waitToast(page, '撤销成功')
     await waitTableIdle(page)
     await sleep(300)
+    // 终态收敛闸门（Round E：平台撤销无 system 侧即时对账——纯 TERMINAL 事件回写投影 → 派生 "3"）
+    await waitForLeaveStatus(pLeaveId, '3')
     // 行内状态变已撤销 + 撤销按钮转禁用
     const rowP2 = approvalRow(T_P)
     const cellsP2 = await rowCells(rowP2)
@@ -1267,12 +1311,12 @@ try {
     assert(tagP2.cls.includes('el-tag--info'), `已撤销 tag 应为 info 色，实际 class="${tagP2.cls}"`)
     assert(await rowP2.getByRole('button', { name: '撤销' }).isDisabled(), '撤销后行撤销按钮应转禁用')
     await shot(page, 'bp13-canceled.png')
-    // ---- g. 跨页真相源语义：平台撤销 → /system/leave 读时纠偏为已撤销 ----
+    // ---- g. 跨页真相源语义：平台撤销 → TERMINAL 事件回写投影 → 请假面派生已撤销（Round E 收敛闸门已过） ----
     const leaveRowP = await leaveRow(T_P)
     assert(leaveRowP, `请假申请应含 "${T_P}" 行`)
     const lCells = await rowCells(leaveRowP)
-    log(`  P 请假行（跨页纠偏后）: ${JSON.stringify(lCells)}`)
-    assertEq(lCells[3], '已撤销', '平台撤销后请假面状态应纠偏为 已撤销（读时纠偏——真相源语义）')
+    log(`  P 请假行（跨页收敛后）: ${JSON.stringify(lCells)}`)
+    assertEq(lCells[3], '已撤销', '平台撤销后请假面状态应收敛为 已撤销（投影回写——真相源语义）')
     const lTag = await statusTag(leaveRowP)
     assert(lTag.cls.includes('el-tag--info'), `请假面 P 行 tag 应为 info 色，实际 class="${lTag.cls}"`)
     assertEq(await leaveRowP.getByRole('button', { name: '撤销' }).count(), 0, '请假面 P 终态行不应有 撤销 按钮')

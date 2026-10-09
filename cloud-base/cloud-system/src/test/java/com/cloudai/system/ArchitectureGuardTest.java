@@ -342,6 +342,50 @@ class ArchitectureGuardTest {
                 .isEmpty();
     }
 
+    // ---- 规则 v7（2026-10-09 投影轮）：审批事件唯一监听对象 + 投影表写权归框架 ----
+
+    /**
+     * 业务服务模块禁止自建审批事件消费者（契约 2026-10-09-approval-projection-api §2.2 / 设计 D9）：
+     * 审批事件（topic APPROVAL_EVENT_NOTIFY）唯一监听对象 = cloud-bpmn-api 投影组件
+     * ApprovalProjectionListener（自动装配，消费方显式开）——业务模块零业务 Consumer。
+     * 扫描面仅本模块（cloud-system）main 源码：TOPIC_APPROVAL_EVENT_NOTIFY 常量引用或
+     * "APPROVAL_EVENT_NOTIFY" 字面量（ApprovalMqTopics import 本身与 TOPIC_TX_APPROVAL_CREATE
+     * 生产 topic 不在扫描面——LeaveWorkflowService 事务半消息生产合法引用）。
+     */
+    @Test
+    void service_module_must_not_consume_approval_event() throws IOException {
+        List<String> violations = scan(MAIN_JAVA, "*.java",
+                Pattern.compile("TOPIC_APPROVAL_EVENT_NOTIFY|\"APPROVAL_EVENT_NOTIFY\""));
+        assertThat(violations)
+                .as("业务模块禁止自建 APPROVAL_EVENT_NOTIFY 消费者——唯一监听对象=cloud-bpmn-api 投影组件"
+                        + "（引 jar + cloud.bpmn.projection.enabled=true 即得，业务零代码）")
+                .isEmpty();
+    }
+
+    /**
+     * 投影表对业务 SQL 只读（设计 D6/D9）：业务 mapper XML 的 insert/update/delete 语句块
+     * 不得触碰 approval_projection——写权归框架组件（ApprovalProjectionDao），
+     * 业务读走 LEFT JOIN（select 不受限）。块解析沿 master_table_sql_must_handle_deleted 先例。
+     */
+    @Test
+    void projection_table_readonly_for_business_sql() throws IOException {
+        List<String> violations = new ArrayList<>();
+        for (Path xml : listFiles(MAIN_MAPPER_XML, "*.xml")) {
+            String content = Files.readString(xml, StandardCharsets.UTF_8);
+            Matcher block = Pattern.compile("<(insert|update|delete)\\b[^>]*id=\"([^\"]+)\"(.*?)</\\1>",
+                            Pattern.DOTALL)
+                    .matcher(content);
+            while (block.find()) {
+                if (block.group(3).contains("approval_projection")) {
+                    violations.add(xml.getFileName() + "#" + block.group(2) + " (write to projection table)");
+                }
+            }
+        }
+        assertThat(violations)
+                .as("业务 SQL 禁止写 approval_projection（写权归 cloud-bpmn-api 框架组件，业务侧只读 JOIN）")
+                .isEmpty();
+    }
+
     /** 提取第 idx 行的方法声明名；注释/注解/private/protected/语句关键字行返回 null */
     private String extractMethodName(String[] lines, int idx) {
         String line = lines[idx];

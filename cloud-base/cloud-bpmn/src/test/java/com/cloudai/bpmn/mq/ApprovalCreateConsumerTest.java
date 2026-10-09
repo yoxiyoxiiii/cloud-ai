@@ -3,6 +3,7 @@ package com.cloudai.bpmn.mq;
 import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
 import com.cloudai.bpmn.api.domain.ApprovalEventMessage;
 import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
+import com.cloudai.bpmn.entity.BpmnApproval;
 import com.cloudai.bpmn.service.ApprovalWorkflowService;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.rocketmq.consume.JsonPayloads;
@@ -32,9 +33,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 发起审批消费单测（契约 2026-10-09 §1.2 结果分流四分支：
- * 成功→SUCCESS 事件 / 4015 幂等吸收零事件 / 白名单→FAILED 事件 / 系统态重抛重试；
- * 补偿事件发送失败不对称处置：SUCCESS 仅记档、FAILED 重抛）。
+ * 发起审批消费单测（契约 2026-10-09 §1.2 结果分流 + 投影轮设计 D5 必达性补强：
+ * 成功→SUCCESS 事件（含 pid）/ 4015→查行补发 SUCCESS 事件（行不在防御 log+ACK）/ 白名单→FAILED 事件 /
+ * 系统态重抛重试；补偿事件发送失败不对称处置：SUCCESS 仅记档、FAILED/补发重抛）。
  */
 @ExtendWith(MockitoExtension.class)
 class ApprovalCreateConsumerTest {
@@ -58,8 +59,8 @@ class ApprovalCreateConsumerTest {
     }
 
     @Test
-    void success_sendsSuccessEventAndAcks() {
-        when(workflowService.createApproval(any())).thenReturn(createVo("12"));
+    void success_sendsSuccessEventWithPidAndAcks() {
+        when(workflowService.createApproval(any())).thenReturn(createVo("12", "pid-9"));
 
         assertThatCode(() -> consumer.onMessage(msg(request()))).doesNotThrowAnyException();
 
@@ -68,26 +69,57 @@ class ApprovalCreateConsumerTest {
         assertThat(captor.getValue().getEventType()).isEqualTo("CREATE_RESULT");
         assertThat(captor.getValue().getResult()).isEqualTo("SUCCESS");
         assertThat(captor.getValue().getApprovalId()).isEqualTo("12");
+        assertThat(captor.getValue().getProcessInstanceId()).isEqualTo("pid-9");
         assertThat(captor.getValue().getBusinessKey()).isEqualTo("7");
     }
 
     @Test
     void success_eventSendFails_onlyLogsAndAcks() {
-        // SUCCESS 事件丢失由读时纠偏兜底收敛——不阻塞 ACK（主控裁定不对称处置）
-        when(workflowService.createApproval(any())).thenReturn(createVo("12"));
+        // SUCCESS 事件丢失：4015 补发收敛路径兜底（broker 重投时补发）——不阻塞 ACK
+        when(workflowService.createApproval(any())).thenReturn(createVo("12", "pid-9"));
         doThrow(new RuntimeException("broker down")).when(eventPublisher).sendPlain(any());
 
         assertThatCode(() -> consumer.onMessage(msg(request()))).doesNotThrowAnyException();
     }
 
     @Test
-    void exists_4015_absorbedWithoutEvent() {
-        // 同单据重投：uk_business 已兜底建过审批单，幂等吸收零事件（契约 §1.2 分支 2）
+    void exists_4015_reissuesSuccessEventFromRow() {
+        // 必达性补强（设计 D5）：同单据重投查 uk 行补发 SUCCESS 事件——首投成功事件丢失的收敛路径
         when(workflowService.createApproval(any()))
                 .thenThrow(new BusinessException(4015, "该业务单据已存在审批"));
+        when(workflowService.findApprovalViewByBusiness("leave", "7")).thenReturn(approvalRow(12L, "pid-9"));
+
+        assertThatCode(() -> consumer.onMessage(msg(request()))).doesNotThrowAnyException();
+
+        ArgumentCaptor<ApprovalEventMessage> captor = ArgumentCaptor.forClass(ApprovalEventMessage.class);
+        verify(eventPublisher).sendPlain(captor.capture());
+        assertThat(captor.getValue().getResult()).isEqualTo("SUCCESS");
+        assertThat(captor.getValue().getApprovalId()).isEqualTo("12");
+        assertThat(captor.getValue().getProcessInstanceId()).isEqualTo("pid-9");
+    }
+
+    @Test
+    void exists_4015_rowMissing_logsAndAcksWithoutEvent() {
+        // 行不在（理论不发生，4015 竞态窗口防御）：log+ACK 零事件
+        when(workflowService.createApproval(any()))
+                .thenThrow(new BusinessException(4015, "该业务单据已存在审批"));
+        when(workflowService.findApprovalViewByBusiness("leave", "7")).thenReturn(null);
 
         assertThatCode(() -> consumer.onMessage(msg(request()))).doesNotThrowAnyException();
         verify(eventPublisher, never()).sendPlain(any());
+    }
+
+    @Test
+    void exists_4015_reissueSendFails_rethrowsForRetry() {
+        // 补发失败重抛走重试：重投再补发同值幂等无害（×3→死信人工，剩余缝隙=此后无重投）
+        when(workflowService.createApproval(any()))
+                .thenThrow(new BusinessException(4015, "该业务单据已存在审批"));
+        when(workflowService.findApprovalViewByBusiness("leave", "7")).thenReturn(approvalRow(12L, "pid-9"));
+        doThrow(new RuntimeException("broker down")).when(eventPublisher).sendPlain(any());
+
+        assertThatThrownBy(() -> consumer.onMessage(msg(request())))
+                .isInstanceOf(RuntimeException.class)
+                .hasMessage("broker down");
     }
 
     @Test
@@ -185,10 +217,20 @@ class ApprovalCreateConsumerTest {
         }
     }
 
-    private InnerApprovalCreateVo createVo(String approvalId) {
+    private InnerApprovalCreateVo createVo(String approvalId, String processInstanceId) {
         InnerApprovalCreateVo vo = new InnerApprovalCreateVo();
         vo.setApprovalId(approvalId);
+        vo.setProcessInstanceId(processInstanceId);
         vo.setStatus("0");
         return vo;
+    }
+
+    private BpmnApproval approvalRow(Long id, String processInstanceId) {
+        BpmnApproval approval = new BpmnApproval();
+        approval.setId(id);
+        approval.setBusinessType("leave");
+        approval.setBusinessKey("7");
+        approval.setProcessInstanceId(processInstanceId);
+        return approval;
     }
 }

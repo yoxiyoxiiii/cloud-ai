@@ -1,1 +1,2 @@
 com.cloudai.bpmn.api.BpmnApiAutoConfiguration
+com.cloudai.bpmn.api.projection.ApprovalProjectionAutoConfiguration

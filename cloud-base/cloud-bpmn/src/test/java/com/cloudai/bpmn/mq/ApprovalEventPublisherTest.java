@@ -1,6 +1,7 @@
 package com.cloudai.bpmn.mq;
 
 import com.cloudai.bpmn.api.domain.ApprovalEventMessage;
+import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
 import com.cloudai.common.rocketmq.consume.JsonPayloads;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
@@ -49,12 +50,14 @@ class ApprovalEventPublisherTest {
     }
 
     @Test
-    void createResultSuccess_assemblesWithApprovalId() {
-        ApprovalEventMessage event = publisher.createResultSuccess("leave", "7", 12L);
+    void createResultSuccess_assemblesWithApprovalIdAndPid() {
+        // 投影轮 D5：SUCCESS 事件携带 processInstanceId（投影 pid 列回填依据，契约 §1.3 必填）
+        ApprovalEventMessage event = publisher.createResultSuccess("leave", "7", createVo("12", "pid-9"));
 
         assertThat(event.getEventType()).isEqualTo("CREATE_RESULT");
         assertThat(event.getResult()).isEqualTo("SUCCESS");
         assertThat(event.getApprovalId()).isEqualTo("12");
+        assertThat(event.getProcessInstanceId()).isEqualTo("pid-9");
         assertThat(event.getReason()).isNull();
     }
 
@@ -73,7 +76,7 @@ class ApprovalEventPublisherTest {
         // KEYS 组装口径（契约 §1.3）：{businessType}:{businessKey}:{eventType}
         assertThat(publisher.notifyKeys(publisher.terminal("leave", "7", 3)))
                 .isEqualTo("leave:7:TERMINAL");
-        assertThat(publisher.notifyKeys(publisher.createResultSuccess("leave", "7", 12L)))
+        assertThat(publisher.notifyKeys(publisher.createResultSuccess("leave", "7", createVo("12", "pid-9"))))
                 .isEqualTo("leave:7:CREATE_RESULT");
     }
 
@@ -88,5 +91,15 @@ class ApprovalEventPublisherTest {
         verify(rocketMQTemplate).syncSend(eq("APPROVAL_EVENT_NOTIFY:TERMINAL"), (Message<?>) captor.capture());
         assertThat(captor.getValue().getPayload()).isEqualTo(jsonPayloads.toBytes(event));
         assertThat(captor.getValue().getHeaders().get("KEYS")).isEqualTo("leave:7:TERMINAL");
+    }
+
+    // ---- 脚手架 ----
+
+    private InnerApprovalCreateVo createVo(String approvalId, String processInstanceId) {
+        InnerApprovalCreateVo vo = new InnerApprovalCreateVo();
+        vo.setApprovalId(approvalId);
+        vo.setProcessInstanceId(processInstanceId);
+        vo.setStatus("0");
+        return vo;
     }
 }

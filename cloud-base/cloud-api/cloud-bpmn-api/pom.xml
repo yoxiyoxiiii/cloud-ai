@@ -12,7 +12,7 @@
 
     <artifactId>cloud-bpmn-api</artifactId>
     <name>cloud-bpmn-api</name>
-    <description>cloud-bpmn 服务间契约（Feign 客户端 + inner 契约模型 + 降级工厂）</description>
+    <description>cloud-bpmn 服务间契约（Feign 客户端 + inner 契约模型 + 降级工厂）+ 审批状态本地投影框架组件（projection 包：事件监听/定时对账，默认关、消费方显式开——api 模块承载框架组件特例记档，沿 translate-remote-starter 先例表述）</description>
 
     <dependencies>
         <dependency>
@@ -27,6 +27,12 @@
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+        <!-- 审批投影框架组件（projection 包，2026-10-09 设计 D3）：复用 DedupRocketMQListener/JsonPayloads
+             与 JdbcTemplate 手写 SQL 先例——依赖方向 api → common 合规（common 不反向依赖业务域 api） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-rocketmq-starter</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

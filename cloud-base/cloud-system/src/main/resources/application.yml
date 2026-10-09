@@ -37,8 +37,18 @@ management:
 # RocketMQ（契约 2026-10-09 §1.1）——连接配置走 Nacos 不进仓库（cloud-system.yaml 增：
 #   rocketmq.name-server: 127.0.0.1:9876
 #   rocketmq.producer.group: p_system_tx               # 事务半消息生产组（TX_APPROVAL_CREATE）
-# 消费组 g_system_approval_event 由 @RocketMQMessageListener 注解自持无需配置；
-# name-server 未配置时 RocketMQTemplate 不装配，MQ 生产/消费 bean 启动即缺——本地起服前先核对 Nacos）。
+# 消费组 g_system_approval_event 经下方 cloud.bpmn.projection.consumer-group 注入（占位符解析）；
+# name-server 未配置时 RocketMQTemplate 不装配，MQ 生产/消费 bean 启动即缺——本地起服前先核对 Nacos。
+
+# 审批状态本地投影（契约 2026-10-09-approval-projection-api §1.1 / 设计 D3）：
+# 引 cloud-bpmn-api jar 即得唯一事件监听对象 + 定时对账，两行配置显式启用（默认关防提供方误装配）；
+# 消费组名沿用 Round D 组名 g_system_approval_event——broker offset 延续无重放（设计 D3 硬约束）
+cloud:
+  bpmn:
+    projection:
+      enabled: true
+      consumer-group: g_system_approval_event
+      # 定时对账间隔/单批上限用默认（60s / 100，对齐平台 status-list 单批上限）
 
 mybatis-plus:
   configuration:
