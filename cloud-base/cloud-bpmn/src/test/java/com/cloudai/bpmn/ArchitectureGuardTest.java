@@ -88,7 +88,8 @@ class ArchitectureGuardTest {
     @Test
     void master_table_sql_must_handle_deleted() throws IOException {
         // 主表（带逻辑删除列）的每条 select/update 语句必须出现 deleted。
-        Pattern masterTable = Pattern.compile("\\bbpmn_leave\\b");
+        // 审批平台化 2026-10-08：主表清单 bpmn_leave → bpmn_approval/bpmn_business_type
+        Pattern masterTable = Pattern.compile("\\bbpmn_approval\\b|\\bbpmn_business_type\\b");
         List<String> violations = new ArrayList<>();
         for (Path xml : listFiles(MAIN_MAPPER_XML, "*.xml")) {
             String content = Files.readString(xml, StandardCharsets.UTF_8);
@@ -102,7 +103,7 @@ class ArchitectureGuardTest {
                 }
             }
         }
-        assertThat(violations).as("master table (bpmn_leave) SQL must have explicit deleted").isEmpty();
+        assertThat(violations).as("master table (bpmn_approval/bpmn_business_type) SQL must have explicit deleted").isEmpty();
     }
 
     /** bpmn 纯关系表清单（当前为空——引入时在此登记文件名；规则：物理 DELETE，不得出现 deleted） */
@@ -207,18 +208,19 @@ class ArchitectureGuardTest {
     /**
      * 方法命名白名单前缀：CRUD 动词集 find/save/update/pageList/list/delete/count；
      * 放行 getter/setter（get/set/is）与领域动作动词——system 版先例 reset/assign（重置密码/分配角色菜单），
-     * bpmn 域接续登记 cancel（撤销请假）/complete（办理任务）——非通用读写，保留领域原名。
+     * bpmn 域接续登记 cancel（撤销请假→撤销审批）/complete（办理任务）/
+     * create（发起审批，审批平台化 2026-10-08）/render（配置路由渲染）——非通用读写，保留领域原名。
      */
     private static final Pattern NAMING_PREFIX_OK =
-            Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|cancel|complete|get|set|is)\\w*");
+            Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|cancel|complete|create|render|get|set|is)\\w*");
 
     /** 语句起始关键字（throw new Xxx( / return foo( 会被误判为声明，前置排除） */
     private static final List<String> STATEMENT_KEYWORDS = List.of(
             "throw", "return", "new", "if", "else", "for", "while", "switch", "catch", "do", "try");
 
-    /** Controller 实体泛型返回：R<BpmnLeave> / R<PageResult<BpmnLeave>> / R<List<BpmnLeave>>（Vo 后缀不匹配） */
+    /** Controller 实体泛型返回：R<BpmnApproval> / R<PageResult<BpmnApproval>> / R<List<BpmnBusinessType>>（Vo 后缀不匹配） */
     private static final Pattern R_OF_ENTITY =
-            Pattern.compile("R<\\s*((?:PageResult|List)\\s*<\\s*)?BpmnLeave\\s*>");
+            Pattern.compile("R<\\s*((?:PageResult|List)\\s*<\\s*)?(BpmnApproval|BpmnBusinessType)\\s*>");
 
     /** 三方 Bean 拷贝工具 import（实体→VO 转换一律 convert 包原生 setter） */
     private static final Pattern THIRD_PARTY_BEAN_COPY =
@@ -250,7 +252,7 @@ class ArchitectureGuardTest {
     void controller_returns_vo_only() throws IOException {
         List<String> violations = scan(MAIN_JAVA.resolve("com/cloudai/bpmn/controller"), "*.java",
                 R_OF_ENTITY);
-        assertThat(violations).as("Controller 禁 DB 实体直出（R<BpmnLeave> 等），一律 XxxVo").isEmpty();
+        assertThat(violations).as("Controller 禁 DB 实体直出（R<BpmnApproval> 等），一律 XxxVo").isEmpty();
     }
 
     @Test

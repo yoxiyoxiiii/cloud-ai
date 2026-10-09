@@ -20,7 +20,7 @@ const emit = defineEmits<{
 }>()
 
 /** 公共 Viewer 按需分包（设计 D1 铁律）：defineAsyncComponent 引入 */
-const BpmnViewer = defineAsyncComponent(() => import('../../components/BpmnViewer.vue'))
+const BpmnViewer = defineAsyncComponent(() => import('../../../../components/bpmn/BpmnViewer.vue'))
 
 const loading = ref(false)
 const xml = ref('')

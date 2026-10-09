@@ -7,8 +7,9 @@
              xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI"
              targetNamespace="http://www.flowable.org/processdef">
 
-    <!-- 请假审批（阶段4 设计 D7）：单人审批线性流 + 排他网关二分支。
-         流程变量：leaveId/applyUser/approver/title（发起注入），approve(Boolean)（办理注入）。
+    <!-- 请假审批（审批平台化 2026-10-08 契约 §1）：单人审批线性流 + 排他网关二分支。
+         流程变量（平台规范四变量+透传）：approvalId/applyUser/approver/title（发起注入），
+         approve(Boolean)（办理注入）；原 leaveId 变量已废弃。
          结束态判定按 endActivityId：endApprove→已通过 / endReject→已拒绝。
          部署：classpath resources/processes 目录随启动自动部署（内容 hash 未变不重复部署）。 -->
     <process id="leave_approval" name="请假审批" isExecutable="true">

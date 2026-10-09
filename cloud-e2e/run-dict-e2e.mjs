@@ -6,7 +6,8 @@
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码
  * 测试数据（删净纪律最高优先）：
  * - 类型 dictKey / 项 value 全部 e2e 前缀+时间戳；内置种子零放行触碰——SEED_KEYS 四类型（user_status/common_status
- *   翻译契约 §0.3/§8.3 + bpmn_leave_status/bpmn_leave_type 契约 2026-10-07-bpmn-leave-api §6，is_builtin=1 自动落入 3015/3016 保护）；
+ *   翻译契约 §0.3/§8.3 + bpmn_approval_status/system_leave_type 契约 2026-10-08-approval-platform-api §7，is_builtin=1 自动落入 3015/3016 保护；
+ *   Round I 审批平台化：-bpmn_leave_status/-bpmn_leave_type 种子行已 DELETE，+bpmn_approval_status（审批状态 4 项）/+system_leave_type（请假类型 3 项），总数 4 不变）；
  *   D5b 内置保护：user_status 行徽标/禁用面 + 直连 3015/3016 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
  * - 结束清扫全部 e2e 前缀类型（含 D5 的 e2econs；先删项后删类型，3011 禁删约束）并断言左表无 e2e 残留、残留 ⊇ SEED_KEYS（宽松，不锁上限）
  * 核心断言（契约 §2 §3 §5；界面重构后字典项管理在弹框内——2026-10-07-dict-ui-list-dialog plan D4）：
@@ -22,8 +23,8 @@
  * - D4 删除约束：有项删类型 3011 toast 行保留 → 弹框内删净项 → 删类型（确认框含类型名）→ 类型行消失
  * - D5 消费端点（契约 2026-10-07-translation-api §2.1/§8.3）：造 e2econs 类型+3 项（sort 3/1/2，1 项停用）→
  *   消费断言停用过滤/长度 2/sort 升序/字段恰 value-label-sort；未知 dictKey → 200 data:[]；
- *   无 token 直调网关 401；种子 user_status/common_status 消费回归各恰 2 项 + bpmn_leave_status 恰 4 项
- *   （value "0"-"3" 文案断言，契约 bpmn-leave-api §6；CLEANUP 一并删 e2econs，种子零触碰）
+ *   无 token 直调网关 401；种子 user_status/common_status 消费回归各恰 2 项 + bpmn_approval_status 恰 4 项
+ *   （value "0"-"3" 文案断言，契约 2026-10-08-approval-platform-api §7；CLEANUP 一并删 e2econs，种子零触碰）
  */
 import { chromium } from 'playwright'
 import path from 'node:path'
@@ -53,10 +54,10 @@ const ITEM_LABEL_B = `E2E重复${stamp}` // 3012 探针（正常路径不落库�
 const CONS_KEY = `e2econs${stamp}` // D5 消费端点测试类型 dictKey（CLEANUP 随 e2e 前缀一并清扫）
 const CONS_NAME = `E2E消费${stamp}`
 
-/** 内置字典种子清单（E1 候选②宽松断言锚点）：后续加内置字典种子只改这两行——D1/CLEANUP 的 ⊇ 断言随之覆盖新键；
- *  互指义务：菜单侧种子清单见 run-menu-e2e.mjs / run-role-e2e.mjs 的 SEED_MENU_IDS（改种子段时 grep 各脚本） */
-const SEED_KEYS = ['user_status', 'common_status', 'bpmn_leave_status', 'bpmn_leave_type']
-const SEED_TYPE_NAMES = { user_status: '用户状态', common_status: '通用状态', bpmn_leave_status: '请假状态', bpmn_leave_type: '请假类型' }
+/** 内置字典种子清单（E1 候选②宽松断言锚点；Round I 审批平台化迁移后 4 键）：后续加内置字典种子只改这两行——
+ *  D1/CLEANUP 的 ⊇ 断言随之覆盖新键；互指义务：菜单侧种子清单见 run-menu-e2e.mjs / run-role-e2e.mjs 的 SEED_MENU_IDS（改种子段时 grep 各脚本） */
+const SEED_KEYS = ['user_status', 'common_status', 'bpmn_approval_status', 'system_leave_type']
+const SEED_TYPE_NAMES = { user_status: '用户状态', common_status: '通用状态', bpmn_approval_status: '审批状态', system_leave_type: '请假类型' }
 
 const DICT_PATH = '/system/dict'
 
@@ -250,13 +251,13 @@ try {
     await page.waitForURL(`**${DICT_PATH}`, { timeout: 15000 })
     await waitTableIdle(page)
     log(`  登录回跳: ${page.url()}`)
-    // 侧边菜单顺序（动态路由种子：系统管理 4 项 + 流程管理 3 项 + 工作台——B7 30 段菜单种子后新形态，E1 迁移）
+    // 侧边菜单顺序（动态路由种子：系统管理 4 项 + 流程管理 4 项 + 工作台——Round I 审批平台化 34 段菜单种子后新形态，E1 迁移）
     const items = page.locator('.el-menu .el-menu-item')
     const n = await items.count()
     const labels = []
     for (let i = 0; i < n; i++) labels.push((await items.nth(i).innerText()).trim())
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,我的申请,待办任务,流程定义,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→我的申请→待办任务→流程定义→工作台')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,请假申请,我的审批,待办任务,流程定义,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→请假申请→我的审批→待办任务→流程定义→工作台')
     const active = (await page.locator('.el-menu-item.is-active').innerText()).trim()
     assertEq(active, '字典管理', '/system/dict 下字典管理应高亮')
     const bc = await breadcrumbTexts(page)
@@ -277,7 +278,7 @@ try {
     log(`  类型表头(${tn}): ${JSON.stringify(headers)}`)
     assertEq(headers.join(','), '字典名称,字典键,状态,操作', `类型表头应为 4 列精确序，实际 ${JSON.stringify(headers)}`)
     // 类型表种子行（E1 候选②迁移）：跨页行数 ≥ SEED_KEYS.length 且 seenKeys ⊇ SEED_KEYS——
-    // scanSeedTypeRows 就地断言各行徽标与状态列「正常」、名称逐键锁定（bpmn 两类型契约 bpmn-leave-api §6）
+    // scanSeedTypeRows 就地断言各行徽标与状态列「正常」、名称逐键锁定（审批两类型契约 approval-platform-api §7）
     const seenKeys = await assertSeedSuperset('D1')
     const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
     log(`  类型表分页: ${leftTotal}`)
@@ -589,7 +590,7 @@ try {
   })
 
   // ================= D5 消费端点（契约 2026-10-07-translation-api §2.1，D4 后 CLEANUP 前） =================
-  await step('D5', '消费端点：e2econs 停用过滤 + sort 升序 + 字段恰 value/label/sort；未知键 200 空数组；无 token 直调网关 401；种子 user_status/common_status 各 2 项 + bpmn_leave_status 恰 4 项', async () => {
+  await step('D5', '消费端点：e2econs 停用过滤 + sort 升序 + 字段恰 value/label/sort；未知键 200 空数组；无 token 直调网关 401；种子 user_status/common_status 各 2 项 + bpmn_approval_status 恰 4 项', async () => {
     // ---- 5a. 造数（页内 fetch，admin 会话）：类型 + 3 项（sort 3/1/2 乱序，其中 1 项停用）----
     const made = await page.evaluate(async (args) => {
       const { dictName, dictKey } = args
@@ -678,20 +679,21 @@ try {
     assertEq(common.data[0].value, '0', 'common_status 首项 value 应为 "0"')
     assertEq(common.data[1].label, '停用', 'common_status 次项应为 停用（sort 2）')
     assertEq(common.data[1].value, '1', 'common_status 次项 value 应为 "1"')
-    // ---- 5f. bpmn_leave_status 消费回归（E1 补：契约 2026-10-07-bpmn-leave-api §6——恰 4 项，value "0"-"3" 文案断言）----
-    const bpmnStatus = await page.evaluate(async () => {
+    // ---- 5f. bpmn_approval_status 消费回归（E1 补→Round I 迁移：契约 2026-10-08-approval-platform-api §7——
+    //      恰 4 项，value "0"-"3" 文案断言；bpmn_leave_status 种子行已 DELETE，旧键消费面随迁移收敛到新键）----
+    const approvalStatus = await page.evaluate(async () => {
       const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
-      const res = await fetch('/api/system/dict/data/type/bpmn_leave_status', { headers: { Authorization: `Bearer ${token}` } })
+      const res = await fetch('/api/system/dict/data/type/bpmn_approval_status', { headers: { Authorization: `Bearer ${token}` } })
       return await res.json()
     })
-    log(`  bpmn_leave_status 种子消费: ${JSON.stringify(bpmnStatus)}`)
-    assertEq(bpmnStatus.code, 200, 'bpmn_leave_status 消费业务码应为 200')
-    assert(Array.isArray(bpmnStatus.data), `bpmn_leave_status data 应为数组，实际 ${typeof bpmnStatus.data}`)
-    assertEq(bpmnStatus.data.length, 4, `bpmn_leave_status 种子应恰 4 项，实际 ${JSON.stringify(bpmnStatus.data)}`)
-    const BPMN_STATUS_LABELS = { 0: '审批中', 1: '已通过', 2: '已拒绝', 3: '已撤销' }
+    log(`  bpmn_approval_status 种子消费: ${JSON.stringify(approvalStatus)}`)
+    assertEq(approvalStatus.code, 200, 'bpmn_approval_status 消费业务码应为 200')
+    assert(Array.isArray(approvalStatus.data), `bpmn_approval_status data 应为数组，实际 ${typeof approvalStatus.data}`)
+    assertEq(approvalStatus.data.length, 4, `bpmn_approval_status 种子应恰 4 项，实际 ${JSON.stringify(approvalStatus.data)}`)
+    const APPROVAL_STATUS_LABELS = { 0: '审批中', 1: '已通过', 2: '已拒绝', 3: '已撤销' }
     for (let i = 0; i < 4; i++) {
-      assertEq(bpmnStatus.data[i].value, String(i), `bpmn_leave_status 第 ${i + 1} 项 value 应为 "${i}"（sort 升序），实际 ${JSON.stringify(bpmnStatus.data[i])}`)
-      assertEq(bpmnStatus.data[i].label, BPMN_STATUS_LABELS[i], `bpmn_leave_status value "${i}" 文案应为 ${BPMN_STATUS_LABELS[i]}，实际 "${bpmnStatus.data[i].label}"`)
+      assertEq(approvalStatus.data[i].value, String(i), `bpmn_approval_status 第 ${i + 1} 项 value 应为 "${i}"（sort 升序），实际 ${JSON.stringify(approvalStatus.data[i])}`)
+      assertEq(approvalStatus.data[i].label, APPROVAL_STATUS_LABELS[i], `bpmn_approval_status value "${i}" 文案应为 ${APPROVAL_STATUS_LABELS[i]}，实际 "${approvalStatus.data[i].label}"`)
     }
   })
 
@@ -821,7 +823,7 @@ try {
   h.summary({
     extras: [
       `\n测试数据: 类型 ${TEST_KEY}（${TEST_NAME}→${TEST_NAME_V2}）/ 项 ${ITEM_VALUE}（${ITEM_LABEL}→${ITEM_LABEL_V2}）/ 3009 探针 ${TEST_NAME_DUP} / 3012 探针 ${ITEM_LABEL_B} / D5 消费类型 ${CONS_KEY}（${CONS_NAME}，含 3 项）——应均已在 D4/CLEANUP 删净或从未落库`,
-      'user_status/common_status/bpmn_leave_status/bpmn_leave_type 内置种子（SEED_KEYS 四类型）全程零触碰；admin 未做任何种子外数据写操作',
+      'user_status/common_status/bpmn_approval_status/system_leave_type 内置种子（SEED_KEYS 四类型）全程零触碰；admin 未做任何种子外数据写操作',
     ],
   })
   await browser.close()

@@ -58,6 +58,15 @@
          WHERE deleted = 0
     </select>
 
+    <!-- 审批人选项（契约 2026-10-08-approval-platform-api §5.5：仅启用账号 status=0；
+         沿 v1 含停用的宽松语义随迁移收紧；投影列不含 password） -->
+    <select id="listEnabledOptions" resultType="com.cloudai.system.entity.SysUser">
+        SELECT id, account, nickname
+          FROM sys_user
+         WHERE status = 0 AND deleted = 0
+         ORDER BY id ASC
+    </select>
+
     <insert id="save" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_user (account, nickname, password, status,
                               create_by, create_time, update_by, update_time)

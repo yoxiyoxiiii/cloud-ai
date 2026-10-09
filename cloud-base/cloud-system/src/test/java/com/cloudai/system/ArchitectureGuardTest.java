@@ -33,9 +33,10 @@ class ArchitectureGuardTest {
     /** mapper XML 单行 <if>：开标签后同行还有内容即违规（[^<\\r\\n] 兼容 CRLF 工作副本） */
     private static final Pattern SINGLE_LINE_IF = Pattern.compile("<if\\s+test=\"[^\"]*\">[^<\\r\\n]");
 
-    /** DDL 列定义行：缩进 + 列名 + 类型（PRIMARY/UNIQUE/KEY 等约束行不以类型关键字结尾开头，不匹配） */
+    /** DDL 列定义行：缩进 + 列名 + 类型（PRIMARY/UNIQUE/KEY 等约束行不以类型关键字结尾开头，不匹配）；
+     *  DATE 在 DATETIME 之后（交替顺序 + \b 回溯，sys_leave 的 start_date/end_date 日期列） */
     private static final Pattern DDL_COLUMN_LINE =
-            Pattern.compile("^\\s+\\w+\\s+(BIGINT|VARCHAR|TINYINT|INT|CHAR|DATETIME)\\b");
+            Pattern.compile("^\\s+\\w+\\s+(BIGINT|VARCHAR|TINYINT|INT|CHAR|DATETIME|DATE)\\b");
 
     /** 方法签名行：行首可见性修饰符且含 "("（赋值/控制流/注解行不以可见性修饰符开头） */
     private static final Pattern METHOD_SIGNATURE = Pattern.compile("^\\s*(public|private|protected)\\s+[^=;]*\\(");
@@ -88,7 +89,7 @@ class ArchitectureGuardTest {
     void master_table_sql_must_handle_deleted() throws IOException {
         // 主表（带逻辑删除列）的每条 select/update 语句必须出现 deleted。
         // 词边界匹配：sys_role_menu 不算 sys_role/sys_menu（关系表无逻辑删除）
-        Pattern masterTable = Pattern.compile("\\bsys_user\\b|\\bsys_role\\b|\\bsys_menu\\b");
+        Pattern masterTable = Pattern.compile("\\bsys_user\\b|\\bsys_role\\b|\\bsys_menu\\b|\\bsys_leave\\b");
         List<String> violations = new ArrayList<>();
         for (Path xml : listFiles(MAIN_MAPPER_XML, "*.xml")) {
             String content = Files.readString(xml, StandardCharsets.UTF_8);
@@ -102,7 +103,7 @@ class ArchitectureGuardTest {
                 }
             }
         }
-        assertThat(violations).as("master table (sys_user/sys_role/sys_menu) SQL must have explicit deleted").isEmpty();
+        assertThat(violations).as("master table (sys_user/sys_role/sys_menu/sys_leave) SQL must have explicit deleted").isEmpty();
     }
 
     @Test
@@ -203,18 +204,19 @@ class ArchitectureGuardTest {
 
     /**
      * 方法命名白名单前缀：CRUD 动词集 find/save/update/pageList/list/delete/count；
-     * 另放行 reset/assign（重置密码/分配角色菜单——领域动作动词，非通用读写，保留原名）与 getter/setter（get/set/is）。
+     * 另放行 reset/assign（重置密码/分配角色菜单——领域动作动词，非通用读写，保留原名）、
+     * cancel（请假/审批撤销，2026-10-08 审批平台化）与 getter/setter（get/set/is）。
      */
     private static final Pattern NAMING_PREFIX_OK =
-            Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|get|set|is)\\w*");
+            Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|cancel|get|set|is)\\w*");
 
     /** 语句起始关键字（throw new Xxx( / return foo( 会被误判为声明，前置排除） */
     private static final List<String> STATEMENT_KEYWORDS = List.of(
             "throw", "return", "new", "if", "else", "for", "while", "switch", "catch", "do", "try");
 
-    /** Controller 实体泛型返回：R<SysUser> / R<PageResult<SysRole>> / R<List<SysMenu>>（Vo 后缀不匹配） */
+    /** Controller 实体泛型返回：R<SysUser> / R<PageResult<SysRole>> / R<List<SysLeave>>（Vo 后缀不匹配） */
     private static final Pattern R_OF_ENTITY =
-            Pattern.compile("R<\\s*((?:PageResult|List)\\s*<\\s*)?Sys(?:User|Role|Menu)\\s*>");
+            Pattern.compile("R<\\s*((?:PageResult|List)\\s*<\\s*)?Sys(?:User|Role|Menu|Leave)\\s*>");
 
     /** 三方 Bean 拷贝工具 import（实体→VO 转换一律 convert 包原生 setter） */
     private static final Pattern THIRD_PARTY_BEAN_COPY =

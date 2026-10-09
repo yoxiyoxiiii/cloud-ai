@@ -1,7 +1,7 @@
 package com.cloudai.bpmn.controller;
 
 import com.cloudai.bpmn.dto.TaskCompleteRequest;
-import com.cloudai.bpmn.service.LeaveWorkflowService;
+import com.cloudai.bpmn.service.ApprovalWorkflowService;
 import com.cloudai.bpmn.service.TaskAppService;
 import com.cloudai.bpmn.vo.TaskVo;
 import com.cloudai.common.core.domain.LoginUser;
@@ -30,7 +30,7 @@ class TaskControllerTest {
     @Mock
     private TaskAppService taskAppService;
     @Mock
-    private LeaveWorkflowService workflowService;
+    private ApprovalWorkflowService workflowService;
     @InjectMocks
     private TaskController controller;
 

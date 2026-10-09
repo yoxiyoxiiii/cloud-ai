@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.SysLeaveMapper">
+
+    <!-- 逻辑删除/审计显式维护，语义说明见 SysUserMapper.xml 头注（同款约定）；
+         本表无删除端点（业务台账留档），deleteById 不存在——deleted 列仅为 BaseEntity 规范一致性 -->
+    <sql id="allColumns">
+        id, title, leave_type, start_date, end_date, reason, status, approval_id,
+        apply_user, approver, create_by, create_time, update_by, update_time, deleted
+    </sql>
+
+    <select id="findById" resultType="com.cloudai.system.entity.SysLeave">
+        SELECT <include refid="allColumns"/>
+          FROM sys_leave
+         WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT；
+         唯一过滤面（契约 §5.2 恒按申请人）命中 idx_apply_user(apply_user, deleted) -->
+    <select id="pageList" resultType="com.cloudai.system.entity.SysLeave">
+        SELECT <include refid="allColumns"/>
+          FROM sys_leave
+         WHERE apply_user = #{applyUser} AND deleted = 0
+         ORDER BY id DESC
+    </select>
+
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_leave (title, leave_type, start_date, end_date, reason, status,
+                               apply_user, approver, create_by, create_time, update_by, update_time)
+        VALUES (#{title}, #{leaveType}, #{startDate}, #{endDate}, #{reason}, #{status},
+                #{applyUser}, #{approver}, #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+    </insert>
+
+    <!-- 状态快照回写（纠偏/撤销共用）；update_by 匿名保留原值：<if> 判空，逗号前置 -->
+    <update id="updateStatusById">
+        UPDATE sys_leave
+           SET status = #{status},
+               update_time = #{updateTime}
+               <if test="updateBy != null">
+                   , update_by = #{updateBy}
+               </if>
+         WHERE id = #{id} AND deleted = 0
+    </update>
+
+    <!-- 发起审批回填审批单关联（saveLeave 同事务第二步写） -->
+    <update id="updateApprovalId">
+        UPDATE sys_leave
+           SET approval_id = #{approvalId},
+               update_time = #{updateTime}
+               <if test="updateBy != null">
+                   , update_by = #{updateBy}
+               </if>
+         WHERE id = #{id} AND deleted = 0
+    </update>
+</mapper>

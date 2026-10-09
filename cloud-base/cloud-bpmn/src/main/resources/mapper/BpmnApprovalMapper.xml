@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.bpmn.mapper.BpmnApprovalMapper">
+
+    <!-- 逻辑删除/审计显式维护，语义说明见 SysUserMapper.xml 头注（三胞胎同款约定）；
+         本表无删除端点（审批留档语义），deleteById 不存在——deleted 列仅为 BaseEntity 规范一致性，
+         行永不删 → uk_business(business_type, business_key) 无墓碑占键问题（跨终态生效，契约 §1） -->
+    <sql id="allColumns">
+        id, business_type, business_key, title, process_key, status,
+        apply_user, approver, process_instance_id,
+        create_by, create_time, update_by, update_time, deleted
+    </sql>
+
+    <select id="findById" resultType="com.cloudai.bpmn.entity.BpmnApproval">
+        SELECT <include refid="allColumns"/>
+          FROM bpmn_approval
+         WHERE id = #{id} AND deleted = 0
+    </select>
+
+    <!-- uk_business 唯一路径：发起查重（任意状态存在即拒 4015）与 /inner cancel 业务键定位共用；LIMIT 1 唯一键防御 -->
+    <select id="findByBusiness" resultType="com.cloudai.bpmn.entity.BpmnApproval">
+        SELECT <include refid="allColumns"/>
+          FROM bpmn_approval
+         WHERE business_type = #{businessType} AND business_key = #{businessKey} AND deleted = 0
+         LIMIT 1
+    </select>
+
+    <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT；
+         唯一过滤面（契约 §3.1 恒按申请人）命中 idx_apply_user(apply_user, deleted) -->
+    <select id="pageList" resultType="com.cloudai.bpmn.entity.BpmnApproval">
+        SELECT <include refid="allColumns"/>
+          FROM bpmn_approval
+         WHERE apply_user = #{applyUser} AND deleted = 0
+         ORDER BY id DESC
+    </select>
+
+    <!-- 批量按业务键查（/inner status-list 纠偏回源）：单批 ≤100 由调用方（system 纠偏分批）保证 -->
+    <select id="listByBusinessKeys" resultType="com.cloudai.bpmn.entity.BpmnApproval">
+        SELECT <include refid="allColumns"/>
+          FROM bpmn_approval
+         WHERE business_type = #{businessType} AND deleted = 0
+           AND business_key IN
+           <foreach collection="businessKeys" item="key" open="(" separator="," close=")">
+               #{key}
+           </foreach>
+    </select>
+
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO bpmn_approval (business_type, business_key, title, process_key, status,
+                                   apply_user, approver, process_instance_id,
+                                   create_by, create_time, update_by, update_time)
+        VALUES (#{businessType}, #{businessKey}, #{title}, #{processKey}, #{status},
+                #{applyUser}, #{approver}, #{processInstanceId},
+                #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+    </insert>
+
+    <!-- 状态回写：status + process_instance_id + 更新审计两值（发起回填/办理回写/撤销共用；
+         撤销传 processInstanceId=null 清空实例关联，契约 §3.1 processInstanceId 撤销后 null） -->
+    <update id="updateStatusById">
+        UPDATE bpmn_approval
+           SET status = #{status},
+               process_instance_id = #{processInstanceId},
+               update_time = #{updateTime}
+               <if test="updateBy != null">
+                   , update_by = #{updateBy}
+               </if>
+         WHERE id = #{id} AND deleted = 0
+    </update>
+</mapper>

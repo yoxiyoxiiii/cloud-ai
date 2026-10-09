@@ -253,43 +253,11 @@ export interface SaveDictDataPayload {
 /** 修改字典项入参（契约 2026-10-07-dict-api §7）：前端全量提交五写字段 + id（typeId 亦提交，§3.3） */
 export type UpdateDictDataPayload = SaveDictDataPayload & { id: string }
 
-/* ============ bpmn 域（契约 2026-10-07-bpmn-leave-api §10，additive） ============ */
+/* ============ bpmn 审批平台域（契约 2026-10-08-approval-platform-api §2/§3/§10，取代 bpmn-leave-api） ============ */
 
 /**
- * 请假单 VO（契约 §2.2）：列表与详情共用主体。
- * - leaveType/status 契约形态为字符串（对齐字典 value 与 Long→String 惯例，DB TINYINT 出参 String 化）
- * - 译文字段随 translation-api §8 体系（必返但值可 null）：展示走降级链
- *   （statusLabel ?? LEAVE_STATUS_MAP[status] ?? status；*Name ?? 原account），
- *   业务判断（tag 颜色/撤销按钮显隐）永远用原字段，原字段永不因翻译被覆盖（契约 §1 红线）
- * - 状态语义（字典 bpmn_leave_status）：0=审批中 1=已通过 2=已拒绝 3=已撤销；
- *   类型语义（字典 bpmn_leave_type）：1=事假 2=病假 3=年假
- */
-export interface LeaveVo {
-  id: string
-  title: string
-  leaveType: string
-  /** 类型译文（字典 bpmn_leave_type）；null 时降级 LEAVE_TYPE_MAP[leaveType] */
-  leaveTypeLabel: string | null
-  startDate: string
-  endDate: string
-  reason: string | null
-  status: string
-  /** 状态译文（字典 bpmn_leave_status）；null 时降级 LEAVE_STATUS_MAP[status] */
-  statusLabel: string | null
-  applyUser: string
-  /** 申请人昵称译文；null 时降级显示 applyUser */
-  applyUserName: string | null
-  approver: string
-  /** 审批人昵称译文；null 时降级显示 approver */
-  approverName: string | null
-  /** 流程实例 id；撤销后实例已删 → null */
-  processInstanceId: string | null
-  createTime: string
-  updateTime: string | null
-}
-
-/**
- * 审批时间线步骤 VO（契约 §2.3）：stepKey 枚举 'apply' 发起 / 'approval' 审批意见 / 'end' 流程结束；
+ * 审批时间线步骤 VO（契约 §3.2，字段与 v1 §2.3 逐字相同——语义零变化）：
+ * stepKey 枚举 'apply' 发起 / 'approval' 审批意见 / 'end' 流程结束；
  * steps 按时间升序；result 仅 end 步骤有值（已通过/已拒绝/已撤销，与 statusLabel 同文案）
  */
 export interface ApprovalStepVo {
@@ -303,43 +271,86 @@ export interface ApprovalStepVo {
   result: string | null
 }
 
-/** 请假单详情 VO（契约 §2.3）：leave 主体 + 时间线步骤（升序） */
-export interface LeaveDetailVo {
-  leave: LeaveVo
+/**
+ * 通用审批单 VO（契约 §3.1）：我的审批分页行 / 详情主体（id 即流程实例 businessKey）。
+ * - status 契约形态为字符串 "0"-"3"（对齐字典 value，DB TINYINT 出参 String 化）
+ * - 译文字段随 translation-api §8 体系（必返但值可 null）：展示走降级链
+ *   （statusLabel ?? APPROVAL_STATUS_MAP[status] ?? status；*Name ?? 原 account），
+ *   业务判断（tag 颜色/撤销按钮显隐）永远用原字段，原字段永不因翻译被覆盖（契约 §1 红线）
+ * - 状态语义（字典 bpmn_approval_status，契约 §7）：0=审批中 1=已通过 2=已拒绝 3=已撤销
+ */
+export interface ApprovalVo {
+  id: string
+  businessType: string
+  /** 业务类型名（配置表 join，契约 §9：必返非空，非字典翻译） */
+  businessTypeName: string
+  /** 业务单据标识（业务方主键字符串化，如请假单 id） */
+  businessKey: string
+  title: string
+  status: string
+  /** 状态译文（字典 bpmn_approval_status）；null 时降级 APPROVAL_STATUS_MAP[status] */
+  statusLabel: string | null
+  applyUser: string
+  /** 申请人昵称译文；null 时降级显示 applyUser */
+  applyUserName: string | null
+  approver: string
+  /** 审批人昵称译文；null 时降级显示 approver */
+  approverName: string | null
+  /** 详情跳转路径（detail_route 配置渲染；渲染失败/未配 null → 前端隐藏跳转，契约 §1） */
+  detailPath: string | null
+  /** 流程实例 id；撤销后实例已删 → null */
+  processInstanceId: string | null
+  createTime: string
+  /** 最近状态变更时间；未变更过为 null */
+  updateTime: string | null
+}
+
+/** 审批单详情 VO（契约 §3.2）：approval 主体 + steps 时间线（升序） */
+export interface ApprovalDetailVo {
+  approval: ApprovalVo
   steps: ApprovalStepVo[]
 }
 
 /**
- * 待办任务 VO（契约 §3.1）：数据源 ACT_RU_TASK + businessKey 回查请假单；
- * 不分页（个人待办量级小——契约现状）；leaveType/leaveTypeLabel 原值-译文成对
- * （契约 §3.1 实现期修正注记：@DictTrans 注解源字段补列，同 §2.2 成对模式）
+ * 待办任务 VO（契约 §2.1，通用化）：数据源 ACT_RU_TASK → businessKey（=approvalId）
+ * 回查 bpmn_approval 快照 + 配置表渲染（零业务表回查、零跨服务）；
+ * 不分页（个人待办量级小——契约现状）
  */
 export interface TaskVo {
+  /** 引擎任务 id（办理回传锚点） */
   taskId: string
-  leaveId: string
-  leaveTitle: string
-  /** 类型原值（@DictTrans 注解源字段，成对模式同 §2.2） */
-  leaveType: string
-  /** 类型译文（字典 bpmn_leave_type）；null 时降级 LEAVE_TYPE_MAP[leaveType] ?? leaveType */
-  leaveTypeLabel: string | null
+  /** 审批单 id（=流程实例 businessKey） */
+  approvalId: string
+  /** 业务类型编码（如 "leave"） */
+  businessType: string
+  /** 业务类型名（配置表，契约 §9：必返非空） */
+  businessTypeName: string
+  /** 单据标题快照 */
+  title: string
+  /** 详情跳转路径（渲染失败/未配 null → 前端隐藏跳转，契约 §1 待办跳转协议） */
+  detailPath: string | null
   applyUser: string
   /** 申请人昵称译文；null 时降级显示 applyUser */
   applyUserName: string | null
+  /** 任务创建时间 */
   createTime: string
 }
 
 /**
- * 已办任务 VO（契约 §3.2 = TaskVo 全字段 + 五字段）：approve 为 "true"/"false" 字符串
- * （办理结果，tag 颜色判断用原字段）；leaveStatus/leaveStatusLabel 原值-译文成对（注记补列）
+ * 已办任务 VO（契约 §2.2 = TaskVo 全字段 + 四字段）：approve 为 "true"/"false" 字符串
+ * （办理结果，tag 颜色判断用原字段）；approvalStatus 为审批单当前状态原值
  */
 export interface TaskDoneVo extends TaskVo {
+  /** 办理时间 */
   endTime: string | null
+  /** 办理结果 "true"/"false"（endActivityId 判定） */
   approve: string | null
+  /** 审批意见（ACT_HI_COMMENT 最新一条） */
   comment: string | null
-  /** 请假单当前状态原值（@DictTrans 注解源字段）；译文缺位时降级 LEAVE_STATUS_MAP[leaveStatus] */
-  leaveStatus: string
-  /** 请假单当前状态译文 */
-  leaveStatusLabel: string | null
+  /** 审批单当前状态原值（@DictTrans 源字段）；译文缺位时降级 APPROVAL_STATUS_MAP[approvalStatus] */
+  approvalStatus: string
+  /** 审批单当前状态译文（字典 bpmn_approval_status） */
+  approvalStatusLabel: string | null
 }
 
 /**
@@ -355,8 +366,8 @@ export interface DefinitionVo {
 }
 
 /**
- * 审批人投影 VO（契约 §2.5）：id/account/nickname 三字段，源自 system /inner/user/all 直通；
- * 含停用账号（UserEntry 无状态字段——宽松语义记档，发起侧仅校验存在性 4004）
+ * 审批人投影 VO（契约 §5.5）：id/account/nickname 三字段，system 本库直查；
+ * **仅启用账号**——v1 含停用的宽松语义随迁移收紧（契约 §0 变更点口径）
  */
 export interface UserOptionVo {
   id: string
@@ -364,18 +375,18 @@ export interface UserOptionVo {
   nickname: string
 }
 
-/** 发起请假入参（契约 §2.1）：leaveType 为字典 bpmn_leave_type 的 value（"1"-"3"）；reason 可空 */
+/** 发起请假入参（契约 §5.1，字段与 v1 §2.1 逐字相同）：leaveType 为字典 system_leave_type 的 value（"1"-"3"）；reason 可空 */
 export interface LeaveCreatePayload {
   title: string
   leaveType: string
   startDate: string
   endDate: string
   reason?: string
-  /** 审批人 account（须在用户投影内，否则 4004） */
+  /** 审批人 account（须为启用账号，否则 3023） */
   approver: string
 }
 
-/** 办理任务入参（契约 §3.3）：approve 为 "true"/"false" 字符串；comment 可空（同意/拒绝均不强制） */
+/** 办理任务入参（契约 §2.3）：approve 为 "true"/"false" 字符串；comment 可空（同意/拒绝均不强制） */
 export interface TaskCompletePayload {
   taskId: string
   approve: string
@@ -383,21 +394,63 @@ export interface TaskCompletePayload {
 }
 
 /**
- * 请假状态本地降级映射（契约 §7 降级链样板 / §10）：status 值 → 中文文案，
+ * 审批状态本地降级映射（契约 §9 降级链 / §10，字典 bpmn_approval_status）：status 值 → 中文文案，
  * 仅作 statusLabel 缺位时的展示兜底（防翻译链路抖动）；tag 颜色映射用原 status 字段
  */
-export const LEAVE_STATUS_MAP: Record<string, string> = {
+export const APPROVAL_STATUS_MAP: Record<string, string> = {
   '0': '审批中',
   '1': '已通过',
   '2': '已拒绝',
   '3': '已撤销',
 }
 
-/** 请假类型本地降级映射（契约 §7 / §10）：leaveType 值 → 中文文案，leaveTypeLabel 缺位兜底 */
+/** 请假类型本地降级映射（契约 §9 / §10，字典 system_leave_type）：leaveType 值 → 中文文案，leaveTypeLabel 缺位兜底 */
 export const LEAVE_TYPE_MAP: Record<string, string> = {
   '1': '事假',
   '2': '病假',
   '3': '年假',
+}
+
+/* ============ system 请假域（契约 §5，自 v1 §2 迁移 cloud-system） ============ */
+
+/**
+ * 请假单 VO（契约 §5.2）：列表与详情共用主体（恒按当前登录人，id 倒序）。
+ * - leaveType/status 契约形态为字符串；status 为纠偏后实时值（真相源 bpmn_approval，契约 §1）
+ * - 译文字段随 translation-api §8 体系（必返但值可 null）：展示走降级链
+ *   （statusLabel ?? APPROVAL_STATUS_MAP[status] ?? status；leaveTypeLabel ?? LEAVE_TYPE_MAP；
+ *   *Name ?? 原 account），业务判断（tag 颜色/撤销按钮显隐）永远用原字段（契约 §1 红线）
+ * - 状态语义（字典 bpmn_approval_status，与审批单同值域）：0=审批中 1=已通过 2=已拒绝 3=已撤销；
+ *   类型语义（字典 system_leave_type）：1=事假 2=病假 3=年假
+ */
+export interface SysLeaveVo {
+  id: string
+  /** 审批单 id（撤销后仍在；发起失败无 → null）；详情弹窗经它拼装平台时间线+图（契约 §5.3） */
+  approvalId: string | null
+  title: string
+  leaveType: string
+  /** 类型译文（字典 system_leave_type）；null 时降级 LEAVE_TYPE_MAP[leaveType] */
+  leaveTypeLabel: string | null
+  startDate: string
+  endDate: string
+  reason: string | null
+  status: string
+  /** 状态译文（字典 bpmn_approval_status）；null 时降级 APPROVAL_STATUS_MAP[status] */
+  statusLabel: string | null
+  applyUser: string
+  /** 申请人昵称译文；null 时降级显示 applyUser */
+  applyUserName: string | null
+  approver: string
+  /** 审批人昵称译文；null 时降级显示 approver */
+  approverName: string | null
+  createTime: string
+}
+
+/**
+ * 请假单详情 VO（契约 §5.3）：仅 leave 主体——**不含时间线/图**，
+ * 前端另调平台 §3.2/§3.4 按 approvalId 拼装（详情纠偏同 5.2，Feign 失败抛 3022 诚实报错）
+ */
+export interface SysLeaveDetailVo {
+  leave: SysLeaveVo
 }
 
 /* ==== bpmn 图渲染/设计器增量（契约 2026-10-08-bpmn-diagram-designer-api §7，additive） ==== */
@@ -427,14 +480,15 @@ export interface DeployResultVo {
 }
 
 /**
- * 请假单图数据 VO（契约 §3）：GET /bpmn/leave/{id}/diagram 出参。
- * 三态矩阵（契约 §3 表，前端主高亮渲染权威）：
+ * 审批单图数据 VO（契约 §3.4，取代 diagram 契约 §3 LeaveDiagramVo——字段与三态矩阵零变化）：
+ * GET /bpmn/approval/{id}/diagram 出参（businessKey 历史锚点对三态均有痕）。
+ * 三态矩阵（diagram 契约 §3 表沿承，前端主高亮渲染权威）：
  * - 0 审批中：activeActivityIds=当前节点、endActivityId=null → 主高亮 active 节点
  * - 1 已通过 / 2 已拒绝：active=[]、endActivityId=endApprove/endReject → 主高亮 end 节点 + 路径浅色
  * - 3 已撤销：active=[]、endActivityId=null → 无主高亮，仅路径浅色
  * definitionId=null 为历史实例缺失防御态 → 前端隐藏图区（不设「无图」错误码）
  */
-export interface LeaveDiagramVo {
+export interface ApprovalDiagramVo {
   /** 实例所用定义 id（key:version:generated 形态，冒号合法无需编码）；防御态 null */
   definitionId: string | null
   processInstanceId: string | null

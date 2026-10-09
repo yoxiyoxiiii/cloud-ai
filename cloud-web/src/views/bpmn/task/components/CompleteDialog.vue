@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
- * 办理任务弹窗（计划 F3 / 设计 D10）：radio 同意/拒绝 + 意见 textarea
- * 提交 POST /bpmn/task/complete（契约 §3.3）：approve 为 "true"/"false" 字符串；
+ * 办理任务弹窗（设计 D9 通用化改造）：radio 同意/拒绝 + 意见 textarea
+ * 提交 POST /bpmn/task/complete（契约 §2.3）：approve 为 "true"/"false" 字符串；
  * comment 同意/拒绝均可空（宽松语义记档——契约原文），≤200 长度兜底对齐 @Size≤200
+ * 单据上下文展示通用字段（title + businessTypeName，契约 §2.1）
  */
 import { reactive, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
@@ -12,7 +13,7 @@ import type { TaskVo } from '../../../../types/api'
 
 interface Props {
   modelValue: boolean
-  /** 待办行数据（taskId 提交锚点 + leaveTitle 上下文展示） */
+  /** 待办行数据（taskId 提交锚点 + title/businessTypeName 上下文展示） */
   task?: TaskVo
 }
 
@@ -73,7 +74,7 @@ async function handleSubmit(): Promise<void> {
     emit('success')
     emit('update:modelValue', false)
   } catch {
-    // 拦截器已统一 toast（如 4005 任务已被办理）
+    // 拦截器已统一 toast（如 4016 任务已被办理）
   } finally {
     loading.value = false
   }
@@ -88,8 +89,10 @@ async function handleSubmit(): Promise<void> {
     @update:model-value="(value: boolean) => emit('update:modelValue', value)"
   >
     <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
-      <el-form-item label="请假单">
-        <span>{{ task?.leaveTitle ?? '-' }}</span>
+      <el-form-item label="申请单">
+        <span>{{ task?.title ?? '-' }}</span>
+        <!-- 配置表 join 必返非空（契约 §9），无降级链 -->
+        <el-tag v-if="task" class="task-type-tag" size="small" type="info">{{ task.businessTypeName }}</el-tag>
       </el-form-item>
       <el-form-item label="申请人">
         <span>{{ task ? task.applyUserName ?? task.applyUser : '-' }}</span>
@@ -118,3 +121,10 @@ async function handleSubmit(): Promise<void> {
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+/* 单据标题与业务类型 tag 并置间距 */
+.task-type-tag {
+  margin-left: 8px;
+}
+</style>

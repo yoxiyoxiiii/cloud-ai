@@ -100,6 +100,30 @@ CREATE TABLE sys_dict_data (
     UNIQUE KEY uk_type_value (dict_type_id, value)
 ) ENGINE = InnoDB COMMENT = '字典项表';
 
+-- 请假单（审批平台化：业务台账迁 cloud-system，契约 2026-10-08-approval-platform-api §5/设计 D4）
+-- 索引设计（沿 bpmn_leave 先例）：idx_apply_user(apply_user, deleted)：唯一过滤面「我的请假」
+--   WHERE apply_user=? AND deleted=0 ORDER BY id DESC；uk_ 无（title 可重名，同一业务单据唯一审批
+--   由平台侧 bpmn_approval.uk_business 保证——本表 approval_id 发起 Feign 成功后回填，一单一审批自然成立）。
+CREATE TABLE sys_leave (
+    id           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '请假单ID（即平台 bpmn_approval.business_key）',
+    title        VARCHAR(100) NOT NULL COMMENT '请假标题（e2e 前缀锚点）',
+    leave_type   TINYINT      NOT NULL COMMENT '请假类型：1事假 2病假 3年假（字典 system_leave_type）',
+    start_date   DATE         NOT NULL COMMENT '开始日期',
+    end_date     DATE         NOT NULL COMMENT '结束日期',
+    reason       VARCHAR(500) NULL     COMMENT '事由说明',
+    status       TINYINT      NOT NULL DEFAULT 0 COMMENT '状态：0审批中 1已通过 2已拒绝 3已撤销（缓存快照，真相源=bpmn_approval.status，读时纠偏；字典 bpmn_approval_status）',
+    approval_id  BIGINT       NULL     COMMENT '审批单ID（bpmn_approval.id，发起 Feign 成功后回填；撤销后仍保留）',
+    apply_user   VARCHAR(30)  NOT NULL COMMENT '申请人账号（sys_user.account）',
+    approver     VARCHAR(30)  NOT NULL COMMENT '审批人账号（发起时指定，引擎 assignee）',
+    create_by    VARCHAR(30)  NULL     COMMENT '创建人',
+    create_time  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_by    VARCHAR(30)  NULL     COMMENT '更新人',
+    update_time  DATETIME     NULL     COMMENT '更新时间',
+    deleted      TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常 1已删',
+    PRIMARY KEY (id),
+    KEY idx_apply_user (apply_user, deleted)
+) ENGINE = InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT = '请假单（cloud-system 业务台账；审批编排经 cloud-bpmn /inner/approval）';
+
 CREATE TABLE sys_user_role (
     id          BIGINT   NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     user_id     BIGINT   NOT NULL COMMENT '用户ID',
@@ -151,17 +175,20 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (141, 14, '字典新增', 'system:dict:add',    'F', '',             '',           1, 1, NOW()),
 (142, 14, '字典修改', 'system:dict:edit',   'F', '',             '',           2, 1, NOW()),
 (143, 14, '字典删除', 'system:dict:remove', 'F', '',             '',           3, 1, NOW()),
--- 流程管理菜单（30 段 31 行；与增量脚本 2026-10-07-bpmn-menus.sql / 2026-10-08-bpmn-deploy-menu.sql
--- 语义等价——契约 2026-10-07-bpmn-leave-api §9 + 2026-10-08-bpmn-diagram-designer-api §5；
+-- 流程管理菜单（30 段 10 行；与增量脚本 2026-10-07-bpmn-menus.sql / 2026-10-08-bpmn-deploy-menu.sql /
+-- 2026-10-08-approval-platform.sql 语义等价——契约 2026-10-08-approval-platform-api §8：
+-- 31 段改造为 system 请假域（请假申请/system:leave:*，path /system/leave），34/341 新增平台我的审批；
 -- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定）
 (30,  0,  '流程管理', '',                    'M', '',               'Tickets',   3, 1, NOW()),
-(31,  30, '我的申请', 'bpmn:leave:list',     'C', '/bpmn/leave',     'Document',  1, 1, NOW()),
-(32,  30, '待办任务', 'bpmn:task:list',      'C', '/bpmn/task',      'Bell',      2, 1, NOW()),
-(33,  30, '流程定义', 'bpmn:definition:list','C', '/bpmn/definition','Files',     3, 1, NOW()),
-(311, 31, '发起申请', 'bpmn:leave:add',      'F', '', '', 1, 1, NOW()),
-(312, 31, '撤销申请', 'bpmn:leave:cancel',   'F', '', '', 2, 1, NOW()),
+(31,  30, '请假申请', 'system:leave:list',   'C', '/system/leave',   'Document',  1, 1, NOW()),
+(34,  30, '我的审批', 'bpmn:approval:list',  'C', '/bpmn/approval',  'Document',  2, 1, NOW()),
+(32,  30, '待办任务', 'bpmn:task:list',      'C', '/bpmn/task',      'Bell',      3, 1, NOW()),
+(33,  30, '流程定义', 'bpmn:definition:list','C', '/bpmn/definition','Files',     4, 1, NOW()),
+(311, 31, '发起申请', 'system:leave:add',    'F', '', '', 1, 1, NOW()),
+(312, 31, '撤销申请', 'system:leave:cancel', 'F', '', '', 2, 1, NOW()),
 (321, 32, '办理任务', 'bpmn:task:complete',  'F', '', '', 1, 1, NOW()),
-(331, 33, '部署流程', 'bpmn:definition:deploy', 'F', '', '', 1, 1, NOW());
+(331, 33, '部署流程', 'bpmn:definition:deploy', 'F', '', '', 1, 1, NOW()),
+(341, 34, '撤销审批', 'bpmn:approval:cancel','F', '', '', 1, 1, NOW());
 
 -- admin 账号（密码 admin123）
 INSERT INTO sys_user (id, account, nickname, password, is_builtin, create_time) VALUES
@@ -190,18 +217,19 @@ INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_buil
 (3, 2, '正常', '0', 1, 0, 1, 'system', NOW(), 'system', NOW()),
 (4, 2, '停用', '1', 2, 0, 1, 'system', NOW(), 'system', NOW());
 
--- 内置字典种子 bpmn_leave_status/bpmn_leave_type（契约 2026-10-07-bpmn-leave-api §6；与增量脚本
--- 2026-10-07-bpmn-leave-seed.sql 语义等价；基线显式 id=3/4 与 5-11 仅为重建环境自洽，id 非契约内容——
--- 存量环境 AUTO_INCREMENT 分配，内置保护按 is_builtin 判定与 id 无关）
+-- 内置字典种子 bpmn_approval_status/system_leave_type（审批平台化迁移，契约 2026-10-08-approval-platform-api §7；
+-- 与增量脚本 2026-10-08-approval-platform.sql 语义等价；基线 dict_type id=5/6 头注释 id 非契约内容——
+-- 存量环境 AUTO_INCREMENT 分配，内置保护按 is_builtin 判定与 id 无关。原 bpmn_leave_status/bpmn_leave_type
+-- 随请假域废弃删除（状态字典平台共用 bpmn_approval_status，类型字典键迁 system_leave_type））
 INSERT INTO sys_dict_type (id, dict_name, dict_key, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
-(3, '请假状态', 'bpmn_leave_status', 0, 1, 'system', NOW(), 'system', NOW()),
-(4, '请假类型', 'bpmn_leave_type',   0, 1, 'system', NOW(), 'system', NOW());
+(5, '审批状态', 'bpmn_approval_status', 0, 1, 'system', NOW(), 'system', NOW()),
+(6, '请假类型', 'system_leave_type',    0, 1, 'system', NOW(), 'system', NOW());
 
 INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
-(5,  3, '审批中', '0', 1, 0, 1, 'system', NOW(), 'system', NOW()),
-(6,  3, '已通过', '1', 2, 0, 1, 'system', NOW(), 'system', NOW()),
-(7,  3, '已拒绝', '2', 3, 0, 1, 'system', NOW(), 'system', NOW()),
-(8,  3, '已撤销', '3', 4, 0, 1, 'system', NOW(), 'system', NOW()),
-(9,  4, '事假',   '1', 1, 0, 1, 'system', NOW(), 'system', NOW()),
-(10, 4, '病假',   '2', 2, 0, 1, 'system', NOW(), 'system', NOW()),
-(11, 4, '年假',   '3', 3, 0, 1, 'system', NOW(), 'system', NOW());
+(5,  5, '审批中', '0', 1, 0, 1, 'system', NOW(), 'system', NOW()),
+(6,  5, '已通过', '1', 2, 0, 1, 'system', NOW(), 'system', NOW()),
+(7,  5, '已拒绝', '2', 3, 0, 1, 'system', NOW(), 'system', NOW()),
+(8,  5, '已撤销', '3', 4, 0, 1, 'system', NOW(), 'system', NOW()),
+(9,  6, '事假',   '1', 1, 0, 1, 'system', NOW(), 'system', NOW()),
+(10, 6, '病假',   '2', 2, 0, 1, 'system', NOW(), 'system', NOW()),
+(11, 6, '年假',   '3', 3, 0, 1, 'system', NOW(), 'system', NOW());

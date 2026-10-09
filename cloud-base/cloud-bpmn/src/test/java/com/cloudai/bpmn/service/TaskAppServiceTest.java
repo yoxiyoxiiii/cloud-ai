@@ -1,8 +1,9 @@
 package com.cloudai.bpmn.service;
 
-import com.cloudai.bpmn.entity.BpmnLeave;
-import com.cloudai.bpmn.entity.BpmnLeave.StatusEnum;
-import com.cloudai.bpmn.mapper.BpmnLeaveMapper;
+import com.cloudai.bpmn.entity.BpmnApproval;
+import com.cloudai.bpmn.entity.BpmnApproval.StatusEnum;
+import com.cloudai.bpmn.entity.BpmnBusinessType;
+import com.cloudai.bpmn.mapper.BpmnApprovalMapper;
 import com.cloudai.bpmn.vo.TaskDoneVo;
 import com.cloudai.bpmn.vo.TaskVo;
 import org.flowable.engine.HistoryService;
@@ -19,7 +20,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.time.LocalDate;
 import java.util.Date;
 import java.util.List;
 
@@ -30,7 +30,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 任务列表单测（契约 §3.1/§3.2：待办/已办拼装 + businessKey 回查 + endActivityId 结果判定 + 最新意见）。
+ * 任务列表单测（契约 2026-10-08-approval-platform-api §2.1/§2.2 通用化：
+ * businessKey 回查 bpmn_approval 快照 + 配置表渲染 + endActivityId 结果判定 + 最新意见 + 键异常防御）。
  */
 @ExtendWith(MockitoExtension.class)
 class TaskAppServiceTest {
@@ -40,12 +41,14 @@ class TaskAppServiceTest {
     @Mock
     private HistoryService historyService;
     @Mock
-    private BpmnLeaveMapper leaveMapper;
+    private BpmnApprovalMapper approvalMapper;
+    @Mock
+    private BusinessTypeRegistry businessTypeRegistry;
     @InjectMocks
     private TaskAppService service;
 
     @Test
-    void listTodo_mapsEngineTaskWithLeaveRow() {
+    void listTodo_mapsEngineTaskWithApprovalSnapshot() {
         TaskQuery query = mock(TaskQuery.class);
         when(taskService.createTaskQuery()).thenReturn(query);
         when(query.taskAssignee("admin")).thenReturn(query);
@@ -57,16 +60,20 @@ class TaskAppServiceTest {
         lenient().when(task.getCreateTime()).thenReturn(new Date());
         when(query.list()).thenReturn(List.of(task));
         stubHistoricInstance("pid-1", "5", "endApprove", null);
-        when(leaveMapper.findById(5L)).thenReturn(leave(StatusEnum.APPROVING.getCode()));
+        when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
+        stubConfig();
 
         List<TaskVo> todos = service.listTodo("admin");
 
         assertThat(todos).hasSize(1);
         TaskVo vo = todos.get(0);
         assertThat(vo.getTaskId()).isEqualTo("t-1");
-        assertThat(vo.getLeaveId()).isEqualTo("5");
-        assertThat(vo.getLeaveTitle()).isEqualTo("annual leave");
-        assertThat(vo.getLeaveType()).isEqualTo("3");
+        assertThat(vo.getApprovalId()).isEqualTo("5");
+        assertThat(vo.getBusinessType()).isEqualTo("leave");
+        assertThat(vo.getBusinessTypeName()).isEqualTo("Leave");
+        assertThat(vo.getTitle()).isEqualTo("annual leave");
+        // 渲染源=审批单 id（5），非 businessKey（7）——契约 §1 域语言
+        assertThat(vo.getDetailPath()).isEqualTo("/system/leave?approval=5");
         assertThat(vo.getApplyUser()).isEqualTo("userA");
         assertThat(vo.getCreateTime()).isNotBlank();
     }
@@ -86,7 +93,48 @@ class TaskAppServiceTest {
         List<TaskVo> todos = service.listTodo("admin");
 
         assertThat(todos).isEmpty();
-        verify(leaveMapper, org.mockito.Mockito.never()).findById(org.mockito.ArgumentMatchers.anyLong());
+        verify(approvalMapper, org.mockito.Mockito.never()).findById(org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void listTodo_skipsWhenBusinessKeyNonNumeric() {
+        TaskQuery query = mock(TaskQuery.class);
+        when(taskService.createTaskQuery()).thenReturn(query);
+        when(query.taskAssignee("admin")).thenReturn(query);
+        when(query.orderByTaskCreateTime()).thenReturn(query);
+        when(query.desc()).thenReturn(query);
+        Task task = mock(Task.class);
+        lenient().when(task.getProcessInstanceId()).thenReturn("pid-1");
+        when(query.list()).thenReturn(List.of(task));
+        stubHistoricInstance("pid-1", "external-key", null, null);
+
+        List<TaskVo> todos = service.listTodo("admin");
+
+        assertThat(todos).isEmpty();
+        verify(approvalMapper, org.mockito.Mockito.never()).findById(org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void listTodo_keepsRowWithNullConfigFieldsWhenTypeMissing() {
+        TaskQuery query = mock(TaskQuery.class);
+        when(taskService.createTaskQuery()).thenReturn(query);
+        when(query.taskAssignee("admin")).thenReturn(query);
+        when(query.orderByTaskCreateTime()).thenReturn(query);
+        when(query.desc()).thenReturn(query);
+        Task task = mock(Task.class);
+        lenient().when(task.getId()).thenReturn("t-1");
+        lenient().when(task.getProcessInstanceId()).thenReturn("pid-1");
+        lenient().when(task.getCreateTime()).thenReturn(new Date());
+        when(query.list()).thenReturn(List.of(task));
+        stubHistoricInstance("pid-1", "5", "endApprove", null);
+        when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
+        when(businessTypeRegistry.findByTypeCodeOrNull("leave")).thenReturn(null);
+
+        List<TaskVo> todos = service.listTodo("admin");
+
+        assertThat(todos).hasSize(1);
+        assertThat(todos.get(0).getBusinessTypeName()).isNull();
+        assertThat(todos.get(0).getDetailPath()).isNull();
     }
 
     @Test
@@ -107,17 +155,20 @@ class TaskAppServiceTest {
         Comment comment = mock(Comment.class);
         lenient().when(comment.getFullMessage()).thenReturn("agree");
         when(taskService.getProcessInstanceComments("pid-1")).thenReturn(List.of(comment));
-        when(leaveMapper.findById(5L)).thenReturn(leave(StatusEnum.APPROVED.getCode()));
+        when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVED.getCode()));
+        stubConfig();
 
         List<TaskDoneVo> done = service.listDone("admin");
 
         assertThat(done).hasSize(1);
         TaskDoneVo vo = done.get(0);
         assertThat(vo.getTaskId()).isEqualTo("t-1");
-        assertThat(vo.getLeaveId()).isEqualTo("5");
+        assertThat(vo.getApprovalId()).isEqualTo("5");
+        assertThat(vo.getBusinessTypeName()).isEqualTo("Leave");
+        assertThat(vo.getDetailPath()).isEqualTo("/system/leave?approval=5");
         assertThat(vo.getApprove()).isEqualTo("true");
         assertThat(vo.getComment()).isEqualTo("agree");
-        assertThat(vo.getLeaveStatus()).isEqualTo("1");
+        assertThat(vo.getApprovalStatus()).isEqualTo("1");
         assertThat(vo.getEndTime()).isNotBlank();
     }
 
@@ -137,14 +188,15 @@ class TaskAppServiceTest {
         when(query.list()).thenReturn(List.of(task));
         stubHistoricInstance("pid-2", "5", "endReject", new Date());
         when(taskService.getProcessInstanceComments("pid-2")).thenReturn(List.of());
-        when(leaveMapper.findById(5L)).thenReturn(leave(StatusEnum.REJECTED.getCode()));
+        when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.REJECTED.getCode()));
+        stubConfig();
 
         List<TaskDoneVo> done = service.listDone("admin");
 
         assertThat(done).hasSize(1);
         assertThat(done.get(0).getApprove()).isEqualTo("false");
         assertThat(done.get(0).getComment()).isNull();
-        assertThat(done.get(0).getLeaveStatus()).isEqualTo("2");
+        assertThat(done.get(0).getApprovalStatus()).isEqualTo("2");
     }
 
     // ---- 脚手架 ----
@@ -163,17 +215,28 @@ class TaskAppServiceTest {
         lenient().when(hq.singleResult()).thenReturn(instance);
     }
 
-    private BpmnLeave leave(Integer status) {
-        BpmnLeave leave = new BpmnLeave();
-        leave.setId(5L);
-        leave.setTitle("annual leave");
-        leave.setLeaveType(BpmnLeave.TypeEnum.ANNUAL.getCode());
-        leave.setStartDate(LocalDate.of(2026, 10, 8));
-        leave.setEndDate(LocalDate.of(2026, 10, 9));
-        leave.setStatus(status);
-        leave.setApplyUser("userA");
-        leave.setApprover("admin");
-        leave.setProcessInstanceId("pid-1");
-        return leave;
+    private BpmnApproval approval(Integer status) {
+        BpmnApproval approval = new BpmnApproval();
+        approval.setId(5L);
+        approval.setBusinessType("leave");
+        approval.setBusinessKey("7");
+        approval.setTitle("annual leave");
+        approval.setProcessKey("leave_approval");
+        approval.setStatus(status);
+        approval.setApplyUser("userA");
+        approval.setApprover("admin");
+        approval.setProcessInstanceId("pid-1");
+        return approval;
+    }
+
+    private void stubConfig() {
+        BpmnBusinessType config = new BpmnBusinessType();
+        config.setTypeCode("leave");
+        config.setTypeName("Leave");
+        config.setProcessKey("leave_approval");
+        config.setDetailRoute("/system/leave?approval={businessKey}");
+        when(businessTypeRegistry.findByTypeCodeOrNull("leave")).thenReturn(config);
+        lenient().when(businessTypeRegistry.renderDetailPath("/system/leave?approval={businessKey}", "5"))
+                .thenReturn("/system/leave?approval=5");
     }
 }

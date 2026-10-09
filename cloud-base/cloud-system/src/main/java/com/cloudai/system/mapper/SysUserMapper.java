@@ -31,6 +31,9 @@ public interface SysUserMapper {
     /** 翻译回源全量：未删用户 id/account/nickname 投影（小表全扫取舍见翻译设计 §6） */
     List<SysUser> listTransAll();
 
+    /** 审批人选项：仅启用账号 id/account/nickname 投影（契约 2026-10-08-approval-platform-api §5.5） */
+    List<SysUser> listEnabledOptions();
+
     int save(SysUser user);
 
     /** 动态更新（仅非空列，等价原 updateById NOT_NULL 策略） */

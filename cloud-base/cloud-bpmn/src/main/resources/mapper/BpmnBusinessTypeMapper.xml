@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.bpmn.mapper.BpmnBusinessTypeMapper">
+
+    <!-- 只读配置表（DB 配置先行，管理界面后置移交）；查询显式 deleted=0，无写语句 -->
+    <sql id="allColumns">
+        id, type_code, type_name, process_key, detail_route,
+        create_by, create_time, update_by, update_time, deleted
+    </sql>
+
+    <!-- uk_type_code 唯一路径；LIMIT 1 唯一键防御 -->
+    <select id="findByTypeCode" resultType="com.cloudai.bpmn.entity.BpmnBusinessType">
+        SELECT <include refid="allColumns"/>
+          FROM bpmn_business_type
+         WHERE type_code = #{typeCode} AND deleted = 0
+         LIMIT 1
+    </select>
+</mapper>

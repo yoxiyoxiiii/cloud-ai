@@ -1,7 +1,7 @@
 package com.cloudai.bpmn.controller;
 
 import com.cloudai.bpmn.dto.TaskCompleteRequest;
-import com.cloudai.bpmn.service.LeaveWorkflowService;
+import com.cloudai.bpmn.service.ApprovalWorkflowService;
 import com.cloudai.bpmn.service.TaskAppService;
 import com.cloudai.bpmn.vo.TaskDoneVo;
 import com.cloudai.bpmn.vo.TaskVo;
@@ -28,7 +28,7 @@ import java.util.List;
 public class TaskController {
 
     private final TaskAppService taskAppService;
-    private final LeaveWorkflowService workflowService;
+    private final ApprovalWorkflowService workflowService;
 
     /** 待办列表（ACT_RU_TASK，任务创建时间倒序） */
     @GetMapping("/todo")
@@ -46,7 +46,7 @@ public class TaskController {
         return R.ok(done);
     }
 
-    /** 办理任务（意见落 ACT_HI_COMMENT + complete(approve) + 终态回写，同一事务） */
+    /** 办理任务（意见落 ACT_HI_COMMENT + complete(approve) + 终态回写 bpmn_approval，同一事务） */
     @PostMapping("/complete")
     @PreAuthorize("hasAuthority('bpmn:task:complete')")
     public R<Void> complete(@Valid @RequestBody TaskCompleteRequest req) {
