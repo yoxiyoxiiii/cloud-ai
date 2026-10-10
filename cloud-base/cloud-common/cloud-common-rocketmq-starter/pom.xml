@@ -30,5 +30,11 @@
             <groupId>org.springframework</groupId>
             <artifactId>spring-jdbc</artifactId>
         </dependency>
+        <!-- xxl-job 调度注解（2026-10-10 迁移轮：MqTableCleanJob @Scheduled → @XxlJob，@Scheduled 存量清零；
+             仅注解引用无 XxlJobHelper 调用，未接 xxl-job 的宿主无运行时依赖；版本走根 dependencyManagement） -->
+        <dependency>
+            <groupId>com.xuxueli</groupId>
+            <artifactId>xxl-job-core</artifactId>
+        </dependency>
     </dependencies>
 </project>

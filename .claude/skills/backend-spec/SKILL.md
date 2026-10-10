@@ -557,7 +557,7 @@ public class XxxYyyController {
 
 ## 步骤 9：xxl-job 定时任务（@XxlJob，2026-10-10 对账迁移轮起新任务默认）
 
-**调度纪律**：**新定时任务必须 xxl-job，禁新增 `@Scheduled`**（调度节奏治理权归 admin 控制台——改节奏不动代码不发版；`@Scheduled` 存量仅剩 cloud-common-rocketmq-starter `MqTableCleanJob`，迁移候选记移交）。落位两种形态（守护两规则关联：服务模块禁 `new XxlJobSpringExecutor`——executor 装配归 cloud-common-xxljob-starter；`@XxlJob` 类必须落 `job/` 包或 api 框架包）：
+**调度纪律**：**新定时任务必须 xxl-job，禁新增 `@Scheduled`**（调度节奏治理权归 admin 控制台——改节奏不动代码不发版；`@Scheduled` 已全量清零（2026-10-10 收官，MqTableCleanJob 迁移 xxl-job），新任务唯一形态 xxl-job）。落位两种形态（守护两规则关联：服务模块禁 `new XxlJobSpringExecutor`——executor 装配归 cloud-common-xxljob-starter；`@XxlJob` 类必须落 `job/` 包或 api 框架包）：
 
 1. **服务本地任务**（默认形态）：`<svc>/src/main/java/com/cloudai/<svc>/job/XxxJobHandler.java`，`@Component` 交容器扫描，方法标 `@XxlJob("xxxJobHandler")`（范本 `CloudDemoJobHandler`）：
 
@@ -608,4 +608,4 @@ public class XxxJobHandler {
 - [ ] api 模块 `@FeignClient` 均带 `fallbackFactory`（守护测试）？
 - [ ] **MQ（涉事务消息/消费时）**：生产 executor 形态（编排化+executeInTx 内 setBusinessRef，实现内无 @Transactional）/ 消费 L1L2 二选一（DedupRocketMQListener 或 @UkIdempotentListener，守护测试检查）/ 失败三分类归位 / topic·group·KEYS·消息体与消息契约逐字一致？
 - [ ] **审批流接入（投影轮起新默认）**：业务表零状态列 + approval_projection DDL 落库 + `cloud.bpmn.projection.enabled/consumer-group` 两行配置 + mapper LEFT JOIN 派生读（CAST CHAR）？未自建 APPROVAL_EVENT_NOTIFY 消费者、业务 SQL 未写投影表（守护两规则）？
-- [ ] **定时任务（2026-10-10 起）**：新定时任务用 xxl-job @XxlJob（禁新增 @Scheduled）？handler 类落 `job/` 包（服务本地）或 api 框架包（框架组件特例）？未 new XxlJobSpringExecutor（executor 装配归 starter，守护两规则）？admin 任务种子已落 SQL（增量+基线同步，glue_updatetime=now()、CRON 秒域步进 <60）？
+- [ ] **定时任务（2026-10-10 起）**：新定时任务用 xxl-job @XxlJob（全仓 @Scheduled 已清零，禁新增）？handler 类落 `job/` 包（服务本地）或 api 框架包（框架组件特例）？未 new XxlJobSpringExecutor（executor 装配归 starter，守护两规则）？admin 任务种子已落 SQL（增量+基线同步，glue_updatetime=now()、CRON 秒域步进 <60）？

@@ -21,7 +21,6 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import java.util.List;
@@ -31,6 +30,8 @@ import java.util.List;
  * 发送门面/事务监听仅在 RocketMQTemplate 存在（rocketmq.name-server + producer.group 已配）时装配；
  * DAO/清理任务仅需 JdbcTemplate（两表 DDL 由 scripts/sql 落库）；dedup 清理仅事件消费方（存在
  * DedupRocketMQListener bean）执行——bpmn 库无 mq_consume_dedup 表。
+ * 2026-10-10 迁移轮：@EnableScheduling 摘除——全仓 @Scheduled 已清零（新定时任务必须 xxl-job，
+ * 见 backend-spec 步骤 9）；宿主将来若自建 @Scheduled 需自行开调度（当前规范禁止）。
  */
 @AutoConfiguration
 @AutoConfigureAfter(name = {
@@ -38,7 +39,6 @@ import java.util.List;
         "org.springframework.boot.autoconfigure.jdbc.JdbcTemplateAutoConfiguration",
         "org.springframework.boot.autoconfigure.transaction.TransactionAutoConfiguration"})
 @EnableConfigurationProperties(CommonRocketMqProperties.class)
-@EnableScheduling
 @ConditionalOnProperty(prefix = "cloud.common.rocketmq", name = "enabled", havingValue = "true",
         matchIfMissing = true)
 public class CommonRocketMqAutoConfiguration {
