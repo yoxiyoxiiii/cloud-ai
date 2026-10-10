@@ -44,9 +44,11 @@ public final class DataPermColumnApplier {
         if (vo == null || columnScope == null || columnScope.isEmpty()) {
             return;
         }
+        // 隐藏；不返回，值为空
         for (String columnKey : columnScope.getHiddenColumns()) {
             setFieldNull(vo, columnKey);
         }
+        // 脱敏
         for (String columnKey : columnScope.getMaskedColumns()) {
             applyMask(vo, columnKey, columnScope);
         }
