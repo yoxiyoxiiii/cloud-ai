@@ -21,7 +21,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 @RocketMQTransactionListener
 public class RocketMqTxListener implements RocketMQLocalTransactionListener {
 
+    // 本地事务执行器
     private final TxExecutorRegistry executorRegistry;
+    // 事务消息日志表（消息落库-记录）
     private final TxLogDao txLogDao;
     private final JsonPayloads jsonPayloads;
 

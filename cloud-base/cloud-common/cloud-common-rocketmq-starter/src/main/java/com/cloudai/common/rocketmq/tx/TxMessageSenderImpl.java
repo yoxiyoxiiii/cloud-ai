@@ -39,6 +39,7 @@ public class TxMessageSenderImpl implements TxMessageSender {
                 .build();
         String destination = tag == null || tag.isBlank() ? topic : topic + ":" + tag;
         try {
+            // 发送，半事务消息；@see RocketMqTxListener
             rocketMQTemplate.sendMessageInTransaction(destination, message, command);
         } catch (Exception e) {
             // 半消息发送失败：本地事务未执行（executor 零写），调用方转译域码（如 3025）

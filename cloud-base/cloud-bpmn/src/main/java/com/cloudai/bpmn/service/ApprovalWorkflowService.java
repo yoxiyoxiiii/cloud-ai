@@ -145,8 +145,11 @@ public class ApprovalWorkflowService {
             throw new BusinessException(ERR_TASK_INVALID, "任务不存在或已被办理");
         }
         BpmnApproval approval = requireApprovalByTask(task);
+        // 通过或者拒绝
         Integer expected = Boolean.parseBoolean(req.getApprove())
                 ? StatusEnum.APPROVED.getCode() : StatusEnum.REJECTED.getCode();
+
+        // 任务办理，发布MQ 消息
         sendTerminalEvent(approval, expected, ApprovalCompleteTxExecutor.CHANNEL,
                 new ApprovalCompleteTxExecutor.CompleteCommand(
                         task.getId(), req.getApprove(), req.getComment(), opUser, expected));
