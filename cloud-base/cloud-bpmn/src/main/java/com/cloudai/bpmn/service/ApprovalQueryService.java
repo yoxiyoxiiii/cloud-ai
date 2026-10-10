@@ -23,6 +23,7 @@ import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
 import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricProcessInstance;
+import org.flowable.engine.history.HistoricProcessInstanceQuery;
 import org.flowable.engine.task.Comment;
 import org.springframework.stereotype.Service;
 
@@ -107,7 +108,7 @@ public class ApprovalQueryService {
                 return exact;
             }
         }
-        org.flowable.engine.history.HistoricProcessInstanceQuery query =
+        HistoricProcessInstanceQuery query =
                 historyService.createHistoricProcessInstanceQuery()
                         .processInstanceBusinessKey(String.valueOf(approval.getId()));
         String processKey = processKeyOf(approval.getBusinessType());
