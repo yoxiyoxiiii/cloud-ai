@@ -96,6 +96,11 @@
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-common-rocketmq-starter</artifactId>
         </dependency>
+        <!-- xxl-job 执行器（2026-10-09 整合：引 jar 即得 XxlJobSpringExecutor 装配，cloud.common.xxljob.enabled 显式启用） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-xxljob-starter</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

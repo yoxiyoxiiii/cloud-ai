@@ -39,10 +39,12 @@ curl http://localhost:18080/system/demo/ping
 
 - **停服**：Git Bash 的 `$!` 是 MSYS 包装进程 PID，不是真实 java PID。用 `netstat -ano | grep LISTENING | grep :<port>` 找 PID 再 `taskkill //F //PID <pid>`。
 - **Nacos 注册 IP**：多网卡机器上 Nacos 客户端可能注册到虚拟网卡 IP（本机是 192.168.152.1），本机可达不影响；若网关 503，用环境级配置 `spring.cloud.inetutils.preferred-networks` 修（不进仓库）。
-- **端口**：网关 18080（8080 被本机 RocketMQ Dashboard 容器占用，勿改回）；9201-9203 为服务端口。
+- **端口**：网关 18080（8080 被本机 RocketMQ Dashboard 容器占用，勿改回）；9201-9203 为服务端口；xxl-job-admin 18081（容器，常驻）；xxl-job executor 19202（system）/19203（bpmn）。
 - **Nacos** 已在 127.0.0.1:8848 运行（Docker）；Redis 6379（Docker）；MySQL 127.0.0.1:3306 为**原生服务**（root/空密码，实测 5.7.24，无 mysql 客户端——查库用 java 单文件源码 + mysql-connector-j，jshell 后台运行会挂起，见末条）。
 - 控制台中文乱码（GBK）不影响判断；Maven 输出 javac 报错为乱码时看行号即可。
 - **Git Bash curl 发中文 JSON 是 GBK**：会 500（Invalid UTF-8）——中文入参用 ASCII 或转码；jshell 后台查库会挂起，用 java 单文件源码 + mysql-connector-j。
+- **host.docker.internal（本机容器→宿主原生服务通路，xxl-job-admin 首例 2026-10-09）**：Docker Desktop for Windows 容器内该别名解析宿主——xxl-job-admin 容器即经它连宿主原生 MySQL 3306（M2 实证通）；docker run 命令与参数记档于 `docs/superpowers/specs/2026-10-09-xxl-job-integration-design.md` D3（PARAMS 注入数据源，root 空密码尾等号传空）。
+- **xxl-job executor 注册地址（B7 采纳口径）**：多网卡机器自动探测不可用（192.168.152.1 虚拟网卡同源坑），采纳**方案一钉 ip=物理网卡 WLAN 192.168.10.22**（Nacos per-service `xxl.job.executor.ip`）——admin 在容器内按注册值回调宿主，注册 127.0.0.1 不可达（那是容器自身回环）；宿主网卡/IP 变更时需同步改 Nacos（方案二 address=http://host.docker.internal:1920x 备选未启用）。
 
 ## Architecture
 
@@ -62,8 +64,10 @@ cloud-base/
 │   │                              #   （资源端 header 认证自动配置，仅 servlet；网关 WebFlux 自带 GatewaySecurityConfig permitAll）
 │   ├── cloud-common-mybatis-starter  # BaseEntity（审计填充+@TableLogic）、分页插件（maxLimit 200）
 │   ├── cloud-common-redis-starter    # RedisTemplate（String key + JSON value，@AutoConfigureBefore Boot 的 RedisAutoConfiguration）
-│   └── cloud-common-rocketmq-starter # 事务消息 TxMessageSender/TxLocalExecutor（mq_tx_log 回查审计）、
+│   ├── cloud-common-rocketmq-starter # 事务消息 TxMessageSender/TxLocalExecutor（mq_tx_log 回查审计）、
 │                                  #   DedupRocketMQListener（mq_consume_dedup L1 消费幂等）、JsonPayloads 统一序列化口径
+│   └── cloud-common-xxljob-starter   # xxl-job 执行器（XxlJobSpringExecutor 装配，cloud.common.xxljob.enabled 默认关、
+│                                  #   连接键 xxl.job.* 官方零转译走 Nacos——2026-10-09 整合）
 ├── cloud-api/                     # 服务间契约 api 模块聚合（结构同 cloud-common 惯例，GAV 不变）
 │   ├── cloud-bpmn-api                 # bpmn 服务间契约 jar（Feign 客户端+fallbackFactory+inner 契约模型，自动装配注册降级 bean）
 │                                  #   + 审批投影框架组件 projection 包（事件监听/定时对账/JdbcTemplate DAO，默认关——2026-10-09 投影轮，api 模块承载框架组件特例记档）
@@ -86,7 +90,8 @@ cloud-base/
 - **鉴权数据流**：权限标识 sys_menu.perms → 登录时快照进 OnlineSession → 网关透传 X-User-Perms → HeaderAuthFilter 构建 authorities → @PreAuthorize。权限变更需重新登录或 refresh 生效；删除/停用不自动踢会话（手动 sso:online:kick）。
 - **服务间 Feign 规范**：跨服务调用一律走提供方 `-api` 模块（cloud-<svc>-api，包 `com.cloudai.<svc>.api`：`client/` Feign 接口+fallbackFactory、`fallback/` 降级实现、`domain/` 契约模型——类名与 API 契约术语一致）；api 模块仅依赖 core-starter（可加 validation-api），fallbackFactory bean 经自动装配注册（引 jar 即生效）。消费方三件套：引 api jar + resilience4j starter、`@EnableFeignClients(clients = {...})` 显式列表、yml 开 `spring.cloud.openfeign.circuitbreaker.enabled` + 超时 connect 1s/read 5s（TimeLimiter 处置见 backend-spec）。`@FeignClient` 必带 `fallbackFactory`（守护测试检查）；调用方保留 `catch (FeignException)` 二层兜底，降级 R 走既有 `code!=SUCCESS` 分支转译域码（等价语义）；熔断打开期行为差异：半开恢复前降级持续，属预期。特例记档：translate-remote-starter 程序式 client（common 包不可扫描 + 缓存层降级自洽）。
 - **事务消息与消费幂等（cloud-common-rocketmq-starter，2026-10-09）**：跨服务最终一致写路径用 RocketMQ 事务消息（同步接口签名/返回语义保持，远端动作事务消息化+结果事件回写收敛）。**生产方法编排化去 @Transactional**——本地写全在 `TxLocalExecutor.executeInTx`，与 mq_tx_log insert 同在 starter listener 单事务（COMMIT 决策返回前本地事务必已提交，双事务边界即违规）；主键 snowflake 预生成显式写（半消息体先于落库需知 businessKey）；`TxMessageSendException`=半消息失败**本地零写**。两表口径：`mq_tx_log`（uk_tx_no 回查依据+business_type/key 审计）、`mq_consume_dedup`（uk(consumer_group,msg_key)）。消费幂等**双层**：L1 继承 `DedupRocketMQListener`（先插 dedup→DuplicateKey=已消费 ACK 跳过→doConsume 异常删行放行重试）；L2 业务 uk 幂等（建单类）标注 `@UkIdempotentListener` 豁免+catch DuplicateKeyException 吸收——二者必有其一（守护测试检查）；回写 UPDATE 用条件写幂等三防（`WHERE approval_id IS NULL`/`WHERE status=0`，重投/乱序/双写同值无害）。消费失败三分类：幂等吸收→ACK；确定性业务失败白名单→转结果事件+ACK；未知/系统异常→重试 maxReconsumeTimes=3→%DLQ% 死信人工。命名：topic 大写蛇形、producer group `p_<svc>_tx`、consumer group `g_<svc>_<域>`；rocketmq.name-server/producer.group 配置走 Nacos 不进仓库。消息契约（topic/tag/KEYS/消息体/消费分支）随 API 契约文档维护（跨服务唯一对齐物），事件消息模型归提供方 api 模块 `mq/` 子包。**审批状态本地投影（2026-10-09 投影轮）**：跨服务状态回写不再落业务表条件 UPDATE——`approval_projection` 投影表落业务侧库（bpmn_approval 只读副本 read model，真相源唯一不变；`uk_business(business_type,business_key)` + `idx_approval_status`，行永不删无 deleted 列），对外 status 由读侧派生 `CASE WHEN create_result=2 THEN 4 ELSE IFNULL(approval_status,0) END`（投影列永不落 4）。**事件唯一监听对象落提供方 api 模块**（cloud-bpmn-api `projection/` 包：Listener 三分支 upsert 单调不变式——CREATE_RESULT 只写 create_result/approval_id/pid、TERMINAL 只写 approval_status、对账写 diff 列，任意乱序/重投收敛 + Reconciler 定时对账+按需对账，Feign 失败本轮放弃不抛）；消费方（如 cloud-system）引 jar 即得业务零代码，`cloud.bpmn.projection.enabled=true` + `consumer-group`（组名沿用防 offset 重放）两行配置显式启用，**默认关**（防提供方 bpmn 引 jar 自我消费）。业务表零状态列（sys_leave 已物理删列），读路径 mapper XML `LEFT JOIN approval_projection` 派生（SQL 层 CAST CHAR 规避 TINYINT→String；业务对投影表**只读**，写权归框架——守护两规则强制：业务模块禁自建 APPROVAL_EVENT_NOTIFY 消费者 / 业务 SQL 禁写投影表）；api 模块职责自本轮起不止契约（client/domain/fallback），另承载框架组件——沿 translate-remote-starter 特例先例记档。
-- **Nacos 配置**：各服务 `spring.config.import: optional:nacos:${spring.application.name}.yaml`，共享配置 `cloud-common-{profile}.yaml`；JWT 密钥、Redis 连接等放 Nacos 不进仓库。
+- **xxl-job 分布式调度（cloud-common-xxljob-starter，2026-10-09 整合）**：admin 容器 `xuxueli/xxl-job-admin:3.5.0` → http://127.0.0.1:18081（**3.5.0 无 /xxl-job-admin 前缀**；`admin 镜像 tag ≡ xxl-job-core 版本`，同批升级；UI 登录 admin/123456，登录 POST `/auth/doLogin`）。接入模板=服务引 starter 依赖 + Nacos 两层配置（共享 `cloud-common.yaml`：`xxl.job.admin.addresses/executor.logpath/executor.logretentiondays`；per-service：`cloud.common.xxljob.enabled=true` + `xxl.job.executor.{appname, port, ip, accessToken=default_token}`）。**enabled 默认关**——未配 starter 零装配，admin 容器未起不阻断服务启动；显式开启后 executor 绑端口 19202/19203，绑定失败会阻断服务启动（运维注意）。DB 为独立 `xxl_job` 库（官方 8 表+种子段，`scripts/sql/2026-10-09-xxl-job-init.sql` 不可重放——重放先 DROP DATABASE）。@XxlJob 任务模板=各服务 `job/CloudDemoJobHandler`（验收后保留）；本轮 @Scheduled 双轨不动，对账迁移路线见 xxl-job 整合设计移交备忘。
+- **Nacos 配置**：各服务 `spring.config.import: optional:nacos:${spring.application.name}.yaml` + `optional:nacos:cloud-common.yaml`（共享配置，system/bpmn 自 xxl-job 轮起接线）；JWT 密钥、Redis 连接等放 Nacos 不进仓库。
 - **公共模块自动装配**：业务服务引依赖即生效；用户自定义同名 bean 会覆盖（@ConditionalOnMissingBean）。网关是 WebFlux——**不得引入 spring-boot-starter-web**；GlobalExceptionHandler 的 advice 只覆盖 WebMVC controller（网关鉴权拒绝由 AuthGlobalFilter 直接写 R JSON，见"认证链路"）。
 - **DDL**（阶段2起）：逻辑删除列必须 `deleted TINYINT NOT NULL DEFAULT 0`（NULL 行会被 @TableLogic 过滤隐身）。
 - **跨域只在网关做**（下游配 CORS 会产生双 ACAO 头）。

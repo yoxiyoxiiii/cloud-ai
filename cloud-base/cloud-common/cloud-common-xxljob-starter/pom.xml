@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.cloudai</groupId>
+        <artifactId>cloud-common</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>cloud-common-xxljob-starter</artifactId>
+    <name>cloud-common-xxljob-starter</name>
+    <description>xxl-job 分布式调度执行器封装（XxlJobSpringExecutor 装配，cloud.common.xxljob.enabled 默认关）</description>
+
+    <dependencies>
+        <!-- xxl-job executor 核心（版本走根 dependencyManagement；admin 镜像 tag 与 core 同批升级——设计 D2 对齐纪律） -->
+        <dependency>
+            <groupId>com.xuxueli</groupId>
+            <artifactId>xxl-job-core</artifactId>
+        </dependency>
+        <!-- 自动装配（executor 纯注册组件，无 R/ObjectMapper 面——设计 D1 不依赖 core-starter） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+    </dependencies>
+</project>

@@ -22,5 +22,6 @@
         <module>cloud-common-translate-starter</module>
         <module>cloud-common-translate-remote-starter</module>
         <module>cloud-common-rocketmq-starter</module>
+        <module>cloud-common-xxljob-starter</module>
     </modules>
 </project>

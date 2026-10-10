@@ -33,6 +33,7 @@
         <hutool.version>5.8.32</hutool.version>
         <flowable.version>7.2.0</flowable.version>
         <rocketmq-spring.version>2.3.3</rocketmq-spring.version>
+        <xxl-job.version>3.5.0</xxl-job.version>
     </properties>
 
     <!-- 所有子模块继承：Lombok 与测试依赖 -->
@@ -108,6 +109,11 @@
                 <artifactId>cloud-common-rocketmq-starter</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.cloudai</groupId>
+                <artifactId>cloud-common-xxljob-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <!-- 服务间契约 api 模块（2026-10-09 Feign 统一接口层） -->
             <dependency>
                 <groupId>com.cloudai</groupId>
@@ -163,6 +169,12 @@
                 <groupId>org.apache.rocketmq</groupId>
                 <artifactId>rocketmq-spring-boot-starter</artifactId>
                 <version>${rocketmq-spring.version}</version>
+            </dependency>
+            <!-- xxl-job 分布式调度（2026-10-09 xxl-job 整合设计 D2：admin 镜像 tag ≡ core 版本同批升级） -->
+            <dependency>
+                <groupId>com.xuxueli</groupId>
+                <artifactId>xxl-job-core</artifactId>
+                <version>${xxl-job.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

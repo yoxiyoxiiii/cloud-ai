@@ -5,7 +5,10 @@ spring:
   application:
     name: cloud-bpmn
   config:
-    import: optional:nacos:${spring.application.name}.yaml
+    import:
+      - optional:nacos:${spring.application.name}.yaml
+      # 共享配置接线（2026-10-09 xxl-job 整合设计 D6）：公共项 cloud-common.yaml，optional 容缺向后安全
+      - optional:nacos:cloud-common.yaml
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
@@ -41,6 +44,12 @@ management:
 #   rocketmq.producer.group: p_bpmn_tx            # 事务半消息生产组（APPROVAL_EVENT_NOTIFY）
 # 消费组 g_bpmn_approval_create 由 @RocketMQMessageListener 注解自持无需配置；
 # name-server 未配置时 RocketMQTemplate 不装配，MQ 生产/消费 bean 启动即缺——本地起服前先核对 Nacos）。
+
+# xxl-job 分布式调度（cloud-common-xxljob-starter，2026-10-09 整合）——连接配置走 Nacos 不进仓库：
+#   共享 cloud-common.yaml: xxl.job.admin.addresses / executor.logpath / logretentiondays
+#   cloud-bpmn.yaml: cloud.common.xxljob.enabled=true
+#                    xxl.job.executor.{appname=cloud-bpmn, port=19203, ip|address=D5 采纳值, accessToken}
+# enabled 未配（默认关）时 starter 零装配——admin 容器未起不阻断服务启动。
 
 mybatis-plus:
   configuration:
