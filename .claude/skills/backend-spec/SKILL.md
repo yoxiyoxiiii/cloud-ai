@@ -555,9 +555,33 @@ public class XxxYyyController {
 
 **配置与陷阱**：`rocketmq.name-server`/`rocketmq.producer.group` 走 Nacos 不进仓库（未配 name-server 时 RocketMQTemplate 不装配，服务可起）；消费组由 `@RocketMQMessageListener(consumerGroup=...)` 自持（投影监听经 `cloud.bpmn.projection.consumer-group` 占位符注入）；**消费无用户上下文**——审计 operator 用系统操作者记档（如 "bpmn-event"）；消息体字段一律 String（Long→String 全局 Jackson 口径，防精度/类型漂移）。
 
-## 步骤 9：xxl-job 定时任务（@XxlJob，2026-10-10 对账迁移轮起新任务默认）
+## 步骤 9：xxl-job 分布式调度（2026-10-10 起 @Scheduled 已全量清零，定时任务唯一形态）
 
-**调度纪律**：**新定时任务必须 xxl-job，禁新增 `@Scheduled`**（调度节奏治理权归 admin 控制台——改节奏不动代码不发版；`@Scheduled` 已全量清零（2026-10-10 收官，MqTableCleanJob 迁移 xxl-job），新任务唯一形态 xxl-job）。落位两种形态（守护两规则关联：服务模块禁 `new XxlJobSpringExecutor`——executor 装配归 cloud-common-xxljob-starter；`@XxlJob` 类必须落 `job/` 包或 api 框架包）：
+**调度纪律**：**新定时任务必须 xxl-job，禁新增 `@Scheduled`**（调度节奏治理权归 admin 控制台——改节奏/暂停/手动补跑不动代码不发版；`@EnableScheduling` 已随清零自各 starter 摘除，宿主自建 `@Scheduled` 不会跑）。守护两规则强制：服务模块禁 `new XxlJobSpringExecutor`（executor 装配归 cloud-common-xxljob-starter）、`@XxlJob` 类必须落 `job/` 包或 api 框架包。存量任务全景（种子 id 锚定）：id 5/6 demo hello world（手动，模板范本）/ id 7 审批投影对账（每分钟，cloud-bpmn-api 薄壳形态）/ id 8/9 MQ 两表清理（每日 03:00，rocketmq-starter，两组各一）。
+
+### 9.1 服务接入（新服务三步）
+
+1. pom 引 `cloud-common-xxljob-starter`；
+2. Nacos per-service 追加（共享 `cloud-common.yaml` 已有全局三键 `xxl.job.admin.addresses/executor.logpath/executor.logretentiondays`，勿重复配）：
+
+```yaml
+cloud:
+  common:
+    xxljob:
+      enabled: true        # 默认关——未配零装配
+xxl:
+  job:
+    executor:
+      appname: <spring.application.name>   # 与执行器组 app_name 一致
+      port: 1920x                          # system=19202 / bpmn=19203，新服务顺延
+      ip: <物理网卡 IP>                     # 多网卡必钉（见下）；accessToken=default_token
+```
+
+3. `spring.config.import` 确认含 `optional:nacos:cloud-common.yaml`（optional 容缺）。
+
+**门控语义**：`enabled` 默认关——admin 容器未起不阻断服务启动（CI/本地无容器安全）；显式开启后 executor 绑定端口，**绑定失败会阻断服务启动**（运维注意）。**注册地址口径**：多网卡机器自动探测不可用（虚拟网卡注册致 admin 容器回调不可达），钉 `ip=物理网卡`（本机 192.168.10.22 先例；127.0.0.1 是容器自身回环不可达）；宿主网卡/IP 变更需同步 Nacos。
+
+### 9.2 任务开发（两种落位形态）
 
 1. **服务本地任务**（默认形态）：`<svc>/src/main/java/com/cloudai/<svc>/job/XxxJobHandler.java`，`@Component` 交容器扫描，方法标 `@XxlJob("xxxJobHandler")`（范本 `CloudDemoJobHandler`）：
 
@@ -571,17 +595,29 @@ public class XxxJobHandler {
     public void xxxJobHandler() {
         String param = XxlJobHelper.getJobParam();
         XxlJobHelper.log("xxx job start, param=" + param);   // 留 admin 执行日志痕
-        // ...业务（吞异常口径按需设计：恒成功观察走服务日志 / handleFail 可见性增强见移交备忘）
+        // ...业务（吞异常口径按需设计：恒成功观察走服务日志 / 异常上抛=admin 红记录，见 9.5）
         XxlJobHelper.log("xxx job end");
     }
 }
 ```
 
-2. **api jar 框架组件任务**（特例，先例 `cloud-bpmn-api` projection 包 `ApprovalProjectionReconcileJobHandler`）：框架组件自带的 job 薄壳落 api 模块框架包，bean 经该模块 AutoConfiguration `@Bean` 注册（同门控）——`XxlJobSpringExecutor` 遍历容器全部 bean 定义收集方法级 `@XxlJob`（与注册方式无关，2026-10-10 联调实证）；薄壳零业务逻辑，编排与异常语义全在被调组件公有方法（对账轮次即 `reconcileActive()`）。
+2. **api jar / starter 框架组件任务**（特例；先例 cloud-bpmn-api projection 包 `ApprovalProjectionReconcileJobHandler` 薄壳、rocketmq-starter `MqTableCleanJob` 直接注解）：框架组件任务落框架模块自身包（薄壳类或既有任务类直接标 `@XxlJob`），bean 经 AutoConfiguration `@Bean` 注册（同门控）——`XxlJobSpringExecutor` 遍历容器全部 bean 定义收集方法级 `@XxlJob`（与注册方式无关，2026-10-10 联调实证）；框架模块 pom 加 xxl-job-core（版本走根 dependencyManagement）；仅注解引用（无 XxlJobHelper 调用）时未接 xxl 的宿主零运行时副作用；薄壳零业务逻辑，编排与异常语义全在被调组件公有方法。**多服务同库语义**（每实例清自己库/处理自己分片）：两组各一任务、handler 名同名（作用域=执行器组，合法）——分片广播仅用于真需数据集分片的场景。
 
-**admin 建任务三要素**：①执行器组=宿主服务 appname（自动注册）；②JobHandler 名与 `@XxlJob` 值逐字一致；③调度类型 NONE（纯手工触发）/ CRON（定时，如每分钟 `0 * * * * ?`——**秒域步进值须 <60**，`0/60` 非法会被 admin 自动停任务）。种子走 SQL（`scripts/sql/<日期>-*.sql` 增量 + `2026-10-09-xxl-job-init.sql` 基线同步；glue_updatetime 必须 now()——3.5.0 JobTrigger 解引用无空防护；手工 INSERT 带 `trigger_status=1` 时 `trigger_next_time` 默认 0 落在过去，admin 首扫按 misfire DO_NOTHING 刷新到下一 CRON 点自愈，不双跑）。**admin 3.5.0 REST 口径**：登录 POST `/auth/doLogin`（admin/123456）；`jobinfo/pageList` 参数为 `jobGroup/triggerStatus/name/executorHandler/author/offset/pagesize`（非 2.x 的 jobDesc/start/length）；手动触发 POST `/jobinfo/trigger`（id/executorParam/addressList）。
+### 9.3 admin 任务种子（SQL 规范）
 
-**接入前提**：宿主服务引 cloud-common-xxljob-starter + Nacos 两层配置已接（共享 `cloud-common.yaml` + per-service `cloud.common.xxljob.enabled=true` 与 `xxl.job.executor.{appname,port,ip,accessToken}`——见 CLAUDE.md xxl-job 段）。
+- 双落位：`scripts/sql/<日期>-<域>.sql` 增量 + `2026-10-09-xxl-job-init.sql` 基线种子段**同步追加**（环境重建完整性）；固定主键 id 顺延，头注标不可重放（重放先 DELETE 对应 id）
+- 三要素：执行器组=宿主 appname；`executor_handler` 与 `@XxlJob` 值**逐字一致**；调度 NONE（纯手工）/ CRON（定时）
+- 陷阱集（3.5.0 实证，全部踩过）：CRON **秒域步进须 <60**（`0/60` 非法，admin 报 `Increment >= 60` 并自动停任务）；`glue_updatetime` 必须 now()（JobTrigger 解引用无空防护，NULL 即 NPE 卡 pending）；`trigger_status=1` **显式列**（表默认 0=停止）；手工 INSERT `trigger_next_time` 默认 0 落在过去——admin 首扫按 misfire DO_NOTHING 自愈刷新到下一 CRON 点，不双跑
+
+### 9.4 admin 控制台与 REST（3.5.0 口径）
+
+- UI：http://127.0.0.1:18081（**无 /xxl-job-admin context 前缀**），admin/123456；admin 容器常驻不回收；**镜像 tag ≡ xxl-job-core 版本**，升级必须同批
+- REST（登录 POST `/auth/doLogin`）：任务列表 `jobinfo/pageList` 参数 `jobGroup/triggerStatus/name/executorHandler/author/offset/pagesize`（非 2.x 的 jobDesc/start/length，旧组合 400）；手动触发 POST `/jobinfo/trigger`（id/executorParam/**addressList= 空串必带**）；执行日志 `joblog/pageList`（**filterTime= 空串必带**——缺这两个空串参数均 400 System Error）
+- DB：独立 `xxl_job` 库（官方 8 表逐字 + 本项目种子段）；基线脚本不可重放（重放先 DROP DATABASE——开发库可整库重建）；token 现为公开默认值 `default_token`，生产化换强 token 需 DB 组行与 Nacos 双处同步（移交备忘）
+
+### 9.5 失败语义与告警现状
+
+任务**不抛异常即成功**（xxl 缺省口径）：吞异常=恒成功、失败观察走服务日志 log.error；异常上抛=admin 红记录可见（较 @Scheduled 时代吞异常是**可见性增强**，无自动重试除非配 executor_fail_retry_count）。告警通道未接（alarm_email 空，移交备忘）——生产化前失败仅 admin 页面可见，联调验收时手动触发 + 双侧日志（admin 执行日志 + 服务日志）取证。
 
 ## 通用约束（全后端强制；机械项由守护测试保证）
 
@@ -608,4 +644,4 @@ public class XxxJobHandler {
 - [ ] api 模块 `@FeignClient` 均带 `fallbackFactory`（守护测试）？
 - [ ] **MQ（涉事务消息/消费时）**：生产 executor 形态（编排化+executeInTx 内 setBusinessRef，实现内无 @Transactional）/ 消费 L1L2 二选一（DedupRocketMQListener 或 @UkIdempotentListener，守护测试检查）/ 失败三分类归位 / topic·group·KEYS·消息体与消息契约逐字一致？
 - [ ] **审批流接入（投影轮起新默认）**：业务表零状态列 + approval_projection DDL 落库 + `cloud.bpmn.projection.enabled/consumer-group` 两行配置 + mapper LEFT JOIN 派生读（CAST CHAR）？未自建 APPROVAL_EVENT_NOTIFY 消费者、业务 SQL 未写投影表（守护两规则）？
-- [ ] **定时任务（2026-10-10 起）**：新定时任务用 xxl-job @XxlJob（全仓 @Scheduled 已清零，禁新增）？handler 类落 `job/` 包（服务本地）或 api 框架包（框架组件特例）？未 new XxlJobSpringExecutor（executor 装配归 starter，守护两规则）？admin 任务种子已落 SQL（增量+基线同步，glue_updatetime=now()、CRON 秒域步进 <60）？
+- [ ] **定时任务（2026-10-10 起）**：新定时任务用 xxl-job @XxlJob（全仓 @Scheduled 已清零，禁新增）？handler 类落 `job/` 包（服务本地）或框架模块包（api/starter 组件特例）？未 new XxlJobSpringExecutor（executor 装配归 starter，守护两规则）？admin 任务种子双落位（增量 + 基线 init 同步，id 顺延）：handler 名与 `@XxlJob` 逐字一致、CRON 秒域步进 <60、glue_updatetime=now()、trigger_status=1 显式列？新服务接入走了 9.1 三步（starter 依赖 + per-service 两键块 + cloud-common.yaml 接线，ip 钉物理网卡）？联调验收手动触发双 code=200 + admin 执行日志与服务日志双侧取证？
