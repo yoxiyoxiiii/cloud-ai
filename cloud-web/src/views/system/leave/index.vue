@@ -8,11 +8,14 @@
  * 本人「重新发起」（预填弹窗，提交=新单据，原单保留 4）；「查看审批」入口以 approvalId 非空为
  * 渲染条件（status=4 恒 null 不渲染；发起后至事件回填前的秒级瞬态 null 同样不渲染，不设 loading 态）
  * 待办跳转落点协议（契约 §1）：识别 query.approval（=approvalId）自动开对应详情弹窗
+ * 数据权限增量（契约 2026-10-10-data-permission-api §4）：列表行集按当前登录人数据权限求值
+ * （顶部 my-scope 提示条自查范围）；title/reason 可能被列规则隐藏（null）/脱敏（***）原样展示
  */
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { cancelLeave, pageLeave } from '../../../api/systemLeave'
+import { getMyScope } from '../../../api/dataPerm'
 import { useAuthStore } from '../../../stores/auth'
 import { APPROVAL_STATUS_MAP, LEAVE_TYPE_MAP, type LeaveCreatePayload, type SysLeaveVo } from '../../../types/api'
 import LeaveFormDialog from './components/LeaveFormDialog.vue'
@@ -94,7 +97,8 @@ function canResubmit(leave: SysLeaveVo): boolean {
 
 function openResubmit(leave: SysLeaveVo): void {
   formInitial.value = {
-    title: leave.title,
+    // title 可能被列规则隐藏为 null（契约 2026-10-10 §4.1）——预填空串，弹窗内可编辑
+    title: leave.title ?? '',
     leaveType: leave.leaveType,
     startDate: leave.startDate,
     endDate: leave.endDate,
@@ -127,6 +131,21 @@ function openDetail(leave: SysLeaveVo): void {
   detailLeave.value = leave
   detailApprovalId.value = ''
   detailDialogVisible.value = true
+}
+
+/* ---- 我的数据范围提示条（契约 §3.9 my-scope，免权限注解登录即可；不留痕） ---- */
+/** 提示条渲染条件：仅成功取回后渲染——失败静默降级不渲染（后端未就绪/接口异常不阻塞列表） */
+const myScopeLabel = ref('')
+const myScopeColumnSummary = ref<string | null>(null)
+
+async function loadMyScope(): Promise<void> {
+  try {
+    const scope = await getMyScope('leave')
+    myScopeLabel.value = scope.scopeLabel
+    myScopeColumnSummary.value = scope.columnSummary
+  } catch {
+    // 静默降级：提示条不渲染（拦截器可能已 toast 业务错误，页面主功能不受影响）
+  }
 }
 
 /**
@@ -188,6 +207,7 @@ function handleSizeChange(size: number): void {
 
 onMounted(() => {
   void loadLeavePage()
+  void loadMyScope()
 })
 </script>
 
@@ -199,6 +219,17 @@ onMounted(() => {
         <el-button v-perms="'system:leave:add'" type="primary" @click="openCreate">发起请假</el-button>
       </div>
     </template>
+
+    <!-- 我的数据范围提示条（契约 2026-10-10-data-permission-api §3.9 my-scope）：
+         成功取回才渲染（失败静默降级不渲染）；列动作有值时括注（如 reason:脱敏） -->
+    <el-alert
+      v-if="myScopeLabel"
+      class="scope-alert"
+      :title="`当前数据范围：${myScopeLabel}${myScopeColumnSummary ? `（${myScopeColumnSummary}）` : ''}`"
+      type="info"
+      :closable="false"
+      show-icon
+    />
 
     <el-table v-loading="loading" :data="rows" row-key="id">
       <el-table-column label="标题" min-width="180">
@@ -303,5 +334,9 @@ onMounted(() => {
 .table-pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+.scope-alert {
+  margin-bottom: 12px;
 }
 </style>

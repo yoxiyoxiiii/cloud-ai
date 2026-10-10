@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.DataPermColumnMapper">
+
+    <!-- 物理删除表（设计 D9）：无 deleted 列；全删全插维护（save/deleteBySubject），无 update 路径；
+         审计四列由 Service 显式传参（批插只落 create 值） -->
+    <sql id="allColumns">
+        id, resource, subject_type, subject_id, column_key, action,
+        create_by, create_time, update_by, update_time
+    </sql>
+
+    <select id="listByRoleIds" resultType="com.cloudai.system.entity.SysDataPermColumn">
+        SELECT <include refid="allColumns"/>
+          FROM sys_data_perm_column
+         WHERE resource = #{resource} AND subject_type = 0
+           AND subject_id IN
+           <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
+               #{roleId}
+           </foreach>
+         ORDER BY id ASC
+    </select>
+
+    <select id="listByUserId" resultType="com.cloudai.system.entity.SysDataPermColumn">
+        SELECT <include refid="allColumns"/>
+          FROM sys_data_perm_column
+         WHERE resource = #{resource} AND subject_type = 1 AND subject_id = #{userId}
+         ORDER BY id ASC
+    </select>
+
+    <!-- 分页行回填批量查询：userIds 空集由 Service 跳过（防 IN ()） -->
+    <select id="listByUserIds" resultType="com.cloudai.system.entity.SysDataPermColumn">
+        SELECT <include refid="allColumns"/>
+          FROM sys_data_perm_column
+         WHERE resource = #{resource} AND subject_type = 1
+           AND subject_id IN
+           <foreach collection="userIds" item="userId" open="(" separator="," close=")">
+               #{userId}
+           </foreach>
+    </select>
+
+    <select id="listBySubject" resultType="com.cloudai.system.entity.SysDataPermColumn">
+        SELECT <include refid="allColumns"/>
+          FROM sys_data_perm_column
+         WHERE resource = #{resource} AND subject_type = #{subjectType} AND subject_id = #{subjectId}
+         ORDER BY id ASC
+    </select>
+
+    <insert id="saveBatch">
+        INSERT INTO sys_data_perm_column (resource, subject_type, subject_id, column_key, action,
+                                          create_by, create_time, update_by, update_time)
+        VALUES
+        <foreach collection="list" item="item" separator=",">
+            (#{item.resource}, #{item.subjectType}, #{item.subjectId}, #{item.columnKey}, #{item.action},
+             #{item.createBy}, #{item.createTime}, #{item.updateBy}, #{item.updateTime})
+        </foreach>
+    </insert>
+
+    <delete id="deleteBySubject">
+        DELETE FROM sys_data_perm_column
+         WHERE resource = #{resource} AND subject_type = #{subjectType} AND subject_id = #{subjectId}
+    </delete>
+</mapper>

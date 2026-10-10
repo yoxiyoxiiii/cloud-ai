@@ -42,12 +42,19 @@ export const DASHBOARD_ITEM: MenuItem = {
 /**
  * 动态路由名派生（设计 D9）：段首大写驼峰拼接——'/system/user' → 'SystemUser'
  * 约定：视图 defineOptions name 必须 = 派生名才能进 keep-alive 缓存
+ * 段内中横线按新词首大写（'/system/data-perm' → 'SystemDataPerm'，设计 §8 页面命名）——
+ * 未剥离中横线时派生名 'SystemData-perm' 与设计命名不符且 keep-alive include 失配
  */
 export function pathToRouteName(path: string): string {
   return path
     .split('/')
     .filter(Boolean)
-    .map((seg) => seg.charAt(0).toUpperCase() + seg.slice(1))
+    .map((seg) =>
+      seg
+        .split('-')
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(''),
+    )
     .join('')
 }
 

@@ -19,12 +19,12 @@ export function addLeave(payload: LeaveCreatePayload): Promise<string> {
   return request<string>({ url: '/system/leave', method: 'post', data: payload })
 }
 
-/** 我的请假分页（契约 §5.2，perms system:leave:list）：恒按当前登录人过滤（无查询参数——契约现状），id 倒序；status 经平台批量纠偏为实时值，Feign 失败降级本地快照（可能滞后记档） */
+/** 我的请假分页（契约 §5.2，perms system:leave:list；**行级语义变更** 契约 2026-10-10-data-permission-api §4.1）：按当前登录人数据权限规则求值（无规则=仅自己行为不变；admin 种子=全部），id 倒序，无查询参数（契约现状）；applyUserName/approverName 列表恒返；title/reason 可能被列规则置 null/"***"（前端展示空/原样）；status 经平台批量纠偏为实时值，Feign 失败降级本地快照（可能滞后记档） */
 export function pageLeave(query: LeavePageQuery): Promise<PageResult<SysLeaveVo>> {
   return request<PageResult<SysLeaveVo>>({ url: '/system/leave/page', method: 'get', params: query })
 }
 
-/** 请假单详情（契约 §5.3，perms system:leave:list）：仅 leave 主体（不含时间线/图——前端按 approvalId 另调平台 §3.2/§3.4 拼装）；纠偏失败抛 3022；请假单不存在得 3018 */
+/** 请假单详情（契约 §5.3，perms system:leave:list；**行级判定语义变更** 契约 2026-10-10-data-permission-api §4.2）：归属账号不在数据范围 → 3026 无权访问该数据（拦截器统一 toast，弹窗打不开即无权，不做二次提示）；3018 仅真不存在；列级同列表应用；仅 leave 主体（不含时间线/图——前端按 approvalId 另调平台 §3.2/§3.4 拼装）；纠偏失败抛 3022 */
 export function getLeaveDetail(id: string): Promise<SysLeaveDetailVo> {
   return request<SysLeaveDetailVo>({ url: `/system/leave/${id}`, method: 'get' })
 }

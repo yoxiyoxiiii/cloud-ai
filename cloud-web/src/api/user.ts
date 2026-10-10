@@ -19,12 +19,17 @@ export interface CreateUserPayload {
   password: string
   /** 0 正常 / 1 停用 */
   status: number
+  /** 部门 id（契约 2026-10-10-data-permission-api §5.1 additive）：可选，不传/null=不挂部门；无效 3027 */
+  deptId?: string
 }
 
 export interface UpdateUserPayload {
   id: string
   nickname: string
   status: number
+  /** 部门 id（契约 2026-10-10-data-permission-api §5.1 additive）：null 不更新该列（部分更新语义，
+   *  契约无清空通道——编辑清空不生效，仅换挂其他部门可表达）；无效 3027 */
+  deptId?: string
 }
 
 export interface AssignRolePayload {

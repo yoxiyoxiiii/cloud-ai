@@ -11,6 +11,7 @@ import com.cloudai.system.convert.SysUserConvert;
 import com.cloudai.system.dto.UserSaveRequest;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.entity.SysUserRole;
+import com.cloudai.system.mapper.SysDeptMapper;
 import com.cloudai.system.mapper.SysUserMapper;
 import com.cloudai.system.mapper.SysUserRoleMapper;
 import com.cloudai.system.vo.SysUserVo;
@@ -31,16 +32,23 @@ public class SysUserManageService {
     /** 错误码分段：3xxx system，保护域 3013-3017（契约 2026-10-07-builtin-protection-api §4） */
     private static final int ERR_BUILTIN = 3017;
 
+    /** 数据权限轮（契约 2026-10-10-data-permission-api §5.1/§8）：用户保存 deptId 校验 */
+    private static final int ERR_DEPT_NOT_FOUND = 3027;
+
     private final SysUserMapper userMapper;
     private final SysUserRoleMapper userRoleMapper;
+    private final SysDeptMapper deptMapper;
     private final PasswordEncoder passwordEncoder;
     private final TranslationCacheService translationCacheService;
 
+    /**
+     * 分页查询（数据权限轮 D14 改型）：mapper VO 直出（LEFT JOIN sys_dept 派生 deptName），
+     * 无实体可转——convert 层本链路退役，沿 SysLeaveMapper.pageList 派生列直出 VO 先例。
+     */
     public PageResult<SysUserVo> pageList(PageQuery query) {
-        IPage<SysUser> page = userMapper.pageList(
+        IPage<SysUserVo> page = userMapper.pageList(
                 new Page<>(query.getPageNum(), query.getPageSize()));
-        List<SysUserVo> rows = page.getRecords().stream().map(SysUserConvert::toVo).toList();
-        return PageResult.of(page.getTotal(), rows);
+        return PageResult.of(page.getTotal(), page.getRecords());
     }
 
     public SysUserVo findById(Long id) {
@@ -64,6 +72,7 @@ public class SysUserManageService {
         SysUser user = new SysUser();
         user.setAccount(req.getAccount());
         user.setNickname(req.getNickname() == null ? req.getAccount() : req.getNickname());
+        user.setDeptId(requireDeptId(req.getDeptId()));
         user.setPassword(passwordEncoder.encode(req.getPassword()));
         user.setStatus(req.getStatus() == null ? SysUser.StatusEnum.NORMAL.getCode() : req.getStatus());
         // 手写 SQL 无 MetaObjectHandler 自动填充：审计四值显式传入，插入时 update 值 = create 值
@@ -93,6 +102,7 @@ public class SysUserManageService {
             throw new BusinessException(ERR_BUILTIN, "内置用户禁止停用");
         }
         user.setNickname(req.getNickname());
+        user.setDeptId(requireDeptId(req.getDeptId()));
         user.setStatus(req.getStatus());
         user.setUpdateBy(SecurityUtils.currentAccount());
         user.setUpdateTime(LocalDateTime.now());
@@ -164,5 +174,16 @@ public class SysUserManageService {
             throw new BusinessException(3001, "用户不存在");
         }
         return user;
+    }
+
+    /** deptId 校验（契约 §5.1）：null=不挂部门放行；传入时部门必须存在且未删（3027） */
+    private Long requireDeptId(Long deptId) {
+        if (deptId == null) {
+            return null;
+        }
+        if (deptMapper.findById(deptId) == null) {
+            throw new BusinessException(ERR_DEPT_NOT_FOUND, "部门不存在");
+        }
+        return deptId;
     }
 }

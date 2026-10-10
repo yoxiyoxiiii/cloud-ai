@@ -7,8 +7,10 @@
          INSERT/UPDATE 的审计列（create_by/create_time/update_by/update_time）由 Service 显式传参（操作人 SecurityUtils.currentAccount()）。
          update_by 采用 <if> 判空：匿名场景与原自动填充语义一致——保留原 update_by 不清空。 -->
     <!-- is_builtin 只读列：仅查询加载供保护校验，INSERT/UPDATE 列枚举不含（结构性防篡改，新增行落 DEFAULT 0） -->
+    <!-- dept_id（数据权限轮 B2 增量）：findByAccount/findById 复用本片段——求值器部门档展开与
+         详情回显依赖该列，遗漏会导致 deptId 恒 null、部门范围档求值恒空集（B8 实测发现） -->
     <sql id="allColumns">
-        id, account, nickname, password, status, is_builtin,
+        id, account, nickname, dept_id, password, status, is_builtin,
         create_by, create_time, update_by, update_time, deleted
     </sql>
 
@@ -25,18 +27,46 @@
          WHERE id = #{id} AND deleted = 0
     </select>
 
-    <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT -->
-    <select id="pageList" resultType="com.cloudai.system.entity.SysUser">
-        SELECT <include refid="allColumns"/>
-          FROM sys_user
-         WHERE deleted = 0
-         ORDER BY id DESC
+    <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT；
+         数据权限轮 D14 改型：resultType 换 SysUserVo + LEFT JOIN sys_dept 派生 deptName
+         （派生列无实体承载，沿 SysLeaveMapper.pageList VO 直出先例）；
+         投影不含 password（原 allColumns 含，改型后 pageList 专用列清单）；
+         用户挂靠部门被删后 deptName 降级 null 不阻断列表（JOIN 条件带 d.deleted=0）；
+         is_builtin 必须带 AS builtin 别名（2026-10-10 修复）：裸列自动映射目标 isBuiltin
+         为实体字段名，SysUserVo 无此属性（VO 字段名 builtin，Boolean）——映射断裂 builtin=null
+         （违 builtin-protection 契约 §7.1 必返 boolean；MapperXmlBindingTest 钉回归） -->
+    <select id="pageList" resultType="com.cloudai.system.vo.SysUserVo">
+        SELECT u.id, u.account, u.nickname, u.dept_id, u.status, u.is_builtin AS builtin,
+               u.create_by, u.create_time, u.update_by, u.update_time,
+               d.name AS dept_name
+          FROM sys_user u
+          LEFT JOIN sys_dept d ON u.dept_id = d.id AND d.deleted = 0
+         WHERE u.deleted = 0
+         ORDER BY u.id DESC
     </select>
 
     <select id="countByAccount" resultType="long">
         SELECT COUNT(*)
           FROM sys_user
          WHERE account = #{account} AND deleted = 0
+    </select>
+
+    <!-- 部门删除前置校验（契约 §2.4）：在职用户 = 未删用户（含停用账号） -->
+    <select id="countByDeptId" resultType="long">
+        SELECT COUNT(*)
+          FROM sys_user
+         WHERE dept_id = #{deptId} AND deleted = 0
+    </select>
+
+    <!-- 数据权限求值展开（设计 D4）：部门(含子树)→启用账号集合；deptIds 空集由 Service 跳过调用防 IN () -->
+    <select id="listEnabledAccountsByDeptIds" resultType="string">
+        SELECT account
+          FROM sys_user
+         WHERE status = 0 AND deleted = 0
+           AND dept_id IN
+           <foreach collection="deptIds" item="deptId" open="(" separator="," close=")">
+               #{deptId}
+           </foreach>
     </select>
 
     <!-- 登录权限聚合（替代原 5 连查）：账号 → 用户-角色 → 启用角色 → 角色-菜单 → 启用菜单 → 非空 perms -->
@@ -67,19 +97,34 @@
          ORDER BY id ASC
     </select>
 
+    <!-- 数据权限规则分页行 subjectName 批量回填；ids 空集由 Service 跳过（防 IN ()），已删用户缺名由调用方降级 -->
+    <select id="listByIds" resultType="com.cloudai.system.entity.SysUser">
+        SELECT id, account, nickname
+          FROM sys_user
+         WHERE deleted = 0
+           AND id IN
+           <foreach collection="ids" item="id" open="(" separator="," close=")">
+               #{id}
+           </foreach>
+    </select>
+
     <insert id="save" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO sys_user (account, nickname, password, status,
+        INSERT INTO sys_user (account, nickname, dept_id, password, status,
                               create_by, create_time, update_by, update_time)
-        VALUES (#{account}, #{nickname}, #{password}, #{status},
+        VALUES (#{account}, #{nickname}, #{deptId}, #{password}, #{status},
                 #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
     </insert>
 
-    <!-- 动态列等价原 updateById 的 NOT_NULL 字段策略：null 列不改库值 -->
+    <!-- 动态列等价原 updateById 的 NOT_NULL 字段策略：null 列不改库值
+         （含 deptId：契约 §5.1 部分更新语义，null 不更新该列） -->
     <update id="update">
         UPDATE sys_user
         <set>
             <if test="nickname != null">
                 nickname = #{nickname},
+            </if>
+            <if test="deptId != null">
+                dept_id = #{deptId},
             </if>
             <if test="status != null">
                 status = #{status},

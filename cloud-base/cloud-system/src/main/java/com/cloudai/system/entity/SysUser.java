@@ -23,6 +23,9 @@ public class SysUser extends BaseEntity {
 
     private String nickname;
 
+    /** 部门ID（sys_dept.id；NULL=未挂部门，部门类数据权限档位求值展开为空集——数据权限轮设计 §3.5） */
+    private Long deptId;
+
     /** BCrypt 散列；序列化与 toString 均不出现 */
     @ToString.Exclude
     @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)

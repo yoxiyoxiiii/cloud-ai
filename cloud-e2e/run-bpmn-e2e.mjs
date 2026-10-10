@@ -36,7 +36,7 @@
  *   X 3023 探针（approver=nobody，被校验拦截永不落库）
  *
  * 场景（契约 §11 验收口径）：
- * - BP0 admin 登录 + 请假申请页骨架（侧边 9 项/高亮/面包屑/表头 8 列/发起按钮=权限快照证据）+
+ * - BP0 admin 登录 + 请假申请页骨架（侧边 11 项/高亮/面包屑/表头 8 列/发起按钮=权限快照证据）+
  *   旧 /bpmn/leave 直访 NotFound（一次性切换实证）
  * - BP1 发起弹窗形态：类型下拉恰 3 项（字典 system_leave_type 消费）+ 审批人下拉含 admin（system 本库投影，仅启用）
  * - BP2 发起（A）→ 请假申请行：审批中 tag + 类型译文 + 审批人昵称（UI 层）
@@ -548,7 +548,7 @@ async function closeLeaveDetail() {
 
 try {
   // ================= BP0 登录 + 请假申请页骨架 + 旧路由NotFound =================
-  await step('BP0', '无 token 直访被拦 → admin 登录回跳 + 侧边 9 项（请假申请高亮）+ 面包屑 + 表头 8 列 + 发起按钮 + 旧 /bpmn/leave 直访 NotFound', async () => {
+  await step('BP0', '无 token 直访被拦 → admin 登录回跳 + 侧边 11 项（请假申请高亮）+ 面包屑 + 表头 8 列 + 发起按钮 + 旧 /bpmn/leave 直访 NotFound', async () => {
     await page.goto(`${BASE}${LEAVE_PATH}`, { waitUntil: 'domcontentloaded', timeout: 30000 })
     await page.waitForURL('**/login**', { timeout: 10000 })
     const url = new URL(page.url())
@@ -565,7 +565,7 @@ try {
     const labels = []
     for (let i = 0; i < n; i++) labels.push((await items.nth(i).innerText()).trim())
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,请假申请,我的审批,待办任务,流程定义,工作台', '侧边菜单顺序（Round I 迁移后 9 项形态：31 改造 + 34 新增）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,请假申请,我的审批,待办任务,流程定义,工作台', '侧边菜单顺序（数据权限轮后 11 项形态：Round I 31 改造 + 34 新增 + 15/16 部门/数据权限）')
     assertEq(((await page.locator('.el-menu-item.is-active').innerText()) || '').trim(), '请假申请', `${LEAVE_PATH} 下请假申请应高亮`)
     const bc = await breadcrumbTexts(page)
     log(`  面包屑: ${JSON.stringify(bc)}`)

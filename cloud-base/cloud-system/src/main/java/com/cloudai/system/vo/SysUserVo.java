@@ -25,6 +25,12 @@ public class SysUserVo implements Serializable {
 
     private String nickname;
 
+    /** 部门ID（数据权限轮契约 §5.2；null=未挂部门） */
+    private Long deptId;
+
+    /** 部门名称（pageList LEFT JOIN sys_dept 派生——D14 VO 直出；挂靠部门被删后 null 不阻断） */
+    private String deptName;
+
     /** 0正常 1停用（原字段：行内逻辑判断/tag 颜色映射/筛选依据；字典见 SysUser.StatusEnum） */
     @DictTrans(dictKey = "user_status", labelField = "statusLabel")
     private Integer status;

@@ -15,10 +15,16 @@ public final class SecurityUtils {
 
     /** 当前登录账号；匿名/无上下文返回 null */
     public static String currentAccount() {
+        LoginUser user = currentUser();
+        return user == null ? null : user.getAccount();
+    }
+
+    /** 当前登录用户上下文（含 userId——数据权限求值需要，设计 §5.4 additive）；匿名/无上下文返回 null */
+    public static LoginUser currentUser() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth instanceof UsernamePasswordAuthenticationToken token
                 && token.getPrincipal() instanceof LoginUser loginUser) {
-            return loginUser.getAccount();
+            return loginUser;
         }
         return null;
     }

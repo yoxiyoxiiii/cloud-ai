@@ -43,11 +43,11 @@ public class LeaveController {
         return R.ok(id);
     }
 
-    /** 我的请假分页（id 倒序；状态读时纠偏，Feign 失败降级快照） */
+    /** 请假分页（数据权限轮契约 §4.1）：行集=当前登录人数据权限求值范围；姓名恒返、title/reason 可能脱敏/置空 */
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('system:leave:list')")
     public R<PageResult<SysLeaveVo>> page(PageQuery query) {
-        PageResult<SysLeaveVo> page = manageService.pageListMy(query, SecurityUtils.currentAccount());
+        PageResult<SysLeaveVo> page = manageService.pageList(query);
         return R.ok(page);
     }
 

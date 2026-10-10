@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.DataPermLogMapper">
+
+    <!-- 只插不删流水表（设计 D7）：无 deleted 列、无 update/delete 路径；
+         create_time 由 DDL DEFAULT CURRENT_TIMESTAMP 兜底，Service 显式传值对齐 -->
+    <sql id="allColumns">
+        id, account, resource, operation, rule_ids, rule_digest,
+        scope_summary, column_summary, business_key, create_time
+    </sql>
+
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_data_perm_log (account, resource, operation, rule_ids, rule_digest,
+                                       scope_summary, column_summary, business_key, create_time)
+        VALUES (#{account}, #{resource}, #{operation}, #{ruleIds}, #{ruleDigest},
+                #{scopeSummary}, #{columnSummary}, #{businessKey}, #{createTime})
+    </insert>
+
+    <!-- 留痕检索：account 等值命中 idx_account_time（等值+时间倒序范围）、resource 命中 idx_resource_time -->
+    <select id="pageList" resultType="com.cloudai.system.entity.SysDataPermLog">
+        SELECT <include refid="allColumns"/>
+          FROM sys_data_perm_log
+        <where>
+            <if test="account != null and account != ''">
+                AND account = #{account}
+            </if>
+            <if test="resource != null and resource != ''">
+                AND resource = #{resource}
+            </if>
+        </where>
+        ORDER BY id DESC
+    </select>
+</mapper>

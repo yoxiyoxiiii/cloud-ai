@@ -12,6 +12,10 @@ DROP TABLE IF EXISTS sys_menu;
 DROP TABLE IF EXISTS sys_dict_data;
 DROP TABLE IF EXISTS sys_dict_type;
 DROP TABLE IF EXISTS sys_leave;
+DROP TABLE IF EXISTS sys_dept;
+DROP TABLE IF EXISTS sys_data_perm_rule;
+DROP TABLE IF EXISTS sys_data_perm_column;
+DROP TABLE IF EXISTS sys_data_perm_log;
 DROP TABLE IF EXISTS mq_tx_log;
 DROP TABLE IF EXISTS mq_consume_dedup;
 DROP TABLE IF EXISTS approval_projection;
@@ -21,6 +25,7 @@ CREATE TABLE sys_user (
     id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '用户ID',
     account     VARCHAR(30)  NOT NULL COMMENT '登录账号',
     nickname    VARCHAR(30)  NOT NULL DEFAULT '' COMMENT '昵称',
+    dept_id     BIGINT       NULL     COMMENT '部门ID（sys_dept.id；NULL=未挂部门，部门类档位求值展开为空集）',
     password    VARCHAR(100) NOT NULL COMMENT 'BCrypt 密码散列',
     status      TINYINT      NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
     is_builtin  TINYINT      NOT NULL DEFAULT 0 COMMENT '内置标记：1=系统内置（禁删禁停用，昵称可改），0=用户创建',
@@ -30,7 +35,8 @@ CREATE TABLE sys_user (
     update_time DATETIME     DEFAULT NULL COMMENT '更新时间',
     deleted     TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_account (account)
+    UNIQUE KEY uk_account (account),
+    KEY idx_dept_id (dept_id)
 ) ENGINE = InnoDB COMMENT = '用户表';
 
 -- 角色
@@ -69,6 +75,26 @@ CREATE TABLE sys_menu (
     PRIMARY KEY (id),
     KEY idx_parent_id (parent_id)
 ) ENGINE = InnoDB COMMENT = '菜单权限表';
+
+-- 部门表（数据权限轮 2026-10-10，设计 §3.1；与增量脚本 2026-10-10-data-permission.sql 同步落同一份定义）：
+-- parent_id=0 为根的邻接表（沿 sys_menu 先例）。
+-- 索引取舍：uk_parent_name 一键三用——同级重名查重 / 父节点子级扫描（最左前缀 parent_id）；
+--   不另建 idx_parent_id（被 uk 最左前缀覆盖，沿 uk_type_value 先例）；不建 deleted 单列（0/1 低选择性）。
+CREATE TABLE sys_dept (
+    id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '部门ID',
+    parent_id   BIGINT      NOT NULL DEFAULT 0 COMMENT '父部门ID，0为根',
+    name        VARCHAR(30) NOT NULL COMMENT '部门名称',
+    sort        INT         NOT NULL DEFAULT 0 COMMENT '排序（同级内升序）',
+    status      TINYINT     NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
+    is_builtin  TINYINT     NOT NULL DEFAULT 0 COMMENT '内置标记：1=系统内置根部门（禁删），0=用户创建',
+    create_by   VARCHAR(30) DEFAULT NULL COMMENT '创建人',
+    create_time DATETIME    DEFAULT NULL COMMENT '创建时间',
+    update_by   VARCHAR(30) DEFAULT NULL COMMENT '更新人',
+    update_time DATETIME    DEFAULT NULL COMMENT '更新时间',
+    deleted     TINYINT     NOT NULL DEFAULT 0 COMMENT '逻辑删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_parent_name (parent_id, name)
+) ENGINE = InnoDB COMMENT = '部门表（树形，parent_id=0 为根；同级重名由 uk_parent_name 约束）';
 
 -- 字典类型/字典项（数据字典管理，2026-10-07；与增量脚本 2026-10-07-dict-mgmt.sql 同步落同一份定义）
 CREATE TABLE sys_dict_type (
@@ -204,6 +230,62 @@ CREATE TABLE approval_projection (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
   COMMENT='审批状态本地投影（bpmn_approval 只读副本，真相源不变；cloud-bpmn-api 框架组件写入：事件消费 upsert + 定时对账；业务表 JOIN 读，业务侧禁止直写）';
 
+-- 数据权限行级规则（数据权限轮 2026-10-10 设计 §3.2，与增量脚本同步落同一份定义；物理删除——D9）：
+-- 索引取舍：uk_resource_subject 兼查重与求值查询（求值器 resource 等值 + subject 过滤最左前缀命中）；
+--   无 deleted 列（规则删除=物理 DELETE，墓碑占 uk 会废掉 upsert「删了再配」语义，配置历史观察归留痕表）。
+CREATE TABLE sys_data_perm_rule (
+    id              BIGINT        NOT NULL AUTO_INCREMENT COMMENT '规则ID',
+    resource        VARCHAR(50)   NOT NULL COMMENT '资源标识（DataPermResources 注册表管辖，如 leave）',
+    subject_type    TINYINT       NOT NULL COMMENT '主体类型：0=角色 1=用户',
+    subject_id      BIGINT        NOT NULL COMMENT '主体ID（subject_type=0 时 sys_role.id，=1 时 sys_user.id）',
+    row_scope       TINYINT       NOT NULL COMMENT '行范围档位：0仅自己 1本部门 2本部门及以下 3自定义集合 4全部',
+    custom_accounts VARCHAR(1000) NULL     COMMENT '自定义账号集合（row_scope=3 时生效，JSON 数组字符串如 ["zhang3","lisi4"]；其余档位 NULL）',
+    create_by       VARCHAR(30)   DEFAULT NULL COMMENT '创建人',
+    create_time     DATETIME      DEFAULT NULL COMMENT '创建时间',
+    update_by       VARCHAR(30)   DEFAULT NULL COMMENT '更新人',
+    update_time     DATETIME      DEFAULT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_resource_subject (resource, subject_type, subject_id)
+) ENGINE = InnoDB COMMENT = '数据权限行级规则（配置态数据物理删除无 deleted 列；同主体同资源至多一条，upsert 依据即 uk）';
+
+-- 数据权限列级规则（设计 §3.3，物理删除同 D9）：
+-- 索引取舍：uk_subject_column 兼查重与求值/回显查询（最左前缀 resource+subject 覆盖按主体取列规则）；
+--   列规则按 save 全删全插维护，无独立 update 路径。
+CREATE TABLE sys_data_perm_column (
+    id           BIGINT      NOT NULL AUTO_INCREMENT COMMENT '列规则ID',
+    resource     VARCHAR(50) NOT NULL COMMENT '资源标识（同 sys_data_perm_rule.resource）',
+    subject_type TINYINT     NOT NULL COMMENT '主体类型：0=角色 1=用户',
+    subject_id   BIGINT      NOT NULL COMMENT '主体ID',
+    column_key   VARCHAR(50) NOT NULL COMMENT '列标识（资源注册表 VO 字段名，如 reason；配置经 3034 校验）',
+    action       TINYINT     NOT NULL COMMENT '列动作：0隐藏 1脱敏',
+    create_by    VARCHAR(30) DEFAULT NULL COMMENT '创建人',
+    create_time  DATETIME    DEFAULT NULL COMMENT '创建时间',
+    update_by    VARCHAR(30) DEFAULT NULL COMMENT '更新人',
+    update_time  DATETIME    DEFAULT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_subject_column (resource, subject_type, subject_id, column_key)
+) ENGINE = InnoDB COMMENT = '数据权限列级规则（同 D9 物理删除；一主体一资源一列至多一条）';
+
+-- 数据权限决策留痕（设计 §3.4，只插不删的流水表——沿 mq_tx_log 先例）：
+-- 索引取舍：idx_account_time 命中排查页「按用户查决策史」（等值+时间倒序范围）；
+--   idx_resource_time 命中「按资源查」；无 update 路径；清理任务（保留窗口）移交。
+CREATE TABLE sys_data_perm_log (
+    id             BIGINT       NOT NULL AUTO_INCREMENT COMMENT '留痕ID',
+    account        VARCHAR(30)  NOT NULL COMMENT '决策对象账号（求值时的登录人）',
+    resource       VARCHAR(50)  NOT NULL COMMENT '资源标识',
+    operation      VARCHAR(20)  NOT NULL COMMENT '操作：list 分页查询 / detail 详情查询 / deny 详情被拒（安全审计事件）',
+    rule_ids       VARCHAR(500) NULL     COMMENT '命中行规则ID集合（逗号分隔；NULL=无规则命中走默认档）',
+    rule_digest    VARCHAR(500) NULL     COMMENT '决策摘要（命中规则与档位可读描述，如 role:主管(id=2)本部门及以下|user:zhang3自定义集合2人）',
+    scope_summary  VARCHAR(200) NOT NULL COMMENT '行范围结论：all=过滤豁免 / accounts=N（展开账号数）/ empty=空集',
+    column_summary VARCHAR(200) NULL     COMMENT '列决策结论（如 reason:脱敏;title:隐藏；NULL=无列动作）',
+    business_key   VARCHAR(64)  NULL     COMMENT '业务键（detail/deny 时为目标单据 id；list 为 NULL）',
+    create_time    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '决策时间',
+    PRIMARY KEY (id),
+    KEY idx_account_time (account, create_time),
+    KEY idx_resource_time (resource, create_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  COMMENT='数据权限决策留痕（每次真实查询决策一条 + 详情拒绝补记 deny；排查页按账号/资源检索；只插不删，清理策略移交）';
+
 -- ---------- 初始数据 ----------
 -- 内置种子一律显式 is_builtin=1（内置保护契约 §1：后续新增内置种子 SQL 须带 is_builtin=1）
 INSERT INTO sys_role (id, name, role_key, is_builtin, create_time) VALUES (1, '管理员', 'admin', 1, NOW());
@@ -248,15 +330,34 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (312, 31, '撤销申请', 'system:leave:cancel', 'F', '', '', 2, 1, NOW()),
 (321, 32, '办理任务', 'bpmn:task:complete',  'F', '', '', 1, 1, NOW()),
 (331, 33, '部署流程', 'bpmn:definition:deploy', 'F', '', '', 1, 1, NOW()),
-(341, 34, '撤销审批', 'bpmn:approval:cancel','F', '', '', 1, 1, NOW());
+(341, 34, '撤销审批', 'bpmn:approval:cancel','F', '', '', 1, 1, NOW()),
+-- 数据权限菜单（15/16 菜单级 + 151/152/153、161/162 按钮级，全 is_builtin=1；与增量脚本
+-- 2026-10-10-data-permission.sql 语义等价，admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖）
+(15,  10, '部门管理', 'system:dept:list',     'C', '/system/dept',      'OfficeBuilding', 5, 1, NOW()),
+(151, 15, '部门新增', 'system:dept:add',      'F', '', '', 1, 1, NOW()),
+(152, 15, '部门修改', 'system:dept:edit',     'F', '', '', 2, 1, NOW()),
+(153, 15, '部门删除', 'system:dept:remove',   'F', '', '', 3, 1, NOW()),
+(16,  10, '数据权限', 'system:dataPerm:list', 'C', '/system/data-perm', 'Key',            6, 1, NOW()),
+(161, 16, '保存规则', 'system:dataPerm:save',   'F', '', '', 1, 1, NOW()),
+(162, 16, '删除规则', 'system:dataPerm:remove', 'F', '', '', 2, 1, NOW());
 
--- admin 账号（密码 admin123）
-INSERT INTO sys_user (id, account, nickname, password, is_builtin, create_time) VALUES
-(1, 'admin', '管理员', '$2a$10$.8cM9ZR8tr7HxklhRPzmwORoIi.z8urt0wZ4a3QaGwgFyyGMle4sG', 1, NOW());
+-- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价）
+INSERT INTO sys_user (id, account, nickname, dept_id, password, is_builtin, create_time) VALUES
+(1, 'admin', '管理员', 1, '$2a$10$.8cM9ZR8tr7HxklhRPzmwORoIi.z8urt0wZ4a3QaGwgFyyGMle4sG', 1, NOW());
 
 INSERT INTO sys_user_role (user_id, role_id, create_time) VALUES (1, 1, NOW());
 INSERT INTO sys_role_menu (role_id, menu_id, create_time)
 SELECT 1, id, NOW() FROM sys_menu;
+
+-- 数据权限种子（设计 §3.6，与增量脚本 2026-10-10-data-permission.sql 语义等价）：
+-- 根部门 is_builtin=1 内置保护禁删；admin 行规则=leave 全部档（无规则默认 SELF 会使 admin 看不到全量，
+-- 违背管理员预期——代码无 admin 特例，规则面前人人平等，设计 D3）
+INSERT INTO sys_dept (id, parent_id, name, sort, status, is_builtin, create_by, create_time, update_by, update_time)
+VALUES (1, 0, '总公司', 0, 0, 1, 'admin', NOW(), 'admin', NOW());
+
+INSERT INTO sys_data_perm_rule (resource, subject_type, subject_id, row_scope, custom_accounts,
+                                create_by, create_time, update_by, update_time)
+VALUES ('leave', 0, 1, 4, NULL, 'admin', NOW(), 'admin', NOW());
 
 -- 内置字典种子 user_status（与增量脚本 2026-10-07-translation.sql 语义等价；
 -- label 文案锁定契约 2026-10-07-translation-api §0.3，create_by='system' 内置标记）

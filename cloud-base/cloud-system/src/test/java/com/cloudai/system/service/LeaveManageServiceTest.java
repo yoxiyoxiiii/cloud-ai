@@ -8,17 +8,23 @@ import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
+import com.cloudai.system.service.dataperm.ColumnScope;
+import com.cloudai.system.service.dataperm.DataPermDecision;
+import com.cloudai.system.service.dataperm.DataPermEvaluator;
+import com.cloudai.system.service.dataperm.DataScope;
 import com.cloudai.system.vo.SysLeaveDetailVo;
 import com.cloudai.system.vo.SysLeaveVo;
 import com.cloudai.system.vo.UserOptionVo;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
@@ -26,13 +32,15 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * 请假读路径单测（契约 2026-10-09-approval-projection-api §4.1 读语义取代版）：
- * 纯本地零 Feign——mapper mock 返回 JOIN 派生 VO（SQL 正确性靠 B7 EXPLAIN+联调，单测覆盖 Service
- * 组装与翻译回填，设计 D11）；纠偏/分批/降级语义随读路径上移框架层整体退役（3022 读路径退役）。
+ * 请假读路径单测（数据权限轮契约 2026-10-10-data-permission-api §4 取代版）：
+ * 分页按求值范围（all 豁免/空集短路/白名单 IN）+ 姓名恒返 + 列级动作；详情行级判定 +
+ * 3026 IDOR 收口（deny 留痕）；投影派生 status 语义随上轮不变（mapper mock，SQL 正确性靠
+ * B8 EXPLAIN+联调）。
  */
 @ExtendWith(MockitoExtension.class)
 class LeaveManageServiceTest {
@@ -43,70 +51,143 @@ class LeaveManageServiceTest {
     private SysUserMapper userMapper;
     @Mock
     private TranslationCacheService translationCache;
+    @Mock
+    private DataPermEvaluator dataPermEvaluator;
     @InjectMocks
     private LeaveManageService service;
 
-    // ---- 分页：JOIN 派生直出 ----
+    // ---- 分页：求值范围三态 + 姓名回填 + 列级动作 ----
 
     @Test
-    void pageListMy_returnsDerivedVoRowsAsIs() {
+    void pageList_allScope_returnsDerivedVoRowsAsIs() {
         SysLeaveVo row = vo(5L, "1", 12L);
-        when(leaveMapper.pageList(any(Page.class), eq("leave"), eq("userA")))
+        when(dataPermEvaluator.evaluate("leave", "list", null))
+                .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of(), Set.of())));
+        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(DataScope.class)))
                 .thenReturn(pageOf(List.of(row)));
+        when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
-        PageResult<SysLeaveVo> result = service.pageListMy(query(1, 10), "userA");
+        PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
 
         assertThat(result.getTotal()).isEqualTo(1);
-        assertThat(result.getRows()).hasSize(1);
         assertThat(result.getRows().get(0).getStatus()).isEqualTo("1");
         assertThat(result.getRows().get(0).getApprovalId()).isEqualTo(12L);
     }
 
     @Test
-    void pageListMy_pendingWindowRowReadsZeroAndNullApprovalId() {
-        // 发起后秒级窗口（投影无行）：JOIN 派生 status=0、approvalId=null——时序窗口属正常语义（契约 §1.5）
-        SysLeaveVo row = vo(5L, "0", null);
-        when(leaveMapper.pageList(any(Page.class), eq("leave"), eq("userA")))
-                .thenReturn(pageOf(List.of(row)));
+    void pageList_emptyScope_shortCircuitsWithoutQuery() {
+        when(dataPermEvaluator.evaluate("leave", "list", null))
+                .thenReturn(decision(DataScope.of(Set.of()), ColumnScope.of(Set.of(), Set.of())));
 
-        PageResult<SysLeaveVo> result = service.pageListMy(query(1, 10), "userA");
+        PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
+
+        // 展开空集（如未挂部门用户仅本部门档规则）→ 空页不查库（契约 §4.1）
+        assertThat(result.getTotal()).isZero();
+        assertThat(result.getRows()).isEmpty();
+        verifyNoInteractions(leaveMapper);
+    }
+
+    @Test
+    void pageList_whitelistScope_passesAccountsToMapper() {
+        when(dataPermEvaluator.evaluate("leave", "list", null))
+                .thenReturn(decision(DataScope.of(Set.of("userA", "zhang3")),
+                        ColumnScope.of(Set.of(), Set.of())));
+        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(DataScope.class)))
+                .thenReturn(pageOf(List.of()));
+
+        service.pageList(query(1, 10));
+
+        // 白名单档：mapper 收到的 scope 即求值终态（XML 展开为 apply_user IN）
+        ArgumentCaptor<DataScope> scopeCaptor = ArgumentCaptor.forClass(DataScope.class);
+        verify(leaveMapper).pageList(any(Page.class), eq("leave"), scopeCaptor.capture());
+        assertThat(scopeCaptor.getValue().isAll()).isFalse();
+        assertThat(scopeCaptor.getValue().getAccounts()).containsExactlyInAnyOrder("userA", "zhang3");
+    }
+
+    @Test
+    void pageList_backfillsNamesAndAppliesColumnActions() {
+        SysLeaveVo row = vo(5L, "1", 12L);
+        row.setTitle("e2ecurldp-title");
+        row.setReason("e2ecurldp-reason");
+        when(dataPermEvaluator.evaluate("leave", "list", null))
+                .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of("title"), Set.of("reason"))));
+        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(DataScope.class)))
+                .thenReturn(pageOf(List.of(row)));
+        when(translationCache.findUserNames(anySet()))
+                .thenReturn(Map.of("userA", "UserA Name", "admin", "Admin"));
+
+        PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
+
+        SysLeaveVo out = result.getRows().get(0);
+        // 列级：title 隐藏置 null、reason 脱敏 ***；姓名列表恒返（契约 §4.1）
+        assertThat(out.getTitle()).isNull();
+        assertThat(out.getReason()).isEqualTo("***");
+        assertThat(out.getApplyUserName()).isEqualTo("UserA Name");
+        assertThat(out.getApproverName()).isEqualTo("Admin");
+    }
+
+    @Test
+    void pageList_pendingWindowRowReadsZeroAndNullApprovalId() {
+        SysLeaveVo row = vo(5L, "0", null);
+        when(dataPermEvaluator.evaluate("leave", "list", null))
+                .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of(), Set.of())));
+        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(DataScope.class)))
+                .thenReturn(pageOf(List.of(row)));
+        when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
+
+        PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
 
         assertThat(result.getRows().get(0).getStatus()).isEqualTo("0");
         assertThat(result.getRows().get(0).getApprovalId()).isNull();
     }
 
-    // ---- 详情：派生读 + 翻译回填 / 3018 ----
+    // ---- 详情：行级判定 + IDOR 收口 + 翻译回填 ----
 
     @Test
     void findById_notFoundRejected_3018() {
         when(leaveMapper.findById("leave", 9L)).thenReturn(null);
 
-        BusinessException ex = catchThrowableOfType(() -> service.findById(9L),
-                BusinessException.class);
+        BusinessException ex = catchThrowableOfType(() -> service.findById(9L), BusinessException.class);
 
         assertThat(ex.getCode()).isEqualTo(3018);
         assertThat(ex.getMessage()).isEqualTo("请假单不存在");
+        verifyNoInteractions(dataPermEvaluator);
     }
 
     @Test
-    void findById_happyPathDerivedStatus() {
+    void findById_outOfScope_rejected3026WithDenyLog() {
+        when(leaveMapper.findById("leave", 5L)).thenReturn(vo(5L, "1", 12L));
+        when(dataPermEvaluator.evaluate("leave", "detail", "5"))
+                .thenReturn(decision(DataScope.of(Set.of("someone-else")), ColumnScope.of(Set.of(), Set.of())));
+
+        BusinessException ex = catchThrowableOfType(() -> service.findById(5L), BusinessException.class);
+
+        // 归属账号不在范围 → 3026 + deny 留痕（IDOR 收口，D13）
+        assertThat(ex.getCode()).isEqualTo(3026);
+        verify(dataPermEvaluator).logDeny("leave", "5");
+    }
+
+    @Test
+    void findById_whitelistScopeContainingOwner_visible() {
         when(leaveMapper.findById("leave", 5L)).thenReturn(vo(5L, "2", 12L));
+        when(dataPermEvaluator.evaluate("leave", "detail", "5"))
+                .thenReturn(decision(DataScope.of(Set.of("userA")), ColumnScope.of(Set.of(), Set.of())));
         when(translationCache.findDictLabels(anyString(), anySet())).thenReturn(Map.of());
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
         SysLeaveDetailVo detail = service.findById(5L);
 
         assertThat(detail.getLeave().getStatus()).isEqualTo("2");
-        assertThat(detail.getLeave().getApprovalId()).isEqualTo(12L);
+        verify(dataPermEvaluator, org.mockito.Mockito.never()).logDeny(anyString(), anyString());
     }
 
     @Test
     void findById_detailLabelsBackfilledFromTranslationCache() {
-        // 契约 §9：详情嵌套 {leave: SysLeaveVo} 手动回填（advisor 只扫顶层，不递归包装）；
-        // leaveType/status 均 String 键（VO 契约形态，派生读后无 Integer 化转换）
         SysLeaveVo row = vo(6L, "1", 12L);
         row.setLeaveType("3");
         when(leaveMapper.findById("leave", 6L)).thenReturn(row);
+        when(dataPermEvaluator.evaluate("leave", "detail", "6"))
+                .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of(), Set.of())));
         when(translationCache.findDictLabels(eq("system_leave_type"), anySet()))
                 .thenReturn(Map.of("3", "Annual"));
         when(translationCache.findDictLabels(eq("bpmn_approval_status"), anySet()))
@@ -123,8 +204,9 @@ class LeaveManageServiceTest {
 
     @Test
     void findById_cacheMissLeavesLabelsNull() {
-        // 缓存未命中 → 译文置 null（同 advisor 降级语义），不抛
         when(leaveMapper.findById("leave", 6L)).thenReturn(vo(6L, "0", null));
+        when(dataPermEvaluator.evaluate("leave", "detail", "6"))
+                .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of(), Set.of())));
         when(translationCache.findDictLabels(anyString(), anySet())).thenReturn(Map.of());
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
@@ -133,6 +215,24 @@ class LeaveManageServiceTest {
         assertThat(detail.getLeave().getStatusLabel()).isNull();
         assertThat(detail.getLeave().getApplyUserName()).isNull();
         assertThat(detail.getLeave().getApproverName()).isNull();
+    }
+
+    @Test
+    void findById_appliesColumnScopeOnVisibleRow() {
+        SysLeaveVo row = vo(6L, "1", 12L);
+        row.setTitle("t");
+        row.setReason("r");
+        when(leaveMapper.findById("leave", 6L)).thenReturn(row);
+        when(dataPermEvaluator.evaluate("leave", "detail", "6"))
+                .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of(), Set.of("reason"))));
+        when(translationCache.findDictLabels(anyString(), anySet())).thenReturn(Map.of());
+        when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
+
+        SysLeaveDetailVo detail = service.findById(6L);
+
+        // 详情列级同列表应用（契约 §4.2）
+        assertThat(detail.getLeave().getReason()).isEqualTo("***");
+        assertThat(detail.getLeave().getTitle()).isEqualTo("t");
     }
 
     // ---- 审批人投影（§5.5 仅启用）----
@@ -145,7 +245,6 @@ class LeaveManageServiceTest {
 
         List<UserOptionVo> approvers = service.listApprovers();
 
-        // listEnabledOptions 已过滤停用（SQL status=0），此处验证投影映射
         assertThat(approvers).hasSize(2);
         assertThat(approvers.get(0).getId()).isEqualTo(1L);
         assertThat(approvers.get(0).getAccount()).isEqualTo("admin");
@@ -161,6 +260,16 @@ class LeaveManageServiceTest {
     }
 
     // ---- 脚手架 ----
+
+    private DataPermDecision decision(DataScope scope, ColumnScope columnScope) {
+        DataPermDecision decision = new DataPermDecision();
+        decision.setResource("leave");
+        decision.setAccount("userA");
+        decision.setOperation("list");
+        decision.setDataScope(scope);
+        decision.setColumnScope(columnScope);
+        return decision;
+    }
 
     private PageQuery query(int pageNum, int pageSize) {
         PageQuery query = new PageQuery();

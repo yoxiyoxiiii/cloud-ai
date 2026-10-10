@@ -3,6 +3,7 @@ package com.cloudai.system.mapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.system.entity.SysLeave;
+import com.cloudai.system.service.dataperm.DataScope;
 import com.cloudai.system.vo.SysLeaveVo;
 import org.apache.ibatis.annotations.Param;
 
@@ -17,10 +18,13 @@ public interface SysLeaveMapper {
     /** 详情读：JOIN 投影派生 status（§1.5 CASE）+ approval_id 直出 */
     SysLeaveVo findById(@Param("businessType") String businessType, @Param("id") Long id);
 
-    /** 我的请假分页：无 LIMIT，由 PaginationInnerInterceptor 追加；恒按申请人过滤（契约 §5.2） */
+    /**
+     * 请假分页（数据权限轮契约 §4.1 改型）：行集=数据权限求值范围——scope.all=true 过滤豁免全量；
+     * 否则按账号白名单 IN 过滤 apply_user。空集范围由 Service 短路不进本方法，XML 永不收到空集合。
+     */
     IPage<SysLeaveVo> pageList(Page<SysLeaveVo> page,
                                @Param("businessType") String businessType,
-                               @Param("applyUser") String applyUser);
+                               @Param("scope") DataScope scope);
 
     /** 发起落库（snowflake 预生成 id 显式插入，半消息体发送前需知 businessKey，设计 R2） */
     int save(SysLeave leave);

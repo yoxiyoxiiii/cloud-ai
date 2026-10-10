@@ -88,8 +88,10 @@ class ArchitectureGuardTest {
     @Test
     void master_table_sql_must_handle_deleted() throws IOException {
         // 主表（带逻辑删除列）的每条 select/update 语句必须出现 deleted。
-        // 词边界匹配：sys_role_menu 不算 sys_role/sys_menu（关系表无逻辑删除）
-        Pattern masterTable = Pattern.compile("\\bsys_user\\b|\\bsys_role\\b|\\bsys_menu\\b|\\bsys_leave\\b");
+        // 词边界匹配：sys_role_menu 不算 sys_role/sys_menu（关系表无逻辑删除）；
+        // sys_dept 随数据权限轮（2026-10-10）纳入主表集；sys_data_perm_* 物理删表无 deleted 列不在此列（设计 D9）
+        Pattern masterTable = Pattern.compile(
+                "\\bsys_user\\b|\\bsys_role\\b|\\bsys_menu\\b|\\bsys_leave\\b|\\bsys_dept\\b");
         List<String> violations = new ArrayList<>();
         for (Path xml : listFiles(MAIN_MAPPER_XML, "*.xml")) {
             String content = Files.readString(xml, StandardCharsets.UTF_8);
@@ -103,7 +105,7 @@ class ArchitectureGuardTest {
                 }
             }
         }
-        assertThat(violations).as("master table (sys_user/sys_role/sys_menu/sys_leave) SQL must have explicit deleted").isEmpty();
+        assertThat(violations).as("master table (sys_user/sys_role/sys_menu/sys_leave/sys_dept) SQL must have explicit deleted").isEmpty();
     }
 
     @Test
@@ -206,9 +208,14 @@ class ArchitectureGuardTest {
      * 方法命名白名单前缀：CRUD 动词集 find/save/update/pageList/list/delete/count；
      * 另放行 reset/assign（重置密码/分配角色菜单——领域动作动词，非通用读写，保留原名）、
      * cancel（请假/审批撤销，2026-10-08 审批平台化）与 getter/setter（get/set/is）。
+     * 数据权限轮（2026-10-10）追加：领域动词 evaluate/explain（求值/模拟解释）、logDeny（deny 留痕）、
+     * myScope（自查摘要）——求值器与配置服务核心入口；值对象惯用语 all/of（DataScope 工厂）、
+     * allows（范围判定）、mask（脱敏应用）、assert（注册表断言 assertResource/assertColumn）——
+     * service/dataperm 下值对象非 CRUD 语境，语义化命名优先。
      */
     private static final Pattern NAMING_PREFIX_OK =
-            Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|cancel|get|set|is)\\w*");
+            Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|cancel|get|set|is"
+                    + "|evaluate|explain|logDeny|myScope|all|of|allows|mask|assert)\\w*");
 
     /** 语句起始关键字（throw new Xxx( / return foo( 会被误判为声明，前置排除） */
     private static final List<String> STATEMENT_KEYWORDS = List.of(

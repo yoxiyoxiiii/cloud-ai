@@ -3,7 +3,8 @@ import { computed, reactive, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { createUser, updateUser } from '../../../../api/user'
-import type { SysUserVo } from '../../../../types/api'
+import { treeDept } from '../../../../api/dept'
+import type { SysDeptTreeNode, SysUserVo } from '../../../../types/api'
 
 export type UserFormMode = 'add' | 'edit'
 
@@ -25,6 +26,8 @@ interface UserFormData {
   nickname: string
   password: string
   status: number
+  /** 部门 id（契约 2026-10-10-data-permission-api §5.1 additive）：undefined=不挂/不改 */
+  deptId: string | undefined
 }
 
 /** 用户状态（契约 §3）：0=正常 1=停用 */
@@ -33,11 +36,15 @@ const STATUS_DISABLED = 1
 
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+/** 部门树数据源（契约 §2.1 dept/tree，hasAnyAuthority 含 user:add/user:edit——表单共同数据源，设计 D12） */
+const deptTree = ref<SysDeptTreeNode[]>([])
+const deptTreeLoaded = ref(false)
 const form = reactive<UserFormData>({
   account: '',
   nickname: '',
   password: '',
   status: STATUS_NORMAL,
+  deptId: undefined,
 })
 
 const rules: FormRules<UserFormData> = {
@@ -53,7 +60,7 @@ const rules: FormRules<UserFormData> = {
 
 const title = computed(() => (props.mode === 'add' ? '新增用户' : '编辑用户'))
 
-/** 打开时初始化：编辑回显行数据（account 只读展示），新增给默认值 */
+/** 打开时初始化：编辑回显行数据（account 只读展示），新增给默认值；并惰性加载部门树（一次） */
 watch(
   () => props.modelValue,
   (visible) => {
@@ -66,11 +73,23 @@ watch(
       form.nickname = props.user.nickname
       form.password = ''
       form.status = props.user.status
+      form.deptId = props.user.deptId ?? undefined
     } else {
       form.account = ''
       form.nickname = ''
       form.password = ''
       form.status = STATUS_NORMAL
+      form.deptId = undefined
+    }
+    if (!deptTreeLoaded.value) {
+      treeDept()
+        .then((tree) => {
+          deptTree.value = tree
+          deptTreeLoaded.value = true
+        })
+        .catch(() => {
+          // 拦截器已统一 toast；选择器空候选不阻断表单其余字段提交
+        })
     }
   },
 )
@@ -88,21 +107,23 @@ async function handleSubmit(): Promise<void> {
         nickname: form.nickname,
         password: form.password,
         status: form.status,
+        deptId: form.deptId,
       })
       ElMessage.success('新增成功')
     } else if (props.user) {
-      // account 与 password 不可改（契约 §3.4），仅提交 id/nickname/status
+      // account 与 password 不可改（契约 §3.4），仅提交 id/nickname/status/deptId
       await updateUser({
         id: props.user.id,
         nickname: form.nickname,
         status: form.status,
+        deptId: form.deptId,
       })
       ElMessage.success('保存成功')
     }
     emit('success')
     emit('update:modelValue', false)
   } catch {
-    // 拦截器已统一 toast（如账号已存在的业务 msg）
+    // 拦截器已统一 toast（如账号已存在 / 部门无效 3027 的业务 msg）
   } finally {
     loading.value = false
   }
@@ -139,6 +160,22 @@ async function handleSubmit(): Promise<void> {
           :disabled="loading"
         />
       </el-form-item>
+      <el-form-item label="部门" prop="deptId">
+        <!-- 部门树选择（契约 §5.1 additive）：check-strictly 任一级可选；新增可清空（=不挂部门）；
+             编辑不可清空——契约部分更新语义 null 不更新该列（清空无契约通道），换挂其他部门可表达 -->
+        <el-tree-select
+          v-model="form.deptId"
+          :data="deptTree"
+          node-key="id"
+          :props="{ label: 'name', children: 'children' }"
+          check-strictly
+          default-expand-all
+          :clearable="mode === 'add'"
+          placeholder="请选择部门（可空）"
+          :disabled="loading"
+          class="dept-select"
+        />
+      </el-form-item>
       <el-form-item label="状态" prop="status">
         <el-radio-group v-model="form.status" :disabled="loading">
           <el-radio :value="STATUS_NORMAL">正常</el-radio>
@@ -154,3 +191,9 @@ async function handleSubmit(): Promise<void> {
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+.dept-select {
+  width: 100%;
+}
+</style>

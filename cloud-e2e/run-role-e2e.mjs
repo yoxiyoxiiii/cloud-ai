@@ -288,22 +288,23 @@ try {
   })
 
   // ================= R5 分配权限：admin 存量绑定（直连）+ 测试角色树勾选/保存/回显/清空 =================
-  await step('R5', '分配权限：admin 存量绑定（直连 33 id 全量含父目录）+ 测试角色勾选→保存→重开回显一致（父半选）→清空回显空', async () => {
+  await step('R5', '分配权限：admin 存量绑定（直连 40 id 全量含父目录）+ 测试角色勾选→保存→重开回显一致（父半选）→清空回显空', async () => {
     // ---- 5a. admin 存量绑定改直连 GET（E2：admin 行「分配权限」已禁用，语义本体保留且更精确——
-    //      断言库里存的就是 33 个种子菜单 id 全量（既有 23 + 30 段 bpmn 10 行，含 331 部署流程 F 与 34/341 我的审批段——
+    //      断言库里存的就是 40 个种子菜单 id 全量（既有 23 + 30 段 bpmn 10 行，含 331 部署流程 F 与 34/341 我的审批段——
     //      契约 bpmn-leave-api §9 + 2026-10-08-bpmn-diagram-designer-api §5 + 2026-10-08-approval-platform-api §8，
-    //      Round I 审批平台化迁移），含父目录 id（10/20/30 等）；
+    //      Round I 审批平台化迁移；数据权限轮 + 15/151/152/153 部门管理段与 16/161/162 数据权限段——
+    //      契约 2026-10-10-data-permission-api 菜单种子），含父目录 id（10/15/16/20/30 等）；
     //      E1 扩容：admin 绑定是封闭集（基线 INSERT...SELECT 全量式），保持全量精确不宽松——非清单断言）----
     // 互指义务：与 run-menu-e2e.mjs CLEANUP 的 SEED_MENU_IDS 各自维护、改菜单种子段时 grep 两脚本同步改（计划 E1 共享常量决策）
-    const SEED_MENU_IDS = ['10', '11', '12', '13', '111', '112', '113', '114', '115', '121', '122', '123', '124', '131', '132', '133', '14', '141', '142', '143', '20', '21', '211', '30', '31', '32', '33', '311', '312', '321', '331', '34', '341']
+    const SEED_MENU_IDS = ['10', '11', '12', '13', '111', '112', '113', '114', '115', '121', '122', '123', '124', '131', '132', '133', '14', '141', '142', '143', '15', '151', '152', '153', '16', '161', '162', '20', '21', '211', '30', '31', '32', '33', '311', '312', '321', '331', '34', '341']
     const bound = await directApi('GET', '/system/role/1/menus')
     log(`  直连 GET /system/role/1/menus: HTTP ${bound.httpStatus} code=${bound.body.code} data=${JSON.stringify(bound.body.data)}`)
     assertEq(bound.httpStatus, 200, '契约：HTTP 恒 200')
     assertEq(bound.body.code, 200, '角色菜单绑定查询业务码应为 200')
     assert(Array.isArray(bound.body.data), `data 应为数组，实际 ${typeof bound.body.data}`)
-    assertEq(bound.body.data.length, 33, `admin 绑定应恰 33 个种子菜单 id 全量（Round I +34/341），实际 ${bound.body.data.length}`)
+    assertEq(bound.body.data.length, 40, `admin 绑定应恰 40 个种子菜单 id 全量（Round I +34/341 + 数据权限轮 15/16 段），实际 ${bound.body.data.length}`)
     const boundIds = bound.body.data.map(String)
-    assertEq([...boundIds].sort().join(','), [...SEED_MENU_IDS].sort().join(','), `admin 绑定应为 33 个种子菜单 id 全量精确封闭集（含父目录与 331/34/341），实际 ${JSON.stringify(boundIds)}`)
+    assertEq([...boundIds].sort().join(','), [...SEED_MENU_IDS].sort().join(','), `admin 绑定应为 40 个种子菜单 id 全量精确封闭集（含父目录与 331/34/341 与 15/16 段），实际 ${JSON.stringify(boundIds)}`)
     for (const pid of ['10', '20', '30', '11', '111']) {
       assert(boundIds.includes(pid), `绑定应含父目录/菜单 id ${pid}（存量绑定含父目录语义）`)
     }

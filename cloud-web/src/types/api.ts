@@ -59,6 +59,10 @@ export interface SysUserVo {
   updateByName: string | null
   /** 内置标记（契约 2026-10-07-builtin-protection-api §7.1/§7.4）：true=系统内置（admin）——徽标/按钮禁用依据（§7.2 矩阵） */
   builtin: boolean
+  /** 部门 id（契约 2026-10-10-data-permission-api §5.2 additive）：null=未挂部门；用户表单部门选择回显依据 */
+  deptId: string | null
+  /** 部门名（契约 2026-10-10-data-permission-api §5.2 additive）：LEFT JOIN sys_dept 派生；挂靠部门被删后 null 降级不阻断 */
+  deptName: string | null
 }
 
 /**
@@ -434,12 +438,17 @@ export type LeaveStatus = '0' | '1' | '2' | '3' | '4'
  *   4=发起失败（终态，仅 system 产生，approvalId 恒 null——契约 2026-10-09 §2.2）；
  *   类型语义（字典 system_leave_type）：1=事假 2=病假 3=年假
  * - approvalId 为异步收敛（MQ 事件回填，正常秒级；发起后短暂 null 窗口前端按 §2.2 容错）
+ * - 数据权限语义变更（契约 2026-10-10-data-permission-api §4.1，取代「恒按当前登录人」）：
+ *   行级=按当前登录人数据权限规则求值（无规则=仅自己，行为不变；admin 种子=全部），
+ *   applyUserName/approverName 列表恒返（原仅详情回填）；title 可能 null（列隐藏）、
+ *   reason 可能 null（列隐藏）或 "***"（列脱敏）——前端展示空/原样，不本地加工
  */
 export interface SysLeaveVo {
   id: string
   /** 审批单 id（撤销后仍在；发起失败 status=4 恒 null；发起后至事件回填前短暂 null）；详情弹窗经它拼装平台时间线+图（契约 §5.3） */
   approvalId: string | null
-  title: string
+  /** 列隐藏时为 null（数据权限列级，契约 2026-10-10 §4.1）——展示空 */
+  title: string | null
   leaveType: string
   /** 类型译文（字典 system_leave_type）；null 时降级 LEAVE_TYPE_MAP[leaveType] */
   leaveTypeLabel: string | null
@@ -512,3 +521,241 @@ export interface ApprovalDiagramVo {
   /** 结束节点 id（endApprove/endReject）；审批中/撤销为 null */
   endActivityId: string | null
 }
+
+/* ============ 部门域（契约 2026-10-10-data-permission-api §2/§6.1，新域 v1） ============ */
+
+/**
+ * 部门树节点（契约 §6.1）：GET /system/dept/tree 出参（森林根级数组）
+ * - 全量未删除部门（含停用，靠 status 列区分——沿 dict §1 口径，契约 §1）
+ * - parentId "0"=根级；叶子 children 恒为空数组 []（非 null）
+ * - builtin=true 为内置根部门（id=1 总公司）——删除按钮禁用依据（§2.4：3029 为最终防线）
+ */
+export interface SysDeptTreeNode {
+  id: string
+  parentId: string
+  name: string
+  sort: number
+  /** 0=正常 1=停用（tag 颜色映射用原字段） */
+  status: number
+  builtin: boolean
+  createTime: string | null
+  children: SysDeptTreeNode[]
+}
+
+/**
+ * 新增部门入参（契约 §2.2）：parentId 必填（缺失/空 1002；不存在或已删 3027）；
+ * name 非空白（1002）同层级唯一（3028）；sort/status 缺省落库默认 0
+ */
+export interface DeptSavePayload {
+  parentId: string
+  name: string
+  sort?: number
+  status?: number
+}
+
+/**
+ * 修改部门入参（契约 §2.3）：部分更新语义 null 不更新，前端全量提交可编辑字段；
+ * **不含 parentId**——MVP 禁改上级（传入与库中现值不同得 1002「暂不支持修改上级部门」，
+ * 不传放行），编辑弹窗上级只读展示、提交恒不带此字段
+ */
+export interface DeptUpdatePayload {
+  id: string
+  name: string
+  sort: number
+  status: number
+}
+
+/* ============ 数据权限域（契约 2026-10-10-data-permission-api §3/§6，新域 v1） ============ */
+
+/**
+ * 列规则 VO（契约 §6.2/§6.3）：action 0=隐藏（VO 字段置 null）/ 1=脱敏（整值替换 "***"）；
+ * 同列多规则冲突取最宽松（可视 > 脱敏 > 隐藏，契约 §1）
+ */
+export interface ColumnRuleVo {
+  columnKey: string
+  action: number
+}
+
+/**
+ * 规则分页行 VO（契约 §6.2）：GET /system/data-perm/rule/page 出参行
+ * - subjectType 0=角色 / 1=用户；subjectName 后端补（主体已删时 "(已删除)" 降级）
+ * - customAccounts 仅 CUSTOM 档非空（其余档 []）；columns 无列规则为 []
+ */
+export interface DataPermRuleVo {
+  id: string
+  resource: string
+  subjectType: number
+  subjectId: string
+  subjectName: string
+  rowScope: number
+  customAccounts: string[]
+  columns: ColumnRuleVo[]
+  updateBy: string | null
+  updateTime: string | null
+}
+
+/**
+ * 规则配置回显 VO（契约 §6.3）：GET /system/data-perm/rule/config 出参——
+ * configured=false 为新增态（rowScope=null、customAccounts/columns 空数组），弹窗据此走新增默认
+ */
+export interface DataPermRuleConfigVo {
+  configured: boolean
+  resource: string
+  subjectType: number
+  subjectId: string
+  rowScope: number | null
+  customAccounts: string[]
+  columns: ColumnRuleVo[]
+}
+
+/** 资源注册表 VO（契约 §6.4）：试点单元素 { resource:"leave", columns:["title","reason"] }；列配置动态渲染数据源 */
+export interface DataPermResourceVo {
+  resource: string
+  columns: string[]
+}
+
+/** 主体选项 VO（契约 §6.5）：id 为字符串（Long→String）；label 后端拼好（角色=角色名；用户=`昵称(账号)`） */
+export interface SubjectOptionVo {
+  id: string
+  label: string
+}
+
+/**
+ * 决策留痕行 VO（契约 §6.6）：GET /system/data-perm/log/page 出参行
+ * - operation 'list' 列表 / 'detail' 详情 / 'deny' 详情被拒补记（红 tag）
+ * - ruleIds null=无规则默认档；scopeSummary 形如 all / accounts=12 / empty
+ * - explain 模拟与 my-scope 自查不留痕（契约 §1）——不会出现在本表
+ */
+export interface DataPermLogVo {
+  id: string
+  account: string
+  resource: string
+  operation: string
+  ruleIds: string | null
+  ruleDigest: string | null
+  scopeSummary: string
+  columnSummary: string | null
+  /** detail/deny 时目标单据 id；list 为 null */
+  businessKey: string | null
+  createTime: string
+}
+
+/** 命中规则明细 VO（契约 §6.7 HitRuleVo）：explain 出参内嵌 */
+export interface HitRuleVo {
+  ruleId: string
+  subjectType: number
+  subjectName: string
+  rowScope: number
+  /** CUSTOM 档配置账号数 */
+  customCount: number
+  /** 该规则展开账号数 */
+  expandedCount: number
+}
+
+/** 列决策 VO（契约 §6.7 ColumnDecisionVo）：explain 出参内嵌；无动作为 [] */
+export interface ColumnDecisionVo {
+  columnKey: string
+  action: number
+}
+
+/**
+ * 模拟解释 VO（契约 §6.7）：GET /system/data-perm/explain 出参——
+ * 以被模拟账号身份完整求值（不执行业务查询、不留痕）；narratives 为中文解释句
+ * （每命中规则一句 + 收敛结论 + 列结论）
+ */
+export interface DataPermExplainVo {
+  account: string
+  resource: string
+  hitRules: HitRuleVo[]
+  /** 行范围=全部（过滤豁免）；true 时 rowAccountCount=0 */
+  rowAll: boolean
+  rowAccountCount: number
+  selfIncluded: boolean
+  columns: ColumnDecisionVo[]
+  narratives: string[]
+}
+
+/** 我的数据范围 VO（契约 §6.8）：leave 页提示条专用；columnSummary null=无列动作 */
+export interface MyScopeVo {
+  scopeLabel: string
+  columnSummary: string | null
+}
+
+/** 规则分页入参（契约 §3.1）：筛选全部可选（组合）；非法 resource 不报错返回空集（筛选宽松语义） */
+export interface DataPermRulePageQuery {
+  pageNum: number
+  pageSize: number
+  resource?: string
+  subjectType?: number
+  subjectId?: string
+}
+
+/** 规则配置回显入参（契约 §3.2）：三项全必填 */
+export interface RuleConfigQuery {
+  resource: string
+  subjectType: number
+  subjectId: string
+}
+
+/** 列规则项（契约 §3.3 ColumnRuleItem）：columnKey 不在资源可配列清单得 3034 */
+export interface ColumnRuleItem {
+  columnKey: string
+  /** 0=隐藏 / 1=脱敏 */
+  action: number
+}
+
+/**
+ * 保存规则入参（契约 §3.3，POST upsert 全量覆盖语义）：
+ * - rowScope=3（CUSTOM）时 customAccounts 必填非空（1002）且逐账号存在启用（3033）；
+ *   其余档位必须空/null（1002「仅自定义范围档可配置账号集合」）
+ * - columns null/[] = 清空列规则；columnKey 不重复（1002）
+ */
+export interface DataPermRuleSavePayload {
+  resource: string
+  subjectType: number
+  subjectId: string
+  rowScope: number
+  customAccounts?: string[]
+  columns?: ColumnRuleItem[]
+}
+
+/** 决策留痕分页入参（契约 §3.7）：筛选可选（账号/资源精确） */
+export interface DataPermLogPageQuery {
+  pageNum: number
+  pageSize: number
+  account?: string
+  resource?: string
+}
+
+/** 模拟解释入参（契约 §3.8）：目标用户不存在/停用得 3032；resource 非法得 3034 */
+export interface ExplainQuery {
+  account: string
+  resource: string
+}
+
+/** 我的数据范围入参（契约 §3.9）：免 @PreAuthorize（登录即可，自查本人范围） */
+export interface MyScopeQuery {
+  resource: string
+}
+
+/* ---- 数据权限域常量（契约 §7：禁魔法数） ---- */
+
+/** 行范围档位（契约 §1/§7）：0 仅自己 / 1 本部门 / 2 本部门及以下 / 3 自定义集合 / 4 全部 */
+export const ROW_SCOPE_SELF = 0
+export const ROW_SCOPE_DEPT = 1
+export const ROW_SCOPE_DEPT_AND_CHILD = 2
+export const ROW_SCOPE_CUSTOM = 3
+export const ROW_SCOPE_ALL = 4
+
+/** 列动作（契约 §1/§7）：0 隐藏（VO 字段置 null）/ 1 脱敏（整值替换 ***） */
+export const ACTION_HIDDEN = 0
+export const ACTION_MASKED = 1
+
+/** 规则主体类型（契约 §1/§7）：0 角色 / 1 用户 */
+export const SUBJECT_ROLE = 0
+export const SUBJECT_USER = 1
+
+/** 决策留痕操作类型（契约 §6.6）：'list' 列表 / 'detail' 详情 / 'deny' 详情被拒补记 */
+export const OP_LIST = 'list'
+export const OP_DETAIL = 'detail'
+export const OP_DENY = 'deny'

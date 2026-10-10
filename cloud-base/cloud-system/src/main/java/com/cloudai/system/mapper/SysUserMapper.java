@@ -3,6 +3,7 @@ package com.cloudai.system.mapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.system.entity.SysUser;
+import com.cloudai.system.vo.SysUserVo;
 import org.apache.ibatis.annotations.Param;
 
 import java.time.LocalDateTime;
@@ -20,10 +21,16 @@ public interface SysUserMapper {
 
     SysUser findById(@Param("id") Long id);
 
-    /** 分页查询：无 LIMIT，由 PaginationInnerInterceptor 追加 */
-    IPage<SysUser> pageList(Page<SysUser> page);
+    /** 分页查询：无 LIMIT，由 PaginationInnerInterceptor 追加；数据权限轮 D14 改型 VO 直出（JOIN sys_dept 派生 deptName） */
+    IPage<SysUserVo> pageList(Page<SysUserVo> page);
 
     Long countByAccount(@Param("account") String account);
+
+    /** 部门删除前置校验：挂载在职（未删）用户计数（含停用账号，契约 §2.4） */
+    Long countByDeptId(@Param("deptId") Long deptId);
+
+    /** 数据权限求值展开：部门(含子树)→启用账号集合（status=0 未删）；deptIds 空集由 Service 跳过调用防 IN () */
+    List<String> listEnabledAccountsByDeptIds(@Param("deptIds") List<Long> deptIds);
 
     /** 登录权限聚合：账号 → 启用角色 → 启用菜单的权限标识（DISTINCT，非空 perms） */
     List<String> listPermsByAccount(@Param("account") String account);
@@ -33,6 +40,9 @@ public interface SysUserMapper {
 
     /** 审批人选项：仅启用账号 id/account/nickname 投影（契约 2026-10-08-approval-platform-api §5.5） */
     List<SysUser> listEnabledOptions();
+
+    /** 批量名称回填：数据权限规则分页行 subjectName（ids 空集由 Service 跳过，防 IN ()） */
+    List<SysUser> listByIds(@Param("ids") List<Long> ids);
 
     int save(SysUser user);
 

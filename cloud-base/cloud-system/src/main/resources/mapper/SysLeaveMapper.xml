@@ -23,13 +23,20 @@
     </select>
 
     <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT；
-         唯一过滤面（契约 §5.2 恒按申请人）命中 idx_apply_user(apply_user, deleted) -->
+         数据权限轮（契约 §4.1）：行集=求值范围——all=true 过滤豁免，否则账号白名单 IN；
+         IN 命中 idx_apply_user(apply_user, deleted)；空集范围 Service 短路不达此处（防 IN ()） -->
     <select id="pageList" resultType="com.cloudai.system.vo.SysLeaveVo">
         SELECT <include refid="listColumns"/>
           FROM sys_leave l
           LEFT JOIN approval_projection p
             ON p.business_type = #{businessType} AND p.business_key = CAST(l.id AS CHAR)
-         WHERE l.apply_user = #{applyUser} AND l.deleted = 0
+         WHERE l.deleted = 0
+         <if test="scope.all == false">
+             AND l.apply_user IN
+             <foreach collection="scope.accounts" item="account" open="(" separator="," close=")">
+                 #{account}
+             </foreach>
+         </if>
          ORDER BY l.id DESC
     </select>
 

@@ -11,6 +11,8 @@ import UserManageView from '../views/system/user/index.vue'
 import RoleManageView from '../views/system/role/index.vue'
 import MenuManageView from '../views/system/menu/index.vue'
 import DictManageView from '../views/system/dict/index.vue'
+import DeptManageView from '../views/system/dept/index.vue'
+import DataPermManageView from '../views/system/dataPerm/index.vue'
 import LeaveManageView from '../views/system/leave/index.vue'
 import TaskManageView from '../views/bpmn/task/index.vue'
 import ApprovalManageView from '../views/bpmn/approval/index.vue'
@@ -23,6 +25,9 @@ export const VIEW_REGISTRY: Record<string, Component> = {
   '/system/role': RoleManageView,
   '/system/menu': MenuManageView,
   '/system/dict': DictManageView,
+  // 部门/数据权限（契约 2026-10-10-data-permission-api §0.5 菜单种子 15/16 段）
+  '/system/dept': DeptManageView,
+  '/system/data-perm': DataPermManageView,
   // 请假申请（契约 2026-10-08-approval-platform-api §8 菜单 31 段改造：path /system/leave）
   '/system/leave': LeaveManageView,
   // bpmn 域三页（契约 §8 菜单 30 段：31 请假申请迁出后 34 我的审批/32 待办/33 流程定义）

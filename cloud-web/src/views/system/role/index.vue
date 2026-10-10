@@ -4,9 +4,10 @@
  * 数据源 /system/role/page（契约 §4.2，含停用角色、id 倒序，无搜索参数——契约现状）
  */
 import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteRole, pageRole } from '../../../api/role'
-import type { SysRoleVo } from '../../../types/api'
+import { SUBJECT_ROLE, type SysRoleVo } from '../../../types/api'
 import RoleFormDialog from './components/RoleFormDialog.vue'
 import type { RoleFormMode } from './components/RoleFormDialog.vue'
 import AssignMenuDialog from './components/AssignMenuDialog.vue'
@@ -39,6 +40,7 @@ const loading = ref(false)
 const rows = ref<SysRoleVo[]>([])
 const total = ref(0)
 const query = reactive({ pageNum: 1, pageSize: 10 })
+const router = useRouter()
 
 const formDialogVisible = ref(false)
 const formDialogMode = ref<RoleFormMode>('add')
@@ -76,6 +78,11 @@ function openEdit(role: SysRoleVo): void {
 function openAssignMenu(role: SysRoleVo): void {
   assignMenuRole.value = role
   assignMenuVisible.value = true
+}
+
+/** 数据权限联动入口（设计 §8）：跳数据权限页规则 tab 并按该角色预筛选（subjectType=0 角色） */
+function openDataPerm(role: SysRoleVo): void {
+  void router.push({ path: '/system/data-perm', query: { subjectType: String(SUBJECT_ROLE), subjectId: role.id } })
 }
 
 async function handleDelete(role: SysRoleVo): Promise<void> {
@@ -146,9 +153,10 @@ onMounted(() => {
       <el-table-column label="更新时间" min-width="160">
         <template #default="{ row }">{{ rowOf(row).updateTime ?? '-' }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="200" fixed="right">
+      <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
-          <!-- 内置行（admin）编辑/分配权限/删除禁用（保护契约 §7.2 矩阵镜像，错误码 3013 为最终防线） -->
+          <!-- 内置行（admin）编辑/分配权限/删除禁用（保护契约 §7.2 矩阵镜像，错误码 3013 为最终防线）；
+               「数据权限」为只读跳转入口不禁（admin 角色自身有种子规则 leave/ALL，可查看） -->
           <el-button
             v-perms="'system:role:edit'"
             link
@@ -164,6 +172,13 @@ onMounted(() => {
             :disabled="rowOf(row).builtin"
             @click="openAssignMenu(rowOf(row))"
             >分配权限</el-button
+          >
+          <el-button
+            v-perms="'system:dataPerm:list'"
+            link
+            type="primary"
+            @click="openDataPerm(rowOf(row))"
+            >数据权限</el-button
           >
           <el-button
             v-perms="'system:role:remove'"

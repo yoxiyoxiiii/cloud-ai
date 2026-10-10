@@ -8,6 +8,12 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
+import com.cloudai.system.service.dataperm.ColumnScope;
+import com.cloudai.system.service.dataperm.DataPermDecision;
+import com.cloudai.system.service.dataperm.DataPermEvaluator;
+import com.cloudai.system.service.dataperm.DataPermOperation;
+import com.cloudai.system.service.dataperm.DataPermResources;
+import com.cloudai.system.service.dataperm.DataScope;
 import com.cloudai.system.vo.SysLeaveDetailVo;
 import com.cloudai.system.vo.SysLeaveVo;
 import com.cloudai.system.vo.UserOptionVo;
@@ -22,9 +28,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 请假读路径（契约 2026-10-09-approval-projection-api §4.1 读语义取代版）：
- * 纯本地零 Feign——status/approvalId 由 mapper JOIN approval_projection 派生直出
- * （事件秒级收敛 + 框架定时对账兜底，业务读零纠偏零降级，3022 自读路径退役）。
+ * 请假读路径（数据权限轮契约 2026-10-10-data-permission-api §4 取代版）：
+ * status/approvalId 仍 JOIN approval_projection 派生（投影轮语义不变）；
+ * 行集与列出参改由数据权限求值决定（D5 显式编程式：Service 求值 → mapper 收 DataScope 参数）——
+ * 列表恒回填 applyUserName/approverName（管理员视角辨识申请人），title/reason 可能 null 或 ***
+ * （列级隐藏/脱敏）；详情行级判定 + IDOR 收口（3026 + deny 留痕，D13）。
  */
 @Slf4j
 @Service
@@ -32,6 +40,9 @@ import java.util.Set;
 public class LeaveManageService {
 
     private static final int ERR_LEAVE_NOT_FOUND = 3018;
+
+    /** 无权访问该数据（契约 §8，详情行级拒绝） */
+    private static final int ERR_LEAVE_NO_ACCESS = 3026;
 
     private static final String BUSINESS_TYPE_LEAVE = "leave";
 
@@ -41,24 +52,85 @@ public class LeaveManageService {
     private final SysLeaveMapper leaveMapper;
     private final SysUserMapper userMapper;
     private final TranslationCacheService translationCacheService;
+    private final DataPermEvaluator dataPermEvaluator;
 
-    /** 我的请假分页（恒按申请人，id 倒序）：JOIN 派生实时状态（发起后秒级窗口 status=0/approvalId=null） */
-    public PageResult<SysLeaveVo> pageListMy(PageQuery query, String applyUser) {
+    /**
+     * 请假分页（契约 §4.1）：按当前登录人数据权限求值——全部档全量、空集档短路空页（不查库）、
+     * 白名单档按账号 IN；行内姓名批量回填 + 列级动作应用（title/reason）。
+     */
+    public PageResult<SysLeaveVo> pageList(PageQuery query) {
+        DataPermDecision decision = dataPermEvaluator.evaluate(
+                DataPermResources.LEAVE, DataPermOperation.LIST, null);
+        DataScope scope = decision.getDataScope();
+        if (scope.isEmptyScope()) {
+            return PageResult.of(0, List.of());
+        }
         IPage<SysLeaveVo> page = leaveMapper.pageList(
-                new Page<>(query.getPageNum(), query.getPageSize()), BUSINESS_TYPE_LEAVE, applyUser);
-        return PageResult.of(page.getTotal(), page.getRecords());
+                new Page<>(query.getPageNum(), query.getPageSize()), BUSINESS_TYPE_LEAVE, scope);
+        List<SysLeaveVo> rows = page.getRecords();
+        fillListNames(rows);
+        rows.forEach(row -> applyColumnScope(row, decision.getColumnScope()));
+        return PageResult.of(page.getTotal(), rows);
     }
 
-    /** 请假单详情（§5.3）：单行 JOIN 派生 + 译文手动回填（嵌套 VO 不走翻译 advisor，沿先例） */
+    /**
+     * 请假单详情（契约 §4.2）：行不存在 3018 → 行级判定（求值 DETAIL，留痕 businessKey=单据 id）——
+     * 归属账号不在范围 3026 + deny 留痕（IDOR 收口）；可见则列级同列表应用 + 译文回填。
+     */
     public SysLeaveDetailVo findById(Long id) {
         SysLeaveVo vo = leaveMapper.findById(BUSINESS_TYPE_LEAVE, id);
         if (vo == null) {
             throw new BusinessException(ERR_LEAVE_NOT_FOUND, "请假单不存在");
         }
+        DataPermDecision decision = dataPermEvaluator.evaluate(
+                DataPermResources.LEAVE, DataPermOperation.DETAIL, String.valueOf(id));
+        if (!decision.getDataScope().allows(vo.getApplyUser())) {
+            dataPermEvaluator.logDeny(DataPermResources.LEAVE, String.valueOf(id));
+            throw new BusinessException(ERR_LEAVE_NO_ACCESS, "无权访问该数据");
+        }
         fillDetailLabels(vo);
+        applyColumnScope(vo, decision.getColumnScope());
         SysLeaveDetailVo detail = new SysLeaveDetailVo();
         detail.setLeave(vo);
         return detail;
+    }
+
+    /** 列表姓名批量回填（契约 §4.1 行为变更）：applyUserName/approverName 列表恒返 */
+    private void fillListNames(List<SysLeaveVo> rows) {
+        Set<String> users = new HashSet<>();
+        for (SysLeaveVo row : rows) {
+            if (row.getApplyUser() != null) {
+                users.add(row.getApplyUser());
+            }
+            if (row.getApprover() != null) {
+                users.add(row.getApprover());
+            }
+        }
+        if (users.isEmpty()) {
+            return;
+        }
+        Map<String, String> names = translationCacheService.findUserNames(users);
+        for (SysLeaveVo row : rows) {
+            row.setApplyUserName(names.get(row.getApplyUser()));
+            row.setApproverName(names.get(row.getApprover()));
+        }
+    }
+
+    /** 列级动作应用（契约 §4.1/§4.2）：隐藏置 null、脱敏整值替换 ***（title/reason，试点可配列） */
+    private void applyColumnScope(SysLeaveVo vo, ColumnScope columnScope) {
+        if (columnScope.isEmpty()) {
+            return;
+        }
+        if (columnScope.isHidden(DataPermResources.LEAVE_COLUMN_TITLE)) {
+            vo.setTitle(null);
+        } else if (columnScope.isMasked(DataPermResources.LEAVE_COLUMN_TITLE)) {
+            vo.setTitle(columnScope.mask(vo.getTitle()));
+        }
+        if (columnScope.isHidden(DataPermResources.LEAVE_COLUMN_REASON)) {
+            vo.setReason(null);
+        } else if (columnScope.isMasked(DataPermResources.LEAVE_COLUMN_REASON)) {
+            vo.setReason(columnScope.mask(vo.getReason()));
+        }
     }
 
     /** 详情嵌套 VO 手动回填译文（契约 §9：沿 ApprovalQueryService 先例——翻译 advisor 只扫顶层

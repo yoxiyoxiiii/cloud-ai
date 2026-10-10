@@ -251,13 +251,13 @@ try {
     await page.waitForURL(`**${DICT_PATH}`, { timeout: 15000 })
     await waitTableIdle(page)
     log(`  登录回跳: ${page.url()}`)
-    // 侧边菜单顺序（动态路由种子：系统管理 4 项 + 流程管理 4 项 + 工作台——Round I 审批平台化 34 段菜单种子后新形态，E1 迁移）
+    // 侧边菜单顺序（动态路由种子：系统管理 6 项 + 流程管理 4 项 + 工作台——数据权限轮 2026-10-10 +部门管理/数据权限）
     const items = page.locator('.el-menu .el-menu-item')
     const n = await items.count()
     const labels = []
     for (let i = 0; i < n; i++) labels.push((await items.nth(i).innerText()).trim())
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,请假申请,我的审批,待办任务,流程定义,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→请假申请→我的审批→待办任务→流程定义→工作台')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,请假申请,我的审批,待办任务,流程定义,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→请假申请→我的审批→待办任务→流程定义→工作台')
     const active = (await page.locator('.el-menu-item.is-active').innerText()).trim()
     assertEq(active, '字典管理', '/system/dict 下字典管理应高亮')
     const bc = await breadcrumbTexts(page)

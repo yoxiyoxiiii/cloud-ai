@@ -19,10 +19,17 @@ public interface SysRoleMapper {
     /** 启用状态角色（status=0），按 id 升序 */
     List<SysRole> listEnabled();
 
+    /** 批量名称回填：数据权限规则分页行 subjectName（ids 空集由 Service 跳过，防 IN ()） */
+    List<SysRole> listByIds(@Param("ids") List<Long> ids);
+
     SysRole findById(@Param("id") Long id);
 
     /** role_key 查重；excludeId 非空时排除自身（编辑场景） */
     Long countByRoleKey(@Param("roleKey") String roleKey, @Param("excludeId") Long excludeId);
+
+    /** 数据权限求值输入（设计 §5.2）：用户的启用角色 id 集合（JOIN sys_user_role + 启用角色；
+     *  聚合跨表查询放本表 mapper——SysUserRoleMapper 是纯关系表受守护禁 deleted 约束，记档） */
+    List<Long> listEnabledRoleIdsByUserId(@Param("userId") Long userId);
 
     int save(SysRole role);
 
