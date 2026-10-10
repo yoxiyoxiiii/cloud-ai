@@ -2,6 +2,7 @@ package com.cloudai.system.service.dataperm;
 
 import com.cloudai.common.core.domain.LoginUser;
 import com.cloudai.common.core.exception.BusinessException;
+import com.cloudai.system.api.dataperm.DataPermOperation;
 import com.cloudai.system.entity.SysDataPermColumn;
 import com.cloudai.system.entity.SysDataPermRule;
 import com.cloudai.system.entity.SysDept;
@@ -274,6 +275,88 @@ class DataPermEvaluatorTest {
                 BusinessException.class);
 
         assertThat(ex.getCode()).isEqualTo(3032);
+    }
+
+    // ---- evaluateFor：账号显式真实决策（组件化 D20/D23，/inner/data-perm 薄壳底层） ----
+
+    @Test
+    void evaluateFor_blankAccount_rejected1002() {
+        BusinessException ex = catchThrowableOfType(
+                () -> evaluator.evaluateFor(" ", RESOURCE, DataPermOperation.LIST, null),
+                BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(1002);
+        verifyNoInteractions(userMapper, ruleMapper, logMapper);
+    }
+
+    @Test
+    void evaluateFor_unknownAccount_convergesToSelfScopeAndLogs() {
+        when(userMapper.findByAccount("ghost")).thenReturn(null);
+
+        DataPermDecision decision = evaluator.evaluateFor("ghost", RESOURCE, DataPermOperation.DETAIL, "5");
+
+        // 不存在账号不报错：userId=null → 无规则默认 SELF={account}（方向安全不越权，D20）+ 恒留痕（D7）
+        assertThat(decision.getDataScope().getAccounts()).containsExactly("ghost");
+        assertThat(decision.getAccount()).isEqualTo("ghost");
+        assertThat(decision.getOperation()).isEqualTo("detail");
+        verify(logMapper).save(any(com.cloudai.system.entity.SysDataPermLog.class));
+    }
+
+    @Test
+    void evaluateFor_disabledAccount_convergesSameAsUnknown() {
+        SysUser disabled = new SysUser();
+        disabled.setId(9L);
+        disabled.setAccount("off-user");
+        disabled.setStatus(1);
+        when(userMapper.findByAccount("off-user")).thenReturn(disabled);
+
+        DataPermDecision decision = evaluator.evaluateFor("off-user", RESOURCE, DataPermOperation.LIST, null);
+
+        // 停用账号同收敛：userId=null 不触角色/用户规则查询（fail-safe 方向）
+        assertThat(decision.getDataScope().getAccounts()).containsExactly("off-user");
+        verifyNoInteractions(ruleMapper);
+    }
+
+    @Test
+    void evaluateFor_validAccount_resolvesUserIdAndPersistsLog() {
+        SysUser target = new SysUser();
+        target.setId(5L);
+        target.setAccount("userA");
+        target.setStatus(0);
+        when(userMapper.findByAccount("userA")).thenReturn(target);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of(2L));
+        when(ruleMapper.listByRoleIds(RESOURCE, List.of(2L)))
+                .thenReturn(List.of(rule(3L, 0, 2L, SysDataPermRule.RowScopeEnum.ALL.getCode(), null)));
+        when(roleMapper.findById(2L)).thenReturn(role(2L, "主管"));
+        when(ruleMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluateFor("userA", RESOURCE, DataPermOperation.LIST, null);
+
+        // 账号显式路径与登录态路径同收敛：userId 解析后正常命中角色规则
+        assertThat(decision.getDataScope().isAll()).isTrue();
+        verify(logMapper).save(any(com.cloudai.system.entity.SysDataPermLog.class));
+    }
+
+    // ---- logDeny 三参（组件化 D23 账号显式化，行为等价） ----
+
+    @Test
+    void logDeny_threeArgs_persistsDenyRowWithExplicitAccount() {
+        evaluator.logDeny("userB", RESOURCE, "5");
+
+        // deny 行要素：operation=deny、scopeSummary 固定 deny、账号=显式入参（不再内部取登录态）
+        verify(logMapper).save(org.mockito.ArgumentMatchers.argThat(row ->
+                "userB".equals(row.getAccount()) && "deny".equals(row.getOperation())
+                        && "deny".equals(row.getScopeSummary()) && "5".equals(row.getBusinessKey())));
+    }
+
+    @Test
+    void logDeny_insertFailure_notThrown() {
+        doThrow(new RuntimeException("db down")).when(logMapper).save(any());
+
+        // deny 补痕失败不阻断已发生的拒绝语义（D7 口径）
+        org.assertj.core.api.Assertions.assertThatCode(
+                () -> evaluator.logDeny("userB", RESOURCE, "5"))
+                .doesNotThrowAnyException();
     }
 
     // ---- 脚手架 ----

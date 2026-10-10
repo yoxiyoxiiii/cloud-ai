@@ -1,17 +1,23 @@
 <script setup lang="ts">
 /**
  * 我的审批页（/bpmn/approval，设计 D9 / 契约 §3，新）：跨业务审批单中心
- * 数据源 /bpmn/approval/page（契约 §3.1，恒按当前登录人 applyUser、id 倒序、含全部状态与业务类型）
+ * 数据源 /bpmn/approval/page（契约 2026-10-10-dataperm-component-api §3.1：行集按当前登录人数据
+ * 权限规则求值——无规则=仅自己（旧版「恒按申请人」行为兼容）、admin 种子=全部、部门档=部门成员发起
+ * 的单；id 倒序、含全部状态与业务类型）；title 可能被列规则隐藏（null）/脱敏（***）——后端已处理，
+ * 前端零转换原样展示
  * 撤销仅审批中且本人行可点（契约 §3.3 语义；终态行按钮禁用置灰，后端 4011/4012 为最终防线）
  * 直达落点（契约 2026-10-09-rocketmq-tx-approval-api §2.2「查看审批」跳转协议）：识别
  * query.approval（=审批单 id，请假页「查看审批」等业务侧入口跳入）自动开对应详情弹窗
+ * 数据权限增量（契约 2026-10-10-dataperm-component-api §4）：顶部 my-scope 提示条自查范围
+ * （资源 bpmn_approval）；详情/图数据越权 4018 走拦截器统一 toast（与 leave 页 3026 同链零新代码）
  */
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { cancelApproval, getApprovalPage } from '../../../api/bpmn'
+import { getMyScope } from '../../../api/dataPerm'
 import { useAuthStore } from '../../../stores/auth'
-import { APPROVAL_STATUS_MAP, type ApprovalVo } from '../../../types/api'
+import { APPROVAL_STATUS_MAP, DATAPERM_RESOURCE_APPROVAL, type ApprovalVo } from '../../../types/api'
 import ApprovalDetailDialog from './components/ApprovalDetailDialog.vue'
 
 /** 组件名必须显式固定 = pathToRouteName('/bpmn/approval')：script setup 推断名取文件名（全为 index），
@@ -103,7 +109,8 @@ function handleDetailClosed(): void {
   }
 }
 
-/** 撤销可点：仅审批中且申请人本人行（契约 §3.3；页面恒本人数据，applyUser 判断为防御性冗余）；终态行按钮禁用置灰 */
+/** 撤销可点：仅审批中且申请人本人行（契约 §3.3；行集经数据权限可含他人单——契约 §3.1，
+ * applyUser 判定为非本人行的置灰闸，后端 4012 为最终防线）；终态行按钮禁用置灰 */
 function canCancel(approval: ApprovalVo): boolean {
   return approval.status === STATUS_APPROVING && approval.applyUser === authStore.account
 }
@@ -132,8 +139,24 @@ function handleSizeChange(size: number): void {
   void loadApprovalPage(1)
 }
 
+/* ---- 我的数据范围提示条（契约 2026-10-10-dataperm-component-api §4，my-scope 免权限注解登录即可；不留痕） ---- */
+/** 提示条渲染条件：仅成功取回后渲染——失败静默降级不渲染（后端未就绪/接口异常不阻塞列表） */
+const myScopeLabel = ref('')
+const myScopeColumnSummary = ref<string | null>(null)
+
+async function loadMyScope(): Promise<void> {
+  try {
+    const scope = await getMyScope(DATAPERM_RESOURCE_APPROVAL)
+    myScopeLabel.value = scope.scopeLabel
+    myScopeColumnSummary.value = scope.columnSummary
+  } catch {
+    // 静默降级：提示条不渲染（拦截器可能已 toast 业务错误，页面主功能不受影响）
+  }
+}
+
 onMounted(() => {
   void loadApprovalPage()
+  void loadMyScope()
 })
 </script>
 
@@ -144,6 +167,17 @@ onMounted(() => {
         <span>我的审批</span>
       </div>
     </template>
+
+    <!-- 我的数据范围提示条（契约 2026-10-10-dataperm-component-api §4 my-scope，资源 bpmn_approval）：
+         成功取回才渲染（失败静默降级不渲染）；列动作有值时括注（如 title:脱敏） -->
+    <el-alert
+      v-if="myScopeLabel"
+      class="scope-alert"
+      :title="`当前数据范围：${myScopeLabel}${myScopeColumnSummary ? `（${myScopeColumnSummary}）` : ''}`"
+      type="info"
+      :closable="false"
+      show-icon
+    />
 
     <el-table v-loading="loading" :data="rows" row-key="id">
       <el-table-column label="标题" min-width="200">
@@ -226,5 +260,9 @@ onMounted(() => {
 .table-pagination {
   margin-top: 16px;
   justify-content: flex-end;
+}
+
+.scope-alert {
+  margin-bottom: 12px;
 }
 </style>

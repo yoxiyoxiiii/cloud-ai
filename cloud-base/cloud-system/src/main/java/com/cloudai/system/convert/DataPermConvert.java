@@ -1,9 +1,9 @@
 package com.cloudai.system.convert;
 
+import com.cloudai.system.api.dataperm.ColumnScope;
 import com.cloudai.system.entity.SysDataPermColumn;
 import com.cloudai.system.entity.SysDataPermLog;
 import com.cloudai.system.entity.SysDataPermRule;
-import com.cloudai.system.service.dataperm.ColumnScope;
 import com.cloudai.system.service.dataperm.DataPermDecision;
 import com.cloudai.system.vo.DataPermExplainVo;
 import com.cloudai.system.vo.DataPermLogVo;

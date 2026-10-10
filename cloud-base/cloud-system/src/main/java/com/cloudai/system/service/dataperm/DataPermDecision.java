@@ -1,5 +1,7 @@
 package com.cloudai.system.service.dataperm;
 
+import com.cloudai.system.api.dataperm.ColumnScope;
+import com.cloudai.system.api.dataperm.DataScope;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -8,6 +10,8 @@ import java.util.List;
 
 /**
  * 求值产物（设计 §5.1）：留痕与 explain 共用——命中规则明细 + 行/列终态 + 中文 narrative。
+ * 组件化轮（D19）不出 system：跨服务求值走窄契约 DataPermScopeVo 四字段（本类留 system 内部，
+ * 未来 explain 形态演进不牵动跨服务契约）；终态类型 DataScope/ColumnScope 已搬家 api 包（D18）。
  */
 @Data
 public class DataPermDecision implements Serializable {

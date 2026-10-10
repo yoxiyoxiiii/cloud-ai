@@ -1,19 +1,27 @@
-package com.cloudai.system.service.dataperm;
-
-import com.cloudai.system.entity.SysDataPermColumn;
+package com.cloudai.system.api.dataperm;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
 
 /**
- * 列级终态（设计 §5.1，不可变）：hidden 置 null / masked 整值替换 {@code ***}（单一策略 MVP，设计 D11）。
+ * 列级终态（不可变；2026-10-10 组件化 D18 搬家 + D28 label 解耦——原 getSummary 引 system 实体
+ * SysDataPermColumn.ActionEnum.label()，api 模块不可见实体，标签内联为私有常量，输出格式逐字不变）：
+ * hidden 置 null / masked 整值替换 {@code ***}（单一策略 MVP，设计 D11）。
  * isEmpty=无任何列动作（读路径零处理，免遍历）。
  */
 public final class ColumnScope {
 
     /** 脱敏替换值（单一策略：整值替换，多样化移交设计 §11.5） */
     public static final String MASK = "***";
+
+    /**
+     * D28 动作中文名内联常量（搬家伴生解耦）：输出格式与原实体枚举 label() 逐字一致。
+     * 标签字面量三处冻结点=契约 §6.8 columnSummary 格式（任一处变更为契约变更）：
+     * system 实体 ActionEnum.label / 本常量 / 前端 ACTION 常量文案。
+     */
+    private static final String LABEL_HIDDEN = "隐藏";
+    private static final String LABEL_MASKED = "脱敏";
 
     private final Set<String> hiddenColumns;
     private final Set<String> maskedColumns;
@@ -36,7 +44,7 @@ public final class ColumnScope {
         return maskedColumns.contains(columnKey);
     }
 
-    /** 应用脱敏：null 直返 null（隐藏/无动作列不调用本方法；语义与设计 §5.1 mask 一致） */
+    /** 应用脱敏：null 直返 null（隐藏/无动作列不调用本方法） */
     public String mask(String value) {
         return value == null ? null : MASK;
     }
@@ -53,9 +61,9 @@ public final class ColumnScope {
     public String getSummary() {
         List<String> parts = new ArrayList<>();
         hiddenColumns.stream().sorted()
-                .forEach(k -> parts.add(k + ":" + SysDataPermColumn.ActionEnum.HIDDEN.label()));
+                .forEach(k -> parts.add(k + ":" + LABEL_HIDDEN));
         maskedColumns.stream().sorted()
-                .forEach(k -> parts.add(k + ":" + SysDataPermColumn.ActionEnum.MASKED.label()));
+                .forEach(k -> parts.add(k + ":" + LABEL_MASKED));
         return String.join(";", parts);
     }
 

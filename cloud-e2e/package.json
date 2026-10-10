@@ -15,6 +15,7 @@
     "e2e:dict": "node run-dict-e2e.mjs",
     "e2e:bpmn": "node run-bpmn-e2e.mjs",
     "e2e:dataperm": "node run-dataperm-e2e.mjs",
+    "e2e:dataperm-component": "node run-dataperm-component-e2e.mjs",
     "serve-artifacts": "node serve-artifacts.mjs"
   },
   "engines": {

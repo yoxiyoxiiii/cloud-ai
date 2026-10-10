@@ -1,4 +1,4 @@
-package com.cloudai.system.service.dataperm;
+package com.cloudai.system.api.dataperm;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -9,12 +9,14 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 反射通用列动作应用工具（设计 D16，重构轮新增）：hidden → 字段置 null / masked → 整值替换
- * {@code ***}（复用 {@link ColumnScope#mask} 的 null→null 语义），与手写 setter 分支逐字段等价——
- * 新资源接入列应用零手写（接入模板本轮 §5 第②步）。
+ * 反射通用列动作应用工具（重构轮 D16；2026-10-10 组件化 D18 自 cloud-system 搬家至 api 模块，
+ * 机制与防御零变更——消费方引 jar 即得，新资源接入列应用零手写）：hidden → 字段置 null /
+ * masked → 整值替换 {@code ***}（复用 {@link ColumnScope#mask} 的 null→null 语义），
+ * 与手写 setter 分支逐字段等价。
  *
- * <p>三层纵深防御的第三层（运行期读路径永不因列应用炸，D7 口径延伸）：第一层 D15/D17 注册断言拦
- * 声明错（启动失败）；第二层 3034 校验链拦配置错；本工具兜底运行期残余的唯一来源 = DB 脏数据——
+ * <p>三层纵深防御的第三层（运行期读路径永不因列应用炸，D7 口径延伸）：第一层注册断言拦
+ * 声明错（provider 本地 register / 消费方 DataPermColumns.assertDeclared，启动失败）；
+ * 第二层 3034 校验链拦配置错；本工具兜底运行期残余的唯一来源 = DB 脏数据——
  * 字段不存在 / masked 指非 String 字段 → log.warn（按 class#field 去重防大分页刷屏）跳过，
  * 其余列照常应用；IllegalAccessException 为 setAccessible 后理论不可达的终态兜底（log.error 跳过）。
  *

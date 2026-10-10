@@ -74,7 +74,12 @@ export function explainDataPerm(query: ExplainQuery): Promise<DataPermExplainVo>
   return request<DataPermExplainVo>({ url: '/system/data-perm/explain', method: 'get', params: query })
 }
 
-/** 我的数据范围（契约 §3.9，免 @PreAuthorize 登录即可——自查本人范围，设计 D12）：leave 页提示条专用，不留痕 */
+/**
+ * 我的数据范围（契约 §3.9，免 @PreAuthorize 登录即可——自查本人范围，设计 D12）：列表页提示条专用，不留痕。
+ * resource 取值域：'leave' 请假单（契约 2026-10-10-data-permission-api §1）/
+ * 'bpmn_approval' 审批单（远程资源，契约 2026-10-10-dataperm-component-api §4 新增，常量
+ * DATAPERM_RESOURCE_APPROVAL）——非法 resource 得 3034，调用页 v-if 兜底不渲染提示条
+ */
 export function getMyScope(resource: string): Promise<MyScopeVo> {
   return request<MyScopeVo>({ url: '/system/data-perm/my-scope', method: 'get', params: { resource } })
 }

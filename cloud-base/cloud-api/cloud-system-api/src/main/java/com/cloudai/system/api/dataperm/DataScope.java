@@ -1,11 +1,12 @@
-package com.cloudai.system.service.dataperm;
+package com.cloudai.system.api.dataperm;
 
 import java.util.Set;
 
 /**
- * 行级范围终态（设计 §5.1，不可变）：all=true 过滤豁免；否则 accounts 白名单
+ * 行级范围终态（不可变；2026-10-10 组件化设计 D18/D19 自 cloud-system service/dataperm 搬家至 api 模块，
+ * 实现零变更——消费方引 jar 即得）：all=true 过滤豁免；否则 accounts 白名单
  * （空集=看不到任何行，Service 短路不进 mapper——XML 永不收到空集合，规避 IN () 非法 SQL）。
- * 语义按账号列（apply_user）过滤是试点资源的既定事实（设计 D4 记档）。
+ * 语义按账号列（apply_user）过滤是试点资源的既定事实（数据权限设计 D4 记档）。
  */
 public final class DataScope {
 
@@ -40,7 +41,7 @@ public final class DataScope {
         return !all && accounts.isEmpty();
     }
 
-    /** 详情行级判定（设计 §5.1）：该行的归属账号是否可见 */
+    /** 详情行级判定：该行的归属账号是否可见 */
     public boolean allows(String ownerAccount) {
         return all || accounts.contains(ownerAccount);
     }

@@ -359,6 +359,13 @@ INSERT INTO sys_data_perm_rule (resource, subject_type, subject_id, row_scope, c
                                 create_by, create_time, update_by, update_time)
 VALUES ('leave', 0, 1, 4, NULL, 'admin', NOW(), 'admin', NOW());
 
+-- 数据权限组件化种子（设计 D27，与增量脚本 2026-10-10-dataperm-component.sql 语义等价）：
+-- admin 角色首个跨服务资源 bpmn_approval 全部档（审批列表「仅自己」→「全部」，与 leave 轮同款语义变更；
+-- 复用 bpmn:approval:list 既有权限无菜单种子；resource 已由 DataPermResources.registerRemote 注册）
+INSERT INTO sys_data_perm_rule (resource, subject_type, subject_id, row_scope, custom_accounts,
+                                create_by, create_time, update_by, update_time)
+VALUES ('bpmn_approval', 0, 1, 4, NULL, 'admin', NOW(), 'admin', NOW());
+
 -- 内置字典种子 user_status（与增量脚本 2026-10-07-translation.sql 语义等价；
 -- label 文案锁定契约 2026-10-07-translation-api §0.3，create_by='system' 内置标记）
 INSERT INTO sys_dict_type (id, dict_name, dict_key, status, is_builtin, create_by, create_time, update_by, update_time) VALUES

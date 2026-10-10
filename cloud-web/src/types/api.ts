@@ -675,7 +675,7 @@ export interface DataPermExplainVo {
   narratives: string[]
 }
 
-/** 我的数据范围 VO（契约 §6.8）：leave 页提示条专用；columnSummary null=无列动作 */
+/** 我的数据范围 VO（契约 §6.8）：列表页提示条（leave / bpmn 审批页，后者见 2026-10-10-dataperm-component §4）；columnSummary null=无列动作 */
 export interface MyScopeVo {
   scopeLabel: string
   columnSummary: string | null
@@ -759,3 +759,7 @@ export const SUBJECT_USER = 1
 export const OP_LIST = 'list'
 export const OP_DETAIL = 'detail'
 export const OP_DENY = 'deny'
+
+/** 数据权限资源标识（契约 2026-10-10-dataperm-component-api §1/§4）：审批单（bpmn 远程资源，
+ * 可配列 title）——审批页 my-scope 提示条入参；资源字面量唯一声明点，页面一律引本常量 */
+export const DATAPERM_RESOURCE_APPROVAL = 'bpmn_approval'

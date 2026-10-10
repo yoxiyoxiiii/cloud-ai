@@ -3,6 +3,9 @@ package com.cloudai.system.service.dataperm;
 import com.cloudai.common.core.domain.LoginUser;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.system.api.dataperm.ColumnScope;
+import com.cloudai.system.api.dataperm.DataPermOperation;
+import com.cloudai.system.api.dataperm.DataScope;
 import com.cloudai.system.entity.SysDataPermColumn;
 import com.cloudai.system.entity.SysDataPermLog;
 import com.cloudai.system.entity.SysDataPermRule;
@@ -40,6 +43,9 @@ import java.util.stream.Collectors;
  * 多规则并集宽松者胜（D3）；无规则默认 SELF + 列全可见（fail-safe）；admin 靠种子规则得 ALL，代码无特例。
  * 留痕（D7）：真实查询（list/detail）同步落 sys_data_perm_log 一条，insert 异常 catch log.error 不抛
  * （可观察组件自身不得成为读路径故障源）；explain 模拟与 my-scope 自查不留痕。
+ * 组件化轮（2026-10-10 D18/D23）：终态类型 DataScope/ColumnScope/DataPermOperation 改引 api 包
+ * （行为零变更）；新增 evaluateFor 账号显式入口（/inner/data-perm 跨服务求值薄壳底层），
+ * logDeny 签名账号显式化——leave 本地调用路径行为不变（D26）。
  */
 @Slf4j
 @Service
@@ -70,6 +76,32 @@ public class DataPermEvaluator {
         return decision;
     }
 
+    /**
+     * 账号显式真实决策（组件化 D20/D23，/inner/data-perm/evaluate 底层）：恒留痕（D7）。
+     * account→用户解析（findByAccount→userId）：不存在/停用不报错，userId=null 收敛——
+     * 无规则默认 SELF={account}，方向安全不越权（D20）；与 explain 的 3032 语义不同
+     * （explain 是管理侧模拟需明确报目标无效，跨服务求值是读路径防御）。
+     */
+    public DataPermDecision evaluateFor(String account, String resource, String operation, String businessKey) {
+        if (account == null || account.isBlank()) {
+            throw new BusinessException("账号不能为空");
+        }
+        DataPermResources.assertResource(resource);
+        Long userId = resolveUserIdOrNull(account);
+        DataPermDecision decision = doEvaluate(account, userId, resource, operation);
+        persistLog(decision, businessKey);
+        return decision;
+    }
+
+    /** 账号→userId 解析：不存在或停用返回 null（收敛口径见 evaluateFor javadoc，D20） */
+    private Long resolveUserIdOrNull(String account) {
+        SysUser target = userMapper.findByAccount(account);
+        if (target == null || !Integer.valueOf(SysUser.StatusEnum.NORMAL.getCode()).equals(target.getStatus())) {
+            return null;
+        }
+        return target.getId();
+    }
+
     /** 自查求值（my-scope，契约 §3.9）：当前登录人但不留痕——非真实业务决策，与 explain 同口径（D7） */
     public DataPermDecision evaluateForSelf(String resource) {
         LoginUser current = SecurityUtils.currentUser();
@@ -91,10 +123,13 @@ public class DataPermEvaluator {
         return doEvaluate(account, target.getId(), resource, null);
     }
 
-    /** deny 补痕（设计 D7/D13）：详情被行级拒绝后补记安全审计事件（谁在何时试图越权访问哪张单） */
-    public void logDeny(String resource, String businessKey) {
+    /**
+     * deny 补痕（设计 D7/D13；组件化 D23 账号显式化——/inner/data-perm/deny 薄壳直调，
+     * 本地调用方显式传 SecurityUtils.currentAccount() 行为等价）：详情被行级拒绝后补记
+     * 安全审计事件（谁在何时试图越权访问哪张单）。
+     */
+    public void logDeny(String account, String resource, String businessKey) {
         DataPermResources.assertResource(resource);
-        String account = SecurityUtils.currentAccount();
         SysDataPermLog denyRow = new SysDataPermLog();
         denyRow.setAccount(account);
         denyRow.setResource(resource);

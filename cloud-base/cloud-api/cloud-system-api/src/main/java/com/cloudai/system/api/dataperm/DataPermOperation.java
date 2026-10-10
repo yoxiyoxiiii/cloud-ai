@@ -1,7 +1,8 @@
-package com.cloudai.system.service.dataperm;
+package com.cloudai.system.api.dataperm;
 
 /**
- * 数据权限决策操作类型（契约 §6.6 operation 字段域；String 域沿 constant/LeaveStatus 先例）。
+ * 数据权限决策操作类型（2026-10-10 组件化 D18 自 cloud-system 搬家，常量零变更；
+ * operation 字段域=数据权限契约 §6.6）。String 域沿 constant/LeaveStatus 先例。
  * explain 模拟与 my-scope 自查不落 operation（不留痕，设计 D7）。
  */
 public final class DataPermOperation {

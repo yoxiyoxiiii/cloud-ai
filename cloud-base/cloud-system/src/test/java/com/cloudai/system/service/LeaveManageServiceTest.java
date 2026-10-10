@@ -8,10 +8,10 @@ import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
-import com.cloudai.system.service.dataperm.ColumnScope;
+import com.cloudai.system.api.dataperm.ColumnScope;
 import com.cloudai.system.service.dataperm.DataPermDecision;
 import com.cloudai.system.service.dataperm.DataPermEvaluator;
-import com.cloudai.system.service.dataperm.DataScope;
+import com.cloudai.system.api.dataperm.DataScope;
 import com.cloudai.system.vo.SysLeaveDetailVo;
 import com.cloudai.system.vo.SysLeaveVo;
 import com.cloudai.system.vo.UserOptionVo;
@@ -162,9 +162,9 @@ class LeaveManageServiceTest {
 
         BusinessException ex = catchThrowableOfType(() -> service.findById(5L), BusinessException.class);
 
-        // 归属账号不在范围 → 3026 + deny 留痕（IDOR 收口，D13）
+        // 归属账号不在范围 → 3026 + deny 留痕（IDOR 收口，D13；组件化 D23 三参——测试无登录上下文 account=null）
         assertThat(ex.getCode()).isEqualTo(3026);
-        verify(dataPermEvaluator).logDeny("leave", "5");
+        verify(dataPermEvaluator).logDeny(null, "leave", "5");
     }
 
     @Test
@@ -178,7 +178,7 @@ class LeaveManageServiceTest {
         SysLeaveDetailVo detail = service.findById(5L);
 
         assertThat(detail.getLeave().getStatus()).isEqualTo("2");
-        verify(dataPermEvaluator, org.mockito.Mockito.never()).logDeny(anyString(), anyString());
+        verify(dataPermEvaluator, org.mockito.Mockito.never()).logDeny(any(), anyString(), anyString());
     }
 
     @Test

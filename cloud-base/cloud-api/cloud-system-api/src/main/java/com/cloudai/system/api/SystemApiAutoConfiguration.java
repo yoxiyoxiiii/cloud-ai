@@ -1,5 +1,6 @@
 package com.cloudai.system.api;
 
+import com.cloudai.system.api.fallback.DataPermClientFallbackFactory;
 import com.cloudai.system.api.fallback.SystemUserClientFallbackFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -15,5 +16,11 @@ public class SystemApiAutoConfiguration {
     @Bean
     public SystemUserClientFallbackFactory systemUserClientFallbackFactory() {
         return new SystemUserClientFallbackFactory();
+    }
+
+    /** 数据权限求值客户端降级（组件化轮 D21 fail-closed；additive，沿既有注册口径） */
+    @Bean
+    public DataPermClientFallbackFactory dataPermClientFallbackFactory() {
+        return new DataPermClientFallbackFactory();
     }
 }

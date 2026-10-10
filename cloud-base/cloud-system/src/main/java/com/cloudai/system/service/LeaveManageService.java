@@ -5,15 +5,16 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
+import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.system.api.dataperm.DataPermColumnApplier;
+import com.cloudai.system.api.dataperm.DataPermOperation;
+import com.cloudai.system.api.dataperm.DataScope;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
-import com.cloudai.system.service.dataperm.DataPermColumnApplier;
 import com.cloudai.system.service.dataperm.DataPermDecision;
 import com.cloudai.system.service.dataperm.DataPermEvaluator;
-import com.cloudai.system.service.dataperm.DataPermOperation;
 import com.cloudai.system.service.dataperm.DataPermResources;
-import com.cloudai.system.service.dataperm.DataScope;
 import com.cloudai.system.vo.SysLeaveDetailVo;
 import com.cloudai.system.vo.SysLeaveVo;
 import com.cloudai.system.vo.UserOptionVo;
@@ -34,6 +35,8 @@ import java.util.Set;
  * 列表恒回填 applyUserName/approverName（管理员视角辨识申请人），title/reason 可能 null 或 ***
  * （列级隐藏/脱敏）；详情行级判定 + IDOR 收口（3026 + deny 留痕，D13）。
  * 列应用经通用反射工具 DataPermColumnApplier（重构轮 D16），行为与手写版逐字段等价。
+ * 组件化轮（2026-10-10 D26）：求值保持本地注入（提供方不自我 Feign），仅类型 import 切换
+ * 至 api 包 + logDeny 账号显式传参——行为零变化。
  */
 @Slf4j
 @Service
@@ -86,7 +89,7 @@ public class LeaveManageService {
         DataPermDecision decision = dataPermEvaluator.evaluate(
                 DataPermResources.LEAVE, DataPermOperation.DETAIL, String.valueOf(id));
         if (!decision.getDataScope().allows(vo.getApplyUser())) {
-            dataPermEvaluator.logDeny(DataPermResources.LEAVE, String.valueOf(id));
+            dataPermEvaluator.logDeny(SecurityUtils.currentAccount(), DataPermResources.LEAVE, String.valueOf(id));
             throw new BusinessException(ERR_LEAVE_NO_ACCESS, "无权访问该数据");
         }
         fillDetailLabels(vo);

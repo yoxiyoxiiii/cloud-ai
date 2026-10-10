@@ -73,6 +73,12 @@
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-bpmn-api</artifactId>
         </dependency>
+        <!-- 自家服务间契约（组件化轮 D18：dataperm 契约模型搬家至 api——DataScope/ColumnScope/
+             Operation/Applier 改引 api 包；此前仅经 translate-starter 传递，本轮直接 import 须显式声明） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-system-api</artifactId>
+        </dependency>
         <!-- Feign 熔断包装（fallbackFactory 生效前提，设计 D3） -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>

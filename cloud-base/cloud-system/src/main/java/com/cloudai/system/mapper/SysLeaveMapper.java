@@ -2,8 +2,8 @@ package com.cloudai.system.mapper;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.cloudai.system.api.dataperm.DataScope;
 import com.cloudai.system.entity.SysLeave;
-import com.cloudai.system.service.dataperm.DataScope;
 import com.cloudai.system.vo.SysLeaveVo;
 import org.apache.ibatis.annotations.Param;
 

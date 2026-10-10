@@ -14,8 +14,17 @@ import com.cloudai.bpmn.vo.ApprovalStepVo;
 import com.cloudai.bpmn.vo.ApprovalVo;
 import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
+import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
+import com.cloudai.common.core.exception.ErrorCode;
 import com.cloudai.common.translate.core.TranslationCacheService;
+import com.cloudai.system.api.client.DataPermClient;
+import com.cloudai.system.api.dataperm.ColumnScope;
+import com.cloudai.system.api.dataperm.DataPermColumnApplier;
+import com.cloudai.system.api.dataperm.DataPermOperation;
+import com.cloudai.system.api.domain.DataPermDenyRequest;
+import com.cloudai.system.api.domain.DataPermEvaluateRequest;
+import com.cloudai.system.api.domain.DataPermScopeVo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.engine.HistoryService;
@@ -36,11 +45,15 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 审批单查询与时间线拼装（契约 2026-10-08-approval-platform-api §3）。详情三源：
+ * 审批单查询与时间线拼装（契约 2026-10-08-approval-platform-api §3；行级/列级语义由
+ * 2026-10-10-dataperm-component-api §3 取代——三读路径接数据权限求值）。详情三源：
  * bpmn_approval 行（apply 步）+ ACT_HI_COMMENT（approval 步）+ HistoricProcessInstance（end 步）。
- * 只读服务不加事务注解；详情嵌套 VO 不在 TranslateAdvisor 容器下钻范围（候选①挂账）——
+ * 组件化轮（D18-D25）：列表按当前登录人规则求值行集（无规则=SELF 与旧版「恒按申请人」逐字等价），
+ * title 列级应用；详情/图数据 IDOR 收口（4010 先行 → 行级判定不通过 4018 + deny 远程补痕）；
+ * system 不可用 fail-closed（D21：拒绝访问，不降级无过滤/空集）。求值每读路径一次（list/detail），
+ * 留痕集中落 system 库（D7/D23）。详情嵌套 VO 不在 TranslateAdvisor 容器下钻范围（候选①挂账）——
  * 译文字段经 TranslationCacheService 手动回填，未命中 null 同降级语义。
- * 图数据（§3.4）：实例定位精确 id 优先、businessKey=approvalId 回退（限定本类型流程 key 取最新，
+ * 图数据（§3.3）：实例定位精确 id 优先、businessKey=approvalId 回退（限定本类型流程 key 取最新，
  * 防旧时代/异类型同号历史实例多行——singleResult 撞两行抛 FlowableException，F9 实证修复）。
  */
 @Slf4j
@@ -50,6 +63,15 @@ public class ApprovalQueryService {
 
     private static final int ERR_APPROVAL_NOT_FOUND = 4010;
 
+    /** 无权访问该审批单（契约 §6 错误码 4018，详情/图数据行级拒绝——D24 IDOR 收口） */
+    private static final int ERR_APPROVAL_NO_ACCESS = 4018;
+
+    /**
+     * 数据权限资源标识（本地常量——注册表 DataPermResources 在 system 侧，bpmn 不引；
+     * 值与 provider static 块 registerRemote 声明逐字一致，契约 §1 域语义）。
+     */
+    private static final String RESOURCE_APPROVAL = "bpmn_approval";
+
     private static final String DICT_APPROVAL_STATUS = "bpmn_approval_status";
 
     private static final String STEP_APPLY = "apply";
@@ -58,42 +80,115 @@ public class ApprovalQueryService {
 
     private final BpmnApprovalMapper approvalMapper;
     private final BusinessTypeRegistry businessTypeRegistry;
+    private final DataPermClient dataPermClient;
     private final TaskService taskService;
     private final HistoryService historyService;
     private final RuntimeService runtimeService;
     private final TranslationCacheService translationCacheService;
 
-    /** 我的审批分页（恒按申请人，id 倒序，含全部状态与业务类型——契约 §3.1） */
-    public PageResult<ApprovalVo> pageListMy(PageQuery query, String applyUser) {
+    /**
+     * 我的审批分页（契约 dataperm-component §3.1：行集=当前登录人数据权限求值——全部档全量、
+     * 空集短路空页不查库、白名单档账号 IN；title 列级隐藏/脱敏；id 倒序含全部状态与业务类型）。
+     */
+    public PageResult<ApprovalVo> pageListMy(PageQuery query, String account) {
+        DataPermScopeVo scopeVo = evalScope(account, DataPermOperation.LIST, null);
+        if (scopeVo.toDataScope().isEmptyScope()) {
+            return PageResult.of(0, List.of());
+        }
         IPage<BpmnApproval> page = approvalMapper.pageList(
-                new Page<>(query.getPageNum(), query.getPageSize()), applyUser);
+                new Page<>(query.getPageNum(), query.getPageSize()), scopeVo.toDataScope());
+        ColumnScope columnScope = scopeVo.toColumnScope();
         List<ApprovalVo> rows = new ArrayList<>();
         Map<String, BpmnBusinessType> configCache = new HashMap<>();
         for (BpmnApproval approval : page.getRecords()) {
-            rows.add(toEnrichedVo(approval, configCache));
+            ApprovalVo vo = toEnrichedVo(approval, configCache);
+            DataPermColumnApplier.apply(vo, columnScope);
+            rows.add(vo);
         }
         return PageResult.of(page.getTotal(), rows);
     }
 
-    /** 审批单详情（§3.2）：approval 主体 + steps 时间线（apply/approval/end 按时间升序） */
-    public ApprovalDetailVo findById(Long id) {
+    /**
+     * 审批单详情（契约 dataperm-component §3.2 IDOR 收口）：4010 真不存在先行 → 行级判定
+     * （不通过 deny 远程补痕 + 4018）→ 可见则 title 列级同列表 + steps 时间线（时间升序）。
+     */
+    public ApprovalDetailVo findById(Long id, String account) {
         BpmnApproval approval = requireApproval(id);
+        DataPermScopeVo scopeVo = evalScope(account, DataPermOperation.DETAIL, String.valueOf(id));
+        assertRowVisible(approval, account, scopeVo);
+        ApprovalVo approvalVo = toEnrichedVo(approval, new HashMap<>());
+        DataPermColumnApplier.apply(approvalVo, scopeVo.toColumnScope());
         ApprovalDetailVo detail = new ApprovalDetailVo();
-        detail.setApproval(toEnrichedVo(approval, new HashMap<>()));
+        detail.setApproval(approvalVo);
         detail.setSteps(assembleSteps(approval));
         fillDetailLabels(detail);
         return detail;
     }
 
-    /** 审批单图数据（§3.4）：实例定位（精确 id 优先，businessKey 回退取最新）→ 高亮四字段；
-     *  历史缺失防御态返回 definitionId=null 空集合（不设错误码，前端隐藏图区） */
-    public ApprovalDiagramVo findDiagram(Long id) {
+    /**
+     * 审批单图数据（契约 dataperm-component §3.3）：4010 先行 → 同详情行级判定（4018/deny 同路径）
+     * → 实例定位（精确 id 优先，businessKey 回退取最新）→ 高亮四字段；
+     * 历史缺失防御态返回 definitionId=null 空集合（不设错误码，前端隐藏图区）。
+     */
+    public ApprovalDiagramVo findDiagram(Long id, String account) {
         BpmnApproval approval = requireApproval(id);
+        DataPermScopeVo scopeVo = evalScope(account, DataPermOperation.DETAIL, String.valueOf(id));
+        assertRowVisible(approval, account, scopeVo);
         HistoricProcessInstance historic = findHistoricInstance(approval);
         if (historic == null) {
             return emptyDiagram();
         }
         return buildDiagram(historic);
+    }
+
+    // ---- 数据权限胶水（三读路径共用，D21/D23/D24） ----
+
+    /**
+     * 求值收敛胶水（fail-closed 全路径）：Feign evaluate → 非 200/data 空一律 BusinessException
+     * 拒绝访问（默认 1002「数据权限服务不可用」；降级 R 沿 msg 透传）——任何分支不得在求值失败时
+     * 返回数据；二层兜底 catch FeignException（circuitbreaker 关闭时降级不生效的直连异常）。
+     */
+    private DataPermScopeVo evalScope(String account, String operation, String businessKey) {
+        R<DataPermScopeVo> resp;
+        try {
+            resp = dataPermClient.evaluate(
+                    new DataPermEvaluateRequest(account, RESOURCE_APPROVAL, operation, businessKey));
+        } catch (Exception e) {
+            log.error("数据权限求值 Feign 调用失败（fail-closed 拒绝访问）: account={}, operation={}",
+                    account, operation, e);
+            throw new BusinessException("数据权限服务不可用，请稍后重试");
+        }
+        if (resp == null || resp.getCode() != ErrorCode.SUCCESS.getCode() || resp.getData() == null) {
+            log.error("数据权限求值返回失败（fail-closed 拒绝访问）: account={}, operation={}, code={}",
+                    account, operation, resp == null ? null : resp.getCode());
+            throw new BusinessException(resp == null || resp.getMsg() == null
+                    ? "数据权限服务不可用，请稍后重试" : resp.getMsg());
+        }
+        return resp.getData();
+    }
+
+    /** 行级判定（详情/图数据共用，D24）：归属账号不在范围 → deny 远程补痕（降级仅记日志）→ 4018 */
+    private void assertRowVisible(BpmnApproval approval, String account, DataPermScopeVo scopeVo) {
+        if (scopeVo.toDataScope().allows(approval.getApplyUser())) {
+            return;
+        }
+        denyQuietly(account, approval.getId());
+        throw new BusinessException(ERR_APPROVAL_NO_ACCESS, "无权访问该审批单");
+    }
+
+    /** deny 补痕（D23）：失败不阻断已发生的 4018 拒绝（降级 R 记日志 / 异常 catch，D21） */
+    private void denyQuietly(String account, Long approvalId) {
+        try {
+            R<Void> resp = dataPermClient.deny(
+                    new DataPermDenyRequest(account, RESOURCE_APPROVAL, String.valueOf(approvalId)));
+            if (resp == null || resp.getCode() != ErrorCode.SUCCESS.getCode()) {
+                log.error("数据权限 deny 补痕返回失败（不阻断拒绝语义）: account={}, approvalId={}, code={}",
+                        account, approvalId, resp == null ? null : resp.getCode());
+            }
+        } catch (Exception e) {
+            log.error("数据权限 deny 补痕调用失败（不阻断拒绝语义）: account={}, approvalId={}",
+                    account, approvalId, e);
+        }
     }
 
     /** 实例定位：审批单存有实例 id（§3.1 非撤销态）时精确锚定；撤销单实例 id 已清空，

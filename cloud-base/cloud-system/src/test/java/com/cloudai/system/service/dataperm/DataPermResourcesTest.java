@@ -29,6 +29,31 @@ class DataPermResourcesTest {
         assertThat(DataPermResources.listRegisteredResources()).contains("leave");
     }
 
+    // ---- 组件化轮（D22）：远程资源 registerRemote 纯字符串注册 ----
+
+    @Test
+    void bpmnApproval_remoteRegistered_withTitleColumnOnly() {
+        // 静态初始化成功本身即证明 registerRemote 不调 D17 类断言（voClass=null——断言若触达会 NPE 启动失败）
+        assertThat(DataPermResources.isRegistered(DataPermResources.BPMN_APPROVAL)).isTrue();
+        assertThat(DataPermResources.getConfigurableColumns(DataPermResources.BPMN_APPROVAL))
+                .containsExactly("title");
+        assertThat(DataPermResources.listRegisteredResources())
+                .contains(DataPermResources.BPMN_APPROVAL);
+    }
+
+    @Test
+    void bpmnApproval_assertColumn_sameValidationChain() {
+        // 远程资源走同一 3034 校验链（配置台/my-scope 自然工作，消费的只是字符串清单）
+        assertThatCode(() -> DataPermResources.assertColumn(DataPermResources.BPMN_APPROVAL, "title"))
+                .doesNotThrowAnyException();
+
+        BusinessException ex = catchThrowableOfType(
+                () -> DataPermResources.assertColumn(DataPermResources.BPMN_APPROVAL, "reason"),
+                BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3034);
+    }
+
     @Test
     void unknownOrNullResource_notRegistered() {
         assertThat(DataPermResources.isRegistered("ghost")).isFalse();
