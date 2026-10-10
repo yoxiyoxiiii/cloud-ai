@@ -19,9 +19,6 @@ public class ApprovalProjectionProperties {
      *  缺失启动报错防组名漂移导致 offset 重置重放，装配处校验） */
     private String consumerGroup;
 
-    /** 定时对账间隔 ms（默认 60s；首轮启动后延迟一个间隔执行，避免启动风暴） */
-    private long reconcileIntervalMs = 60000L;
-
-    /** 对账单批上限（对齐平台 /inner/approval/status-list businessKeys ≤100，契约 §4.2） */
+    /** 对账单批上限（对齐平台 /inner/approval/status-list businessKeys ≤100，契约 §4.2；定时轮次与按需对账共用） */
     private int reconcileBatchSize = 100;
 }

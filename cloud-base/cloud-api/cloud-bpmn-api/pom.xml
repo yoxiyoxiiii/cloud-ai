@@ -34,6 +34,11 @@
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-common-rocketmq-starter</artifactId>
         </dependency>
+        <!-- xxl-job 对账薄壳（2026-10-10 对账迁移轮：@XxlJob 注解 + XxlJobHelper 执行日志留痕；版本走根 dependencyManagement） -->
+        <dependency>
+            <groupId>com.xuxueli</groupId>
+            <artifactId>xxl-job-core</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

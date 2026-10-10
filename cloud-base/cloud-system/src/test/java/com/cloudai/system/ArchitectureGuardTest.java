@@ -386,6 +386,30 @@ class ArchitectureGuardTest {
                 .isEmpty();
     }
 
+    // ---- 规则 v8（2026-10-10 对账迁移轮）：xxl-job 装配与任务类落位 ----
+
+    /** 服务模块禁自建 executor：XxlJobSpringExecutor 只能来自 cloud-common-xxljob-starter 装配（xxl-job 整合设计 D1） */
+    private static final Pattern NEW_XXL_EXECUTOR = Pattern.compile("new\\s+XxlJobSpringExecutor");
+
+    @Test
+    void service_module_must_not_new_xxl_executor() throws IOException {
+        List<String> violations = scan(MAIN_JAVA, "*.java", NEW_XXL_EXECUTOR);
+        assertThat(violations).as("服务模块禁止 new XxlJobSpringExecutor——executor 装配归 cloud-common-xxljob-starter").isEmpty();
+    }
+
+    @Test
+    void xxljob_handler_class_must_live_in_job_package() throws IOException {
+        // 服务模块本地 @XxlJob 任务类落位约定 job/ 包；api jar 框架组件（projection 对账薄壳）不在服务模块源码，天然豁免
+        List<String> violations = new ArrayList<>();
+        for (Path java : listFiles(MAIN_JAVA, "*.java")) {
+            String content = Files.readString(java, StandardCharsets.UTF_8);
+            if (content.contains("@XxlJob(") && !java.toString().replace('\\', '/').contains("/job/")) {
+                violations.add(java.getFileName() + " (@XxlJob outside job/ package)");
+            }
+        }
+        assertThat(violations).as("@XxlJob 任务类必须落 job/ 包（本地任务模板约定；api jar 框架组件豁免）").isEmpty();
+    }
+
     /** 提取第 idx 行的方法声明名；注释/注解/private/protected/语句关键字行返回 null */
     private String extractMethodName(String[] lines, int idx) {
         String line = lines[idx];

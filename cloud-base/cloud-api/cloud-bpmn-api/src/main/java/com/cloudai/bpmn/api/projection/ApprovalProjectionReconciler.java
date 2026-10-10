@@ -9,7 +9,6 @@ import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -36,8 +35,7 @@ public class ApprovalProjectionReconciler {
     private final BpmnApprovalClient approvalClient;
     private final ApprovalProjectionProperties properties;
 
-    /** 定时对账轮次（fixedDelay 首轮延迟一个间隔，避免启动风暴；异常全吞——下轮再试） */
-    @Scheduled(fixedDelayString = "${cloud.bpmn.projection.reconcile-interval-ms:60000}")
+    /** 单轮对账入口（xxl-job CRON 调度：薄壳 ApprovalProjectionReconcileJobHandler → 本方法；异常全吞语义不变——下轮再试） */
     public void reconcileActive() {
         try {
             int rounds = reconcileByCursor();

@@ -223,4 +223,15 @@ VALUES (5, 3, 'system-demo-hello-world', now(), now(), 'cloudai', '', 'NONE', ''
        (6, 4, 'bpmn-demo-hello-world',   now(), now(), 'cloudai', '', 'NONE', '',
         'DO_NOTHING', 'FIRST', 'cloudDemoJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '');
 
+-- 审批投影对账任务（2026-10-10 对账迁移轮增补）：CRON 每分钟调度，trigger_status=1 启动即调度；
+-- handler 对应 cloud-bpmn-api projection 包 @XxlJob("approvalProjectionReconcileJobHandler")（宿主 cloud-system）
+INSERT INTO `xxl_job_info`(`id`, `job_group`, `name`, `add_time`, `update_time`, `author`, `alarm_email`,
+                           `schedule_type`, `schedule_conf`, `misfire_strategy`, `executor_route_strategy`,
+                           `executor_handler`, `executor_param`, `executor_block_strategy`, `executor_timeout`,
+                           `executor_fail_retry_count`, `glue_type`, `glue_source`, `glue_remark`, `glue_updatetime`,
+                           `child_jobid`, `trigger_status`)
+VALUES (7, 3, 'approval-projection-reconcile', now(), now(), 'cloudai', '', 'CRON', '0 * * * * ?',
+        'DO_NOTHING', 'FIRST', 'approvalProjectionReconcileJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '',
+        1);
+
 commit;

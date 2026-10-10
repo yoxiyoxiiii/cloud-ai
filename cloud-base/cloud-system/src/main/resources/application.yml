@@ -57,7 +57,8 @@ cloud:
     projection:
       enabled: true
       consumer-group: g_system_approval_event
-      # 定时对账间隔/单批上限用默认（60s / 100，对齐平台 status-list 单批上限）
+      # 对账单批上限用默认（100，对齐平台 status-list 单批上限）；定时轮次节奏自 2026-10-10 起
+      # 由 xxl-job admin 任务 id 7 CRON 每分钟 0 * * * * ? 调度（reconcile-interval-ms 键退役——Nacos 从未显式配置，占位符默认即节奏）
 
 mybatis-plus:
   configuration:
