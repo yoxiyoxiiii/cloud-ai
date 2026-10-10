@@ -45,6 +45,13 @@
          ORDER BY id ASC
     </select>
 
+    <!-- 一致性检查（设计 D17）：(resource, column_key) ⊆ 对应资源可配列清单（孤儿列规则排查）；
+         resultType 实体仅 resource/column_key 两列有值，检查器读该两属性 -->
+    <select id="listDistinctResourceColumns" resultType="com.cloudai.system.entity.SysDataPermColumn">
+        SELECT DISTINCT resource, column_key
+          FROM sys_data_perm_column
+    </select>
+
     <insert id="saveBatch">
         INSERT INTO sys_data_perm_column (resource, subject_type, subject_id, column_key, action,
                                           create_by, create_time, update_by, update_time)

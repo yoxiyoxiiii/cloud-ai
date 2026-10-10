@@ -212,10 +212,13 @@ class ArchitectureGuardTest {
      * myScope（自查摘要）——求值器与配置服务核心入口；值对象惯用语 all/of（DataScope 工厂）、
      * allows（范围判定）、mask（脱敏应用）、assert（注册表断言 assertResource/assertColumn）——
      * service/dataperm 下值对象非 CRUD 语境，语义化命名优先。
+     * 2026-10-10 注册表抽象轮增量：DataPermColumnApplier.apply（反射列应用 D16）/
+     * DataPermRegistryConsistencyChecker.collectViolations（一致性检查收集 D17）。
      */
     private static final Pattern NAMING_PREFIX_OK =
             Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|cancel|get|set|is"
-                    + "|evaluate|explain|logDeny|myScope|all|of|allows|mask|assert)\\w*");
+                    + "|evaluate|explain|logDeny|myScope|all|of|allows|mask|assert"
+                    + "|apply|collect)\\w*");
 
     /** 语句起始关键字（throw new Xxx( / return foo( 会被误判为声明，前置排除） */
     private static final List<String> STATEMENT_KEYWORDS = List.of(

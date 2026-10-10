@@ -41,6 +41,13 @@
          WHERE id = #{id}
     </select>
 
+    <!-- 一致性检查（设计 D17）：DB 存量 resource ⊆ 注册表；DISTINCT 理论可借 uk_resource_subject
+         最左前缀但 MySQL 不保证 loose index scan，启动一次性全扫量级可接受（设计 §8 索引记档：不建新索引） -->
+    <select id="listDistinctResources" resultType="string">
+        SELECT DISTINCT resource
+          FROM sys_data_perm_rule
+    </select>
+
     <!-- 规则分页：动态筛选组合（resource 非法值宽松语义——不报错自然返回空集，契约 §3.1） -->
     <select id="pageList" resultType="com.cloudai.system.entity.SysDataPermRule">
         SELECT <include refid="allColumns"/>

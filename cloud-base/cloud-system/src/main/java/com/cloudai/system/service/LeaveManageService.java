@@ -8,7 +8,7 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
-import com.cloudai.system.service.dataperm.ColumnScope;
+import com.cloudai.system.service.dataperm.DataPermColumnApplier;
 import com.cloudai.system.service.dataperm.DataPermDecision;
 import com.cloudai.system.service.dataperm.DataPermEvaluator;
 import com.cloudai.system.service.dataperm.DataPermOperation;
@@ -33,6 +33,7 @@ import java.util.Set;
  * 行集与列出参改由数据权限求值决定（D5 显式编程式：Service 求值 → mapper 收 DataScope 参数）——
  * 列表恒回填 applyUserName/approverName（管理员视角辨识申请人），title/reason 可能 null 或 ***
  * （列级隐藏/脱敏）；详情行级判定 + IDOR 收口（3026 + deny 留痕，D13）。
+ * 列应用经通用反射工具 DataPermColumnApplier（重构轮 D16），行为与手写版逐字段等价。
  */
 @Slf4j
 @Service
@@ -69,7 +70,7 @@ public class LeaveManageService {
                 new Page<>(query.getPageNum(), query.getPageSize()), BUSINESS_TYPE_LEAVE, scope);
         List<SysLeaveVo> rows = page.getRecords();
         fillListNames(rows);
-        rows.forEach(row -> applyColumnScope(row, decision.getColumnScope()));
+        rows.forEach(row -> DataPermColumnApplier.apply(row, decision.getColumnScope()));
         return PageResult.of(page.getTotal(), rows);
     }
 
@@ -89,7 +90,7 @@ public class LeaveManageService {
             throw new BusinessException(ERR_LEAVE_NO_ACCESS, "无权访问该数据");
         }
         fillDetailLabels(vo);
-        applyColumnScope(vo, decision.getColumnScope());
+        DataPermColumnApplier.apply(vo, decision.getColumnScope());
         SysLeaveDetailVo detail = new SysLeaveDetailVo();
         detail.setLeave(vo);
         return detail;
@@ -113,23 +114,6 @@ public class LeaveManageService {
         for (SysLeaveVo row : rows) {
             row.setApplyUserName(names.get(row.getApplyUser()));
             row.setApproverName(names.get(row.getApprover()));
-        }
-    }
-
-    /** 列级动作应用（契约 §4.1/§4.2）：隐藏置 null、脱敏整值替换 ***（title/reason，试点可配列） */
-    private void applyColumnScope(SysLeaveVo vo, ColumnScope columnScope) {
-        if (columnScope.isEmpty()) {
-            return;
-        }
-        if (columnScope.isHidden(DataPermResources.LEAVE_COLUMN_TITLE)) {
-            vo.setTitle(null);
-        } else if (columnScope.isMasked(DataPermResources.LEAVE_COLUMN_TITLE)) {
-            vo.setTitle(columnScope.mask(vo.getTitle()));
-        }
-        if (columnScope.isHidden(DataPermResources.LEAVE_COLUMN_REASON)) {
-            vo.setReason(null);
-        } else if (columnScope.isMasked(DataPermResources.LEAVE_COLUMN_REASON)) {
-            vo.setReason(columnScope.mask(vo.getReason()));
         }
     }
 

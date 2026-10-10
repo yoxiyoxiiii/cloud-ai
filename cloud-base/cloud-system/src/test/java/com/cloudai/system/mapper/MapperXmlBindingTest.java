@@ -44,11 +44,12 @@ class MapperXmlBindingTest {
 
         Collection<String> mappings = factory.getConfiguration().getMappedStatementNames();
         // 14(User) + 9(Role) + 7(Menu) + 4(UserRole) + 4(RoleMenu) + 6(DictType) + 8(DictData) + 3(Leave)
-        //   + 7(Dept) + 9(DataPermRule) + 6(DataPermColumn) + 2(DataPermLog) = 79
+        //   + 7(Dept) + 10(DataPermRule) + 7(DataPermColumn) + 2(DataPermLog) = 81
         // （2026-10-09 投影轮：SysLeave 域 6→3 语句；2026-10-10 数据权限轮：+Dept 域、+数据权限三表、
-        //   User +3（countByDeptId/listEnabledAccountsByDeptIds/listByIds）、Role +2（listEnabledRoleIdsByUserId/listByIds））
+        //   User +3（countByDeptId/listEnabledAccountsByDeptIds/listByIds）、Role +2（listEnabledRoleIdsByUserId/listByIds）；
+        //   2026-10-10 注册表重构轮：DataPermRule +1 / DataPermColumn +1（D17 一致性检查 DISTINCT 两查询））
         assertThat(mappings.stream().filter(n -> n.startsWith("com.cloudai.system.mapper")).count())
-                .isEqualTo(79);
+                .isEqualTo(81);
         // 抽查关键语句存在（JOIN 聚合 / 插件分页 / 动态 SQL / 批量插入 / 字典域 / 翻译回源 / 请假域 / 部门与数据权限域）
         assertThat(mappings).contains(
                 "com.cloudai.system.mapper.SysUserMapper.listPermsByAccount",
@@ -72,7 +73,9 @@ class MapperXmlBindingTest {
                 "com.cloudai.system.mapper.DataPermColumnMapper.saveBatch",
                 "com.cloudai.system.mapper.DataPermLogMapper.pageList",
                 "com.cloudai.system.mapper.SysUserMapper.listEnabledAccountsByDeptIds",
-                "com.cloudai.system.mapper.SysRoleMapper.listEnabledRoleIdsByUserId");
+                "com.cloudai.system.mapper.SysRoleMapper.listEnabledRoleIdsByUserId",
+                "com.cloudai.system.mapper.DataPermRuleMapper.listDistinctResources",
+                "com.cloudai.system.mapper.DataPermColumnMapper.listDistinctResourceColumns");
     }
 
     @Test

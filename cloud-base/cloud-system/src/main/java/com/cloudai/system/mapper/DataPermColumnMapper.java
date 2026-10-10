@@ -31,6 +31,9 @@ public interface DataPermColumnMapper {
     /** 批量插入；空列表由 Service 跳过调用 */
     int saveBatch(@Param("list") List<SysDataPermColumn> list);
 
+    /** 注册表一致性检查（设计 D17）：全表 DISTINCT (resource, column_key)——实体仅该两列有值 */
+    List<SysDataPermColumn> listDistinctResourceColumns();
+
     /** 按主体物理全删（save 全删全插 / 规则删除连带，无行返回 0 合法） */
     int deleteBySubject(@Param("resource") String resource,
                         @Param("subjectType") Integer subjectType,
