@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.MqDlqLogMapper">
+
+    <!-- 无 deleted 列（设计 D5：MQ 审计表物理清理）；处置审计列由 Service 显式传参 -->
+    <sql id="allColumns">
+        id, msg_id, tx_no, born_topic, born_group, watch_group, tag, msg_key, body,
+        reconsume_times, born_time, dlq_time, status, resend_count, last_resend_time,
+        operate_account, operate_time, create_time, update_time
+    </sql>
+
+    <select id="findDlqLogById" resultType="com.cloudai.system.entity.MqDlqLog">
+        SELECT <include refid="allColumns"/>
+          FROM mq_dlq_log
+         WHERE id = #{id}
+    </select>
+
+    <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT；idx_status_dlq_time 命中
+         WHERE status=? ORDER BY dlq_time DESC 主路径（msgKey 前后模糊走全扫/回表，人工级取舍记档） -->
+    <select id="pageListDlqLog" resultType="com.cloudai.system.entity.MqDlqLog">
+        SELECT <include refid="allColumns"/>
+          FROM mq_dlq_log
+        <where>
+            <if test="query.status != null">
+                AND status = #{query.status}
+            </if>
+            <if test="query.bornGroup != null and query.bornGroup != ''">
+                AND born_group = #{query.bornGroup}
+            </if>
+            <if test="query.msgKey != null and query.msgKey != ''">
+                AND msg_key LIKE CONCAT('%', #{query.msgKey}, '%')
+            </if>
+            <if test="query.dlqTimeBegin != null">
+                AND dlq_time &gt;= #{query.dlqTimeBegin}
+            </if>
+            <if test="query.dlqTimeEnd != null">
+                AND dlq_time &lt;= #{query.dlqTimeEnd}
+            </if>
+        </where>
+        ORDER BY dlq_time DESC
+    </select>
+
+    <insert id="saveDlqLog" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO mq_dlq_log (msg_id, tx_no, born_topic, born_group, watch_group, tag, msg_key, body,
+                                reconsume_times, born_time, dlq_time, status, resend_count, create_time)
+        VALUES (#{msgId}, #{txNo}, #{bornTopic}, #{bornGroup}, #{watchGroup}, #{tag}, #{msgKey}, #{body},
+                #{reconsumeTimes}, #{bornTime}, #{dlqTime}, #{status}, #{resendCount}, #{createTime})
+    </insert>
+
+    <!-- 重投成功行流转（设计 D7 步骤③）：resend_count 自增计数（读改写原子），last_resend_time=处置时间 -->
+    <update id="updateResend">
+        UPDATE mq_dlq_log
+           SET status = 1,
+               resend_count = resend_count + 1,
+               last_resend_time = #{operateTime},
+               operate_account = #{operateAccount},
+               operate_time = #{operateTime},
+               update_time = #{operateTime}
+         WHERE id = #{id}
+    </update>
+
+    <!-- 状态流转（忽略 0→2 / 上限自动置弃 →3；resend_count 不动） -->
+    <update id="updateStatus">
+        UPDATE mq_dlq_log
+           SET status = #{status},
+               operate_account = #{operateAccount},
+               operate_time = #{operateTime},
+               update_time = #{operateTime}
+         WHERE id = #{id}
+    </update>
+
+    <!-- 解除终态（设计 D8）：status=0 且 resend_count 清零 -->
+    <update id="updateReset">
+        UPDATE mq_dlq_log
+           SET status = 0,
+               resend_count = 0,
+               operate_account = #{operateAccount},
+               operate_time = #{operateTime},
+               update_time = #{operateTime}
+         WHERE id = #{id}
+    </update>
+
+    <!-- 终态行 N 天后物理删（idx_status_dlq_time 命中）；待处理行（0）永不清 -->
+    <delete id="deleteExpiredDlqLog">
+        DELETE FROM mq_dlq_log
+         WHERE status IN (1, 2, 3)
+           AND dlq_time &lt; #{cutoff}
+    </delete>
+</mapper>

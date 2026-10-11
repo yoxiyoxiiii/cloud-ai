@@ -59,6 +59,20 @@ cloud:
       consumer-group: g_system_approval_event
       # 对账单批上限用默认（100，对齐平台 status-list 单批上限）；定时轮次节奏自 2026-10-10 起
       # 由 xxl-job admin 任务 id 7 CRON 每分钟 0 * * * * ? 调度（reconcile-interval-ms 键退役——Nacos 从未显式配置，占位符默认即节奏）
+  # MQ 死信治理（2026-10-11，设计 D11：架构口径非密钥仓库化，Nacos 可覆盖）：
+  # watch 组名全新拟定禁与业务消费组重名（同 group 订阅关系不一致=rebalance 事故源）；
+  # dlq-topic 与来源业务组名手工同步（新增消费组接入死信面时 watch 壳+本段两处同 PR 变更，评审核对 %DLQ% 前缀）
+  system:
+    mq-dlq:
+      watch:
+        create:
+          dlq-topic: "%DLQ%g_bpmn_approval_create"   # watch 订阅的死信主题（与来源组名手工同步）
+          group: g_system_dlq_watch_create            # watch 消费组（全新拟定，禁与业务消费组重名）
+        event:
+          dlq-topic: "%DLQ%g_system_approval_event"
+          group: g_system_dlq_watch_event
+      resend-max: 5          # 单行重投上限（超限自动置已放弃）
+      retention-days: 30     # 终态行清理保留天数（待处理行永不清）
 
 mybatis-plus:
   configuration:

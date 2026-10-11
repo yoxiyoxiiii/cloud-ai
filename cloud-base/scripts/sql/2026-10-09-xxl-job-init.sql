@@ -249,4 +249,16 @@ VALUES (8, 3, 'system-mq-table-clean', now(), now(), 'cloudai', '', 'CRON', '0 0
         'DO_NOTHING', 'FIRST', 'mqTableCleanJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '',
         1);
 
+-- 死信台账清理任务（2026-10-11 死信治理轮增补）：终态行（已重投/已忽略/已放弃）保留 N 天后物理删，
+-- 待处理行永不清（未处置死信被清=丢告警）；CRON 每日 03:30 错峰 03:00 两表清理；
+-- handler 对应 cloud-system job 包 @XxlJob("dlqLogCleanJobHandler")（设计 D10：业务表不并入 starter 清理）
+INSERT INTO `xxl_job_info`(`id`, `job_group`, `name`, `add_time`, `update_time`, `author`, `alarm_email`,
+                           `schedule_type`, `schedule_conf`, `misfire_strategy`, `executor_route_strategy`,
+                           `executor_handler`, `executor_param`, `executor_block_strategy`, `executor_timeout`,
+                           `executor_fail_retry_count`, `glue_type`, `glue_source`, `glue_remark`, `glue_updatetime`,
+                           `child_jobid`, `trigger_status`)
+VALUES (10, 3, 'system-dlq-log-clean', now(), now(), 'cloudai', '', 'CRON', '0 30 3 * * ?',
+        'DO_NOTHING', 'FIRST', 'dlqLogCleanJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '',
+        1);
+
 commit;

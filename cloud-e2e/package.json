@@ -18,6 +18,7 @@
     "e2e:dataperm-component": "node run-dataperm-component-e2e.mjs",
     "e2e:dataperm-predicate": "node run-dataperm-predicate-e2e.mjs",
     "e2e:dataperm-operators": "node run-dataperm-operators-e2e.mjs",
+    "e2e:mqdlq": "node run-mqdlq-e2e.mjs",
     "serve-artifacts": "node serve-artifacts.mjs"
   },
   "engines": {

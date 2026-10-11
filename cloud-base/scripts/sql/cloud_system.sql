@@ -19,6 +19,7 @@ DROP TABLE IF EXISTS sys_data_perm_log;
 DROP TABLE IF EXISTS mq_tx_log;
 DROP TABLE IF EXISTS mq_consume_dedup;
 DROP TABLE IF EXISTS approval_projection;
+DROP TABLE IF EXISTS mq_dlq_log;
 
 -- 用户
 CREATE TABLE sys_user (
@@ -230,6 +231,39 @@ CREATE TABLE approval_projection (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
   COMMENT='审批状态本地投影（bpmn_approval 只读副本，真相源不变；cloud-bpmn-api 框架组件写入：事件消费 upsert + 定时对账；业务表 JOIN 读，业务侧禁止直写）';
 
+-- MQ 死信治理台账（2026-10-11 死信治理轮，契约 2026-10-11-mq-dlq-governance-api / 设计 §4；
+-- 与增量脚本 2026-10-11-mq-dlq-governance.sql 段① 语义等价）
+-- 索引取舍：uk_msg_id 命中 watch 落库幂等（uk 即约束即索引）；idx_status_dlq_time 命中列表主路径
+--   WHERE status=? ORDER BY dlq_time DESC 与清理 DELETE WHERE status IN (1,2,3) AND dlq_time<?
+--   （复合索引首列 IN 列表多 range 扫描）；born_group/msg_key 过滤走回表（人工级行数不单建）；
+--   无按 create_time 查询路径不建（沿 mq_tx_log 先例）。无 deleted 列——沿 mq_tx_log/mq_consume_dedup
+--   先例（MQ 审计表物理清理，无 @TableLogic 语义）。
+CREATE TABLE mq_dlq_log (
+    id               BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    msg_id           VARCHAR(64)  NOT NULL COMMENT '死信原消息 msgId（broker 全局唯一；uk 防 watch 重复投递双行；重投产生的新消息为新 msgId 落新行=重投代际链）',
+    tx_no            VARCHAR(64)  NULL     COMMENT '事务消息流水号（原消息 userProperty TX_NO，可空；重投时恢复该属性；溯源 mq_tx_log 半消息审计）',
+    born_topic       VARCHAR(64)  NOT NULL COMMENT '原 topic（重投目标，TX_APPROVAL_CREATE/APPROVAL_EVENT_NOTIFY）',
+    born_group       VARCHAR(64)  NOT NULL COMMENT '死信来源消费组（DLQ topic 名 %DLQ% 前缀 strip 派生；重投前清 mq_consume_dedup 残留行的分组键）',
+    watch_group      VARCHAR(64)  NOT NULL COMMENT 'watch 消费组（g_system_dlq_watch_*，落库行来源定位）',
+    tag              VARCHAR(64)  NULL     COMMENT '消息 tag（可空；重投时拼 destination=topic:tag）',
+    msg_key          VARCHAR(190) NOT NULL COMMENT '消息幂等键（与 DedupRocketMQListener.resolveMsgKey 同口径：KEYS 优先、缺省退化 msgId；重投清 dedup 行与恢复 KEYS header 的判定依据：msg_key≠msg_id 即原始 KEYS）',
+    body             TEXT         NULL     COMMENT '消息体原文（UTF-8 解码；超 60000 字节截断——契约消息均为小 JSON，防御上限）',
+    reconsume_times  INT          NOT NULL DEFAULT 0 COMMENT '死信时已重试次数（maxReconsumeTimes=3，实测 4：1 次首发+3 次重试，B7 实证）',
+    born_time        DATETIME     NOT NULL COMMENT '消息产生时间（bornTimestamp，业务发生时间）',
+    dlq_time         DATETIME     NOT NULL COMMENT '进死信时间（storeTimestamp，DLQ 落 broker 时间，列表主排序与清理锚点）',
+    status           TINYINT      NOT NULL DEFAULT 0 COMMENT '处置状态（0待处理 1已重投 2已忽略 3已放弃——resend_count 达上限自动置 3；实体 StatusEnum）',
+    resend_count     INT          NOT NULL DEFAULT 0 COMMENT '重投次数（上限 resend-max=5）',
+    last_resend_time DATETIME     NULL     COMMENT '最近重投时间',
+    operate_account  VARCHAR(64)  NULL     COMMENT '处置操作人（重投/忽略/重置操作账号；watch 落库不填——非处置动作）',
+    operate_time     DATETIME     NULL     COMMENT '最近处置时间',
+    create_time      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（watch 落库时间）',
+    update_time      DATETIME     NULL     COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_msg_id (msg_id),
+    KEY idx_status_dlq_time (status, dlq_time)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+  COMMENT='MQ 死信治理台账（watch 监听 %DLQ% 落库；人工重投/忽略/重置留痕；终态行 N 天后定时清理，待处理行永不清）';
+
 -- 数据权限行级规则（数据权限轮 2026-10-10 设计 §3.2，与增量脚本同步落同一份定义；物理删除——D9）：
 -- 索引取舍：uk_resource_subject 兼查重与求值查询（求值器 resource 等值 + subject 过滤最左前缀命中）；
 --   无 deleted 列（规则删除=物理 DELETE，墓碑占 uk 会废掉 upsert「删了再配」语义，配置历史观察归留痕表）。
@@ -342,6 +376,14 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (161, 16, '保存规则', 'system:dataPerm:save',   'F', '', '', 1, 1, NOW()),
 (162, 16, '删除规则', 'system:dataPerm:remove', 'F', '', '', 2, 1, NOW());
 
+-- 死信治理菜单（17 段 4 行；与增量脚本 2026-10-11-mq-dlq-governance.sql 段③ 语义等价，
+-- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定）
+INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_builtin, create_time) VALUES
+(17,  10, '死信治理', 'system:mqDlq:list',   'C', '/system/mq-dlq', 'Message', 7, 1, NOW()),
+(171, 17, '重投',     'system:mqDlq:resend', 'F', '', '', 1, 1, NOW()),
+(172, 17, '忽略',     'system:mqDlq:ignore', 'F', '', '', 2, 1, NOW()),
+(173, 17, '重置',     'system:mqDlq:reset',  'F', '', '', 3, 1, NOW());
+
 -- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价）
 INSERT INTO sys_user (id, account, nickname, dept_id, password, is_builtin, create_time) VALUES
 (1, 'admin', '管理员', 1, '$2a$10$.8cM9ZR8tr7HxklhRPzmwORoIi.z8urt0wZ4a3QaGwgFyyGMle4sG', 1, NOW());
@@ -405,3 +447,15 @@ INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_buil
 (9,  6, '事假',   '1', 1, 0, 1, 'system', NOW(), 'system', NOW()),
 (10, 6, '病假',   '2', 2, 0, 1, 'system', NOW(), 'system', NOW()),
 (11, 6, '年假',   '3', 3, 0, 1, 'system', NOW(), 'system', NOW());
+
+-- 内置字典种子 mq_dlq_status（死信治理轮 2026-10-11，契约 2026-10-11-mq-dlq-governance-api §2；
+-- 与增量脚本 2026-10-11-mq-dlq-governance.sql 段② 语义等价——增量环境 dict id 由 AUTO_INCREMENT
+-- 分配，id 非契约内容（内置保护按 is_builtin 判定，与 id 无关））
+INSERT INTO sys_dict_type (id, dict_name, dict_key, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
+(7, 'MQ死信状态', 'mq_dlq_status', 0, 1, 'system', NOW(), 'system', NOW());
+
+INSERT INTO sys_dict_data (id, dict_type_id, label, value, sort, status, is_builtin, create_by, create_time, update_by, update_time) VALUES
+(13, 7, '待处理', '0', 1, 0, 1, 'system', NOW(), 'system', NOW()),
+(14, 7, '已重投', '1', 2, 0, 1, 'system', NOW(), 'system', NOW()),
+(15, 7, '已忽略', '2', 3, 0, 1, 'system', NOW(), 'system', NOW()),
+(16, 7, '已放弃', '3', 4, 0, 1, 'system', NOW(), 'system', NOW());

@@ -892,3 +892,99 @@ export function operatorsForType(type: FilterColumnType): { value: PredicateOper
 /** 数据权限资源标识（契约 2026-10-10-dataperm-component-api §1/§4）：审批单（bpmn 远程资源，
  * 可配列 title）——审批页 my-scope 提示条入参；资源字面量唯一声明点，页面一律引本常量 */
 export const DATAPERM_RESOURCE_APPROVAL = 'bpmn_approval'
+
+/* ============ MQ 死信治理域（契约 2026-10-11-mq-dlq-governance-api §2/§3，新域 v1） ============ */
+
+/**
+ * 死信处置状态值域（契约 §2 字典 mq_dlq_status / 设计 D6 状态机）：契约形态为字符串 "0"-"3"——
+ * 0=待处理（watch 落库态）/ 1=已重投 / 2=已忽略（终态）/ 3=已放弃（终态，重投上限自动置）；
+ * 终态仅 reset（admin）可回 0 并清零 resendCount；忽略仅作用于 0 态
+ */
+export type MqDlqStatus = '0' | '1' | '2' | '3'
+
+/** 死信状态字典键（契约 §2）：状态标签与状态过滤下拉的字典驱动数据源（getDictItems 消费口径） */
+export const MQ_DLQ_STATUS_DICT_KEY = 'mq_dlq_status'
+
+/**
+ * 死信状态本地降级映射（契约 §2 字典 mq_dlq_status 四项镜像）：仅作字典未命中/未加载时的
+ * label 展示兜底（防字典链路抖动）；tag 颜色不走字典，见 MQ_DLQ_STATUS_TAG
+ */
+export const MQ_DLQ_STATUS_MAP: Record<string, string> = {
+  '0': '待处理',
+  '1': '已重投',
+  '2': '已忽略',
+  '3': '已放弃',
+}
+
+/** 死信状态→tag 颜色（固定映射）：0 待处理 warning / 1 已重投 primary / 2 已忽略 info / 3 已放弃 danger */
+export const MQ_DLQ_STATUS_TAG: Record<string, 'warning' | 'primary' | 'info' | 'danger'> = {
+  '0': 'warning',
+  '1': 'primary',
+  '2': 'info',
+  '3': 'danger',
+}
+
+/** 重投次数上限（设计 D6：resendCount=5 时前端 disabled；后端亦拦 3041 并自动置 3 已放弃） */
+export const MQ_DLQ_RESEND_MAX = 5
+
+/**
+ * 死信台账行 VO（契约 §3.1）：分页出参行——**列表不返 body**（行多体大，详情端点取）。
+ * msgKey=消息幂等键（KEYS 优先/退化 msgId）；同 msgKey 多行即重投代际链（设计 D5/D6：
+ * 重投产生新 msgId，再死信落新行），前端按 msgKey 聚合做视觉提示（契约 §2，不新增接口）
+ */
+export interface MqDlqVo {
+  id: string
+  msgId: string
+  /** 事务流水号（非事务消息为 null） */
+  txNo: string | null
+  bornTopic: string
+  bornGroup: string
+  watchGroup: string
+  /** 消息 tag（无 tag 消息为 null，如 TX_APPROVAL_CREATE） */
+  tag: string | null
+  msgKey: string
+  /** body 前 120 字符预览（辅助列表辨识，超长省略号） */
+  bodyPreview: string | null
+  /** 死信时重试投递计数（broker 口径恒 4=1 首发+3 重试，B7 实证——契约 §3.1） */
+  reconsumeTimes: number
+  bornTime: string
+  /** 进死信时间（主排序，列表 dlq_time 倒序） */
+  dlqTime: string
+  status: MqDlqStatus
+  resendCount: number
+  lastResendTime: string | null
+  operateAccount: string | null
+  operateTime: string | null
+}
+
+/**
+ * 死信详情 VO（契约 §3.2）：MqDlqVo 全字段 + 四增列——
+ * body 原文全文（<pre> 展示，截断行尾部有截断标记）；bodyTruncated=true 时 body 已被
+ * 60000 字节截断（设计 R4，前端需提示）；查行缺失 3038
+ */
+export interface MqDlqDetailVo extends MqDlqVo {
+  body: string | null
+  bodyTruncated: boolean
+  createTime: string
+  updateTime: string | null
+}
+
+/**
+ * 死信分页查询入参（契约 §3.1）：过滤全部可选——status "0"-"3"（缺省全部）、
+ * bornGroup 精确、msgKey 前后模糊（LIKE %x%）、dlqTimeBegin/End 闭区间（yyyy-MM-dd HH:mm:ss）
+ */
+export interface MqDlqPageQuery {
+  pageNum: number
+  pageSize: number
+  status?: string
+  bornGroup?: string
+  msgKey?: string
+  dlqTimeBegin?: string
+  dlqTimeEnd?: string
+}
+
+/**
+ * 死信来源消费组静态候选（契约 §3.1 bornGroup 值域 = 本轮 watch 覆盖的两原消费组，设计 D11 配置）：
+ * 来源组过滤下拉数据源；新增 watch 组时随契约同步增项
+ */
+export const MQ_DLQ_BORN_GROUP_OPTIONS: string[] = ['g_bpmn_approval_create', 'g_system_approval_event']
