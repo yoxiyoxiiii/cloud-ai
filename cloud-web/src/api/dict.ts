@@ -68,7 +68,9 @@ export function deleteDictData(id: string): Promise<null> {
 /**
  * 按字典键取启用项（契约 2026-10-07-translation-api §2.1）：消费口径（类型启用 ∧ 项启用）sort 升序；
  * 登录即可（无 @PreAuthorize，表单下拉是登录用户基础能力）；未知 dictKey / 类型停用 / 无启用项
- * 一律 200 + 空数组（表单容错优先，非错误）。本轮暂无页面调用——契约先行，后续表单下拉统一取数入口
+ * 一律 200 + 空数组（表单容错优先，非错误）。消费方：请假表单类型下拉、数据权限规则配置弹窗
+ * 字典列值输入器（契约 2026-10-11-dataperm-operators-api §5.2/§8：FilterColumnVo.dictKey 非空列
+ * 经本端点取字典选项——值域软约束，allow-create 兜底原值）——表单下拉统一取数入口
  */
 export function getDictItems(dictKey: string): Promise<DictItemVo[]> {
   return request<DictItemVo[]>({ url: `/system/dict/data/type/${dictKey}`, method: 'get' })

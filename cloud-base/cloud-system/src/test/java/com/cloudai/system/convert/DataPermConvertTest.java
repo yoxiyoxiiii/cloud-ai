@@ -5,6 +5,7 @@ import com.cloudai.system.api.dataperm.RowGroup;
 import com.cloudai.system.dto.PredicateItem;
 import com.cloudai.system.entity.SysDataPermRule;
 import com.cloudai.system.service.dataperm.DataPermDecision;
+import com.cloudai.system.service.dataperm.DataPermResources;
 import com.cloudai.system.vo.FilterColumnVo;
 import com.cloudai.system.vo.MyScopeVo;
 import org.junit.jupiter.api.Test;
@@ -186,12 +187,147 @@ class DataPermConvertTest {
         FilterColumnVo vo = DataPermConvert.toFilterColumnVo(
                 new com.cloudai.system.api.dataperm.FilterColumn(
                         "leaveType", "leave_type",
-                        com.cloudai.system.api.dataperm.FilterColumnTypeEnum.NUMBER, "请假类型"));
+                        com.cloudai.system.api.dataperm.FilterColumnTypeEnum.NUMBER, "请假类型", null));
 
         assertThat(vo.getField()).isEqualTo("leaveType");
         assertThat(vo.getColumn()).isEqualTo("leave_type");
         assertThat(vo.getType()).isEqualTo("NUMBER");
         assertThat(vo.getLabel()).isEqualTo("请假类型");
+    }
+
+    // ---- 操作符扩展轮（D41/D45，2026-10-11）：新操作符摘要 + 字典译文三参路径 ----
+
+    @Test
+    void toFilterColumnVo_dictKeyMapped() {
+        FilterColumnVo vo = DataPermConvert.toFilterColumnVo(
+                DataPermResources.findFilterColumn(RESOURCE, "leaveType"));
+
+        assertThat(vo.getDictKey()).isEqualTo("system_leave_type");
+    }
+
+    @Test
+    void toPredicateSummary_newOperators_text() {
+        // 新四操作符摘要文本（GT/LT/NE/PREFIX——label 走枚举中文，值原样）
+        assertThat(DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("id", "GT", "100")))).isEqualTo("单号大于100");
+        assertThat(DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("endDate", "LT", "2026-12-31")))).isEqualTo("结束日期小于2026-12-31");
+        assertThat(DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("leaveType", "NE", "2")))).isEqualTo("请假类型不等于2");
+        assertThat(DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("title", "PREFIX", "e2e")))).isEqualTo("标题前缀e2e");
+    }
+
+    @Test
+    void toPredicateSummary_threeParam_dictValuesTranslated() {
+        // D45 三参路径：字典列（leaveType/system_leave_type）值译标签——IN 多值逐值翻译
+        java.util.function.BiFunction<String, List<String>, java.util.Map<String, String>> resolver =
+                (dictKey, values) -> java.util.Map.of("1", "事假", "2", "病假", "3", "年假");
+
+        String summary = DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("leaveType", "IN", "1", "2", "3")), resolver);
+
+        assertThat(summary).isEqualTo("请假类型属于事假、病假、年假");
+    }
+
+    @Test
+    void toPredicateSummary_threeParam_singleValueTranslated() {
+        java.util.function.BiFunction<String, List<String>, java.util.Map<String, String>> resolver =
+                (dictKey, values) -> java.util.Map.of("1", "事假");
+
+        String summary = DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("leaveType", "EQ", "1")), resolver);
+
+        assertThat(summary).isEqualTo("请假类型等于事假");
+    }
+
+    @Test
+    void toPredicateSummary_threeParam_missingLabelFallsBackOriginal() {
+        // 译文缺失（值不在字典/项停用）回退原值（getOrDefault 口径）
+        java.util.function.BiFunction<String, List<String>, java.util.Map<String, String>> resolver =
+                (dictKey, values) -> java.util.Map.of("1", "事假");
+
+        String summary = DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("leaveType", "IN", "1", "9")), resolver);
+
+        assertThat(summary).isEqualTo("请假类型属于事假、9");
+    }
+
+    @Test
+    void toPredicateSummary_threeParam_nonDictColumnOriginalValues() {
+        // 非字典列（dictKey=null，如 title）resolver 在场也原值——businessType 断言守恒的单测面对应
+        java.util.function.BiFunction<String, List<String>, java.util.Map<String, String>> resolver =
+                (dictKey, values) -> java.util.Map.of("e2e", "不应出现");
+
+        String summary = DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("title", "PREFIX", "e2e")), resolver);
+
+        assertThat(summary).isEqualTo("标题前缀e2e");
+    }
+
+    @Test
+    void toPredicateSummary_threeParam_resolverThrows_fallsBackOriginal() {
+        // 显示层 fail-open（D45）：resolver 异常回退原值列表，摘要不炸
+        java.util.function.BiFunction<String, List<String>, java.util.Map<String, String>> resolver =
+                (dictKey, values) -> {
+                    throw new IllegalStateException("redis down");
+                };
+
+        String summary = DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("leaveType", "EQ", "1")), resolver);
+
+        assertThat(summary).isEqualTo("请假类型等于1");
+    }
+
+    @Test
+    void toPredicateSummary_twoParam_originalValues_contrast() {
+        // 两参 overload 委托 null resolver——原值形态（既有语义零变化的对照证明）
+        String twoParam = DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("leaveType", "EQ", "1")));
+        String threeParamNull = DataPermConvert.toPredicateSummary(RESOURCE,
+                List.of(predicate("leaveType", "EQ", "1")), null);
+
+        assertThat(twoParam).isEqualTo("请假类型等于1");
+        assertThat(threeParamNull).isEqualTo("请假类型等于1");
+    }
+
+    @Test
+    void toMyScopeVo_resolver_sixthStateTranslated() {
+        // 第六态经三参路径带译文（D45）：条件范围（请假类型等于事假）
+        DataPermDecision decision = decisionOf(
+                com.cloudai.system.api.dataperm.DataScope.of(Set.of("userA")),
+                RowFilter.of(List.of(RowGroup.of(false, Set.of("userA"), List.of()))));
+        DataPermDecision.HitRule hit = hit(SysDataPermRule.RowScopeEnum.SELF.getCode());
+        hit.getPredicates().add(predicate("leaveType", "EQ", "1"));
+        decision.getHitRules().add(hit);
+        java.util.function.BiFunction<String, List<String>, java.util.Map<String, String>> resolver =
+                (dictKey, values) -> java.util.Map.of("1", "事假");
+
+        MyScopeVo vo = DataPermConvert.toMyScopeVo(decision, resolver);
+
+        assertThat(vo.getScopeLabel()).isEqualTo("条件范围（请假类型等于事假）");
+    }
+
+    @Test
+    void toRuleVo_resolver_summaryTranslated() {
+        SysDataPermRule rule = new SysDataPermRule();
+        rule.setId(9L);
+        rule.setResource(RESOURCE);
+        rule.setSubjectType(0);
+        rule.setSubjectId(1L);
+        rule.setRowScope(SysDataPermRule.RowScopeEnum.ALL.getCode());
+        rule.setPredicates(DataPermConvert.toPredicatesJson(
+                List.of(predicate("leaveType", "EQ", "1"))));
+        java.util.function.BiFunction<String, List<String>, java.util.Map<String, String>> resolver =
+                (dictKey, values) -> java.util.Map.of("1", "事假");
+
+        com.cloudai.system.vo.DataPermRuleVo vo = DataPermConvert.toRuleVo(
+                rule, "roleX", List.of(), List.of(), resolver);
+
+        assertThat(vo.getPredicateSummary()).isEqualTo("请假类型等于事假");
+        // wire 回显不经翻译（原值，D45 不翻译面）
+        assertThat(vo.getPredicates()).hasSize(1);
+        assertThat(vo.getPredicates().get(0).getValues()).containsExactly("1");
     }
 
     // ---- 脚手架 ----

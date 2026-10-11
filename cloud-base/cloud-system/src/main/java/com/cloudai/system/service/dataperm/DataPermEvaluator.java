@@ -3,6 +3,7 @@ package com.cloudai.system.service.dataperm;
 import com.cloudai.common.core.domain.LoginUser;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.dataperm.ColumnScope;
 import com.cloudai.system.api.dataperm.DataPermOperation;
 import com.cloudai.system.api.dataperm.DataScope;
@@ -76,6 +77,7 @@ public class DataPermEvaluator {
     private final SysUserMapper userMapper;
     private final SysDeptMapper deptMapper;
     private final ObjectMapper objectMapper;
+    private final TranslationCacheService translationCacheService;
 
     /** 真实决策（当前登录人，SecurityUtils.currentUser——设计 §5.4 additive）：恒留痕（D7） */
     public DataPermDecision evaluate(String resource, String operation, String businessKey) {
@@ -472,7 +474,11 @@ public class DataPermEvaluator {
         }
     }
 
-    /** 单条件叙述句：列声明/操作符/值形态缺失（越界配置）不叙述——explain 的 HitRuleVo.predicates 仍原样回显 */
+    /**
+     * 单条件叙述句：列声明/操作符/值形态缺失（越界配置）不叙述——explain 的 HitRuleVo.predicates 仍原样回显。
+     * 操作符扩展轮 D45：字典列（declared.dictKey 非空）值文本译标签（译文缺失回退原值，显示层 fail-open）；
+     * digest 与 wire 回显不经本方法（原值）。resolver = 注入的 TranslationCacheService::findDictLabels。
+     */
     private String predicateNarrative(String resource, PredicateItem item) {
         FilterColumn declared = DataPermResources.findFilterColumn(resource, item.getField());
         PredicateOperatorEnum operator;
@@ -485,10 +491,12 @@ public class DataPermEvaluator {
                 || (operator == PredicateOperatorEnum.BETWEEN && item.getValues().size() < 2)) {
             return null;
         }
+        List<String> values = DataPermConvert.translateValues(declared, item.getValues(),
+                translationCacheService::findDictLabels);
         String valueText = switch (operator) {
-            case IN -> String.join("、", item.getValues());
-            case BETWEEN -> item.getValues().get(0) + "~" + item.getValues().get(1);
-            default -> item.getValues().get(0);
+            case IN -> String.join("、", values);
+            case BETWEEN -> values.get(0) + "~" + values.get(1);
+            default -> values.get(0);
         };
         return "命中条件：" + declared.label() + " " + operator.getLabel() + " " + valueText;
     }
@@ -580,7 +588,9 @@ public class DataPermEvaluator {
 
     /**
      * 条件摘要（契约 §1.6 ASCII 紧凑型）：EQ {column}={v} / GTE {column}&gt;={v} / LTE {column}&lt;={v} /
-     * BETWEEN {column}:{v0}~{v1} / IN {column}:{v1,v2}（IN 形态契约未示例，本轮外推定义——分号连接）。
+     * BETWEEN {column}:{v0}~{v1} / IN {column}:{v1,v2}（IN 形态契约未示例，本轮外推定义——分号连接）；
+     * 操作符扩展轮 D41 新四符号：GT {column}&gt;{v} / LT {column}&lt;{v} / NE {column}!={v} /
+     * PREFIX {column}^{v}（值一律原值不翻译——digest 机器面向，D45 不翻译面）。
      * 越界条件/非法操作符跳过（求值 enrichment 已拒其授权；explain 出参仍有原样回显可排查）。
      */
     private String predicateDigest(String resource, List<PredicateItem> predicates) {
@@ -610,6 +620,10 @@ public class DataPermEvaluator {
             case EQ -> column + "=" + values.get(0);
             case GTE -> column + ">=" + values.get(0);
             case LTE -> column + "<=" + values.get(0);
+            case GT -> column + ">" + values.get(0);
+            case LT -> column + "<" + values.get(0);
+            case NE -> column + "!=" + values.get(0);
+            case PREFIX -> column + "^" + values.get(0);
             case IN -> column + ":" + String.join(",", values);
             case BETWEEN -> column + ":" + values.get(0) + "~" + values.get(1);
         };

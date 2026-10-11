@@ -577,10 +577,11 @@ export interface ColumnRuleVo {
 }
 
 /**
- * 谓词操作符封闭集（契约 2026-10-11-dataperm-predicate-api §1.2，联合类型即值域镜像）：
- * 明确不在值域——LIKE/前缀类一切模糊操作符、GT/LT/NE/IS-NULL（配了后端 1002「操作符无效」）
+ * 谓词操作符封闭集 v2（契约 2026-10-11-dataperm-operators-api §1.1——取代谓词契约 §1.2 表与
+ * 「明确不在值域」冻结句，联合类型即值域镜像）：五操作符 + GT/LT/NE/PREFIX 九操作符；
+ * 明确不在值域——LIKE/中缀后缀模糊（%x/%x%）、REGEXP、IS-NULL（配了后端 1002「操作符无效」）
  */
-export type PredicateOperator = 'EQ' | 'IN' | 'BETWEEN' | 'GTE' | 'LTE'
+export type PredicateOperator = 'EQ' | 'IN' | 'BETWEEN' | 'GTE' | 'LTE' | 'GT' | 'LT' | 'NE' | 'PREFIX'
 
 /**
  * 可过滤列类型（契约 2026-10-11-dataperm-predicate-api §1.3，联合类型即值域镜像）：
@@ -593,7 +594,9 @@ export type FilterColumnType = 'NUMBER' | 'STRING' | 'DATE' | 'DATETIME'
  * 条件谓词三元组（契约 2026-10-11-dataperm-predicate-api §5.1，save 入参与 rule/config/explain 出参共用）：
  * 规则的条件组成员，组内多条件 AND、与档位行内 AND（可见行 = 档位账号集合 ∧ 条件组全满足，§1.1）；
  * field 为 entity 字段名（camelCase 如 leaveType——与列级可配列 columnKey 的 VO 字段名锚点不同，§1.4）；
- * values 统一字符串承载（Long→String 既有约定防精度）：EQ/GTE/LTE=1 个、BETWEEN=2 个（有序闭区间）、IN=1~30 个
+ * values 统一字符串承载（Long→String 既有约定防精度）：EQ/GTE/LTE/GT/LT/NE/PREFIX=1 个、
+ * BETWEEN=2 个（有序闭区间）、IN=1~30 个（操作符值数契约 2026-10-11-dataperm-operators-api §1.1/§1.2——
+ * PREFIX 值即 STRING 规则 ≤50 字符且不禁 %/_/|，转义在 SQL 渲染层消解）
  */
 export interface PredicateItem {
   field: string
@@ -602,15 +605,22 @@ export interface PredicateItem {
 }
 
 /**
- * 可过滤列 VO（契约 2026-10-11-dataperm-predicate-api §5.2）：资源注册表 filterColumns 项——
- * 条件段「列」下拉与类型驱动值输入器的数据源；field=entity 字段名（条件配置与回显的 key），
- * column=裸 DB 列名（调试参考，前端不消费），label=中文列名（下拉与摘要文案）
+ * 可过滤列 VO v2（契约 2026-10-11-dataperm-predicate-api §5.2 + 2026-10-11-dataperm-operators-api
+ * §5.2 增量 +dictKey）：资源注册表 filterColumns 项——条件段「列」下拉与值输入器的数据源；
+ * field=entity 字段名（条件配置与回显的 key），column=裸 DB 列名（调试参考，前端不消费），
+ * label=中文列名（下拉与摘要文案），dictKey=值域字典键（见字段注释）
  */
 export interface FilterColumnVo {
   field: string
   column: string
   type: FilterColumnType
   label: string
+  /**
+   * 值域字典键（契约 2026-10-11-dataperm-operators-api §5.2 v2 增量，必返）：
+   * 非空=值输入器切字典下拉（getDictItems(dictKey) 数据源，filterable+allow-create 兜底存量原值）、
+   * 后端摘要值译标签；null=无字典（原值显示与既有类型驱动输入器）
+   */
+  dictKey: string | null
 }
 
 /**
@@ -816,14 +826,20 @@ export const OP_LIST = 'list'
 export const OP_DETAIL = 'detail'
 export const OP_DENY = 'deny'
 
-/* ---- 数据权限谓词常量（契约 2026-10-11-dataperm-predicate-api §1/§2.3/§8：禁魔法数/散落字面量） ---- */
+/* ---- 数据权限谓词常量（契约 2026-10-11-dataperm-predicate-api §1/§2.3/§8 + 操作符扩展契约
+   2026-10-11-dataperm-operators-api §1.1/§8：禁魔法数/散落字面量） ---- */
 
-/** 谓词操作符 name（契约 §1.2 封闭集）：等于/属于/介于/大于等于/小于等于 */
+/** 谓词操作符 name（契约 2026-10-11-dataperm-operators-api §1.1 封闭集 v2）：
+ * 等于/属于/介于/大于等于/小于等于 + 大于/小于/不等于/前缀（按枚举声明序） */
 export const OPERATOR_EQ = 'EQ'
 export const OPERATOR_IN = 'IN'
 export const OPERATOR_BETWEEN = 'BETWEEN'
 export const OPERATOR_GTE = 'GTE'
 export const OPERATOR_LTE = 'LTE'
+export const OPERATOR_GT = 'GT'
+export const OPERATOR_LT = 'LT'
+export const OPERATOR_NE = 'NE'
+export const OPERATOR_PREFIX = 'PREFIX'
 
 /** 可过滤列类型（契约 §1.3）：值输入器类型驱动依据（NUMBER 数值/STRING 短文本/DATE 日期/DATETIME 日期时间） */
 export const FILTER_TYPE_NUMBER = 'NUMBER'
@@ -838,8 +854,9 @@ export const IN_VALUE_MAX = 30
 export const STRING_VALUE_MAX = 50
 
 /**
- * 操作符候选表（契约 §1.2）：中文 label **双处冻结点**——契约 §1.2 与本前端常量两处对齐，
- * 任一变更即契约变更（中文同时是后端 predicateSummary/narratives 文案用字，改字会造成前后端摘要口径漂移）
+ * 操作符候选表（契约 2026-10-11-dataperm-operators-api §1.1 取代谓词契约 §1.2）：
+ * 中文 label **双处冻结点**——契约 §1.1 与本前端常量两处逐字对齐，任一变更即契约变更
+ * （中文同时是后端 predicateSummary/narratives 文案用字，改字会造成前后端摘要口径漂移）
  */
 export const OPERATOR_OPTIONS: { value: PredicateOperator; label: string }[] = [
   { value: OPERATOR_EQ, label: '等于' },
@@ -847,17 +864,29 @@ export const OPERATOR_OPTIONS: { value: PredicateOperator; label: string }[] = [
   { value: OPERATOR_BETWEEN, label: '介于' },
   { value: OPERATOR_GTE, label: '大于等于' },
   { value: OPERATOR_LTE, label: '小于等于' },
+  { value: OPERATOR_GT, label: '大于' },
+  { value: OPERATOR_LT, label: '小于' },
+  { value: OPERATOR_NE, label: '不等于' },
+  { value: OPERATOR_PREFIX, label: '前缀' },
 ]
 
 /**
- * 操作符×类型矩阵前端镜像（契约 §1.2「适用类型」列）：NUMBER/DATE/DATETIME 全五操作符，
- * STRING 仅 EQ/IN（STRING×BETWEEN/GTE/LTE 后端 3036 拒绝——下拉过滤使其不可选）
+ * 操作符×类型矩阵前端镜像 v2（契约 2026-10-11-dataperm-operators-api §1.1「适用类型」列——
+ * 与后端 supports() v2 逐格一致）：NUMBER/DATE/DATETIME 八操作符（除 PREFIX）、STRING 四操作符
+ * （EQ/IN/NE/PREFIX）；矩阵违例（STRING×{BETWEEN,GTE,LTE,GT,LT}、非 STRING×PREFIX）后端 3036
+ * 拒绝——下拉过滤使其不可选
  */
 export function operatorsForType(type: FilterColumnType): { value: PredicateOperator; label: string }[] {
   if (type === FILTER_TYPE_STRING) {
-    return OPERATOR_OPTIONS.filter((opt) => opt.value === OPERATOR_EQ || opt.value === OPERATOR_IN)
+    return OPERATOR_OPTIONS.filter(
+      (opt) =>
+        opt.value === OPERATOR_EQ ||
+        opt.value === OPERATOR_IN ||
+        opt.value === OPERATOR_NE ||
+        opt.value === OPERATOR_PREFIX,
+    )
   }
-  return OPERATOR_OPTIONS
+  return OPERATOR_OPTIONS.filter((opt) => opt.value !== OPERATOR_PREFIX)
 }
 
 /** 数据权限资源标识（契约 2026-10-10-dataperm-component-api §1/§4）：审批单（bpmn 远程资源，

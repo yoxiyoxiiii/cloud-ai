@@ -32,7 +32,10 @@
          （businessType STRING 仅 EQ/IN 两支——矩阵违例组合配置态已 3036 拦截，
          otherwise 1 = 0 为纵深防御 fail-closed）；
          IN 命中 idx_apply_user(apply_user, deleted)（range scan）；
-         空集范围 Service 短路不达此处（防 IN ()） -->
+         空集范围 Service 短路不达此处（防 IN ()）；
+         操作符扩展轮（2026-10-11 D41-D47）：id/status/create_time +GT/LT/NE、businessType
+         +NE/PREFIX、新增 title 列块（EQ/IN/NE/PREFIX——PREFIX 三层竖线 REPLACE 转义链 +
+         ESCAPE '|'），分支计数 32 -->
     <select id="pageList" resultType="com.cloudai.bpmn.entity.BpmnApproval">
         SELECT <include refid="allColumns"/>
           FROM bpmn_approval
@@ -53,6 +56,7 @@
                  </choose>
                  <foreach collection="grp.predicates" item="p">
                      <choose>
+                         <!-- id（NUMBER）：EQ/IN/BETWEEN/GTE/LTE/GT/LT/NE（操作符扩展轮 D44 +GT/LT/NE，D47） -->
                          <when test="p.field == 'id'">
                              <choose>
                                  <when test="p.operator == 'EQ'">
@@ -73,11 +77,22 @@
                                  <when test="p.operator == 'LTE'">
                                      AND id &lt;= #{p.values[0]}
                                  </when>
+                                 <when test="p.operator == 'GT'">
+                                     AND id &gt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LT'">
+                                     AND id &lt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND id != #{p.values[0]}
+                                 </when>
                                  <otherwise>
                                      AND 1 = 0
                                  </otherwise>
                              </choose>
                          </when>
+
+                         <!-- status（NUMBER，字典 bpmn_approval_status）：EQ/IN/BETWEEN/GTE/LTE/GT/LT/NE（D44/D47） -->
                          <when test="p.field == 'status'">
                              <choose>
                                  <when test="p.operator == 'EQ'">
@@ -98,11 +113,23 @@
                                  <when test="p.operator == 'LTE'">
                                      AND status &lt;= #{p.values[0]}
                                  </when>
+                                 <when test="p.operator == 'GT'">
+                                     AND status &gt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LT'">
+                                     AND status &lt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND status != #{p.values[0]}
+                                 </when>
                                  <otherwise>
                                      AND 1 = 0
                                  </otherwise>
                              </choose>
                          </when>
+
+                         <!-- businessType（STRING）：EQ/IN/NE/PREFIX（扩展轮 D41 +NE/PREFIX，D47）——
+                              PREFIX 三层竖线 REPLACE 转义链（| doubling 先行，% _ 次之；ESCAPE '|'） -->
                          <when test="p.field == 'businessType'">
                              <choose>
                                  <when test="p.operator == 'EQ'">
@@ -114,11 +141,19 @@
                                          #{v}
                                      </foreach>
                                  </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND business_type != #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'PREFIX'">
+                                     AND business_type LIKE CONCAT(REPLACE(REPLACE(REPLACE(#{p.values[0]}, '|', '||'), '%', '|%'), '_', '|_'), '%') ESCAPE '|'
+                                 </when>
                                  <otherwise>
                                      AND 1 = 0
                                  </otherwise>
                              </choose>
                          </when>
+
+                         <!-- createTime（DATETIME）：EQ/IN/BETWEEN/GTE/LTE/GT/LT/NE（D44/D47） -->
                          <when test="p.field == 'createTime'">
                              <choose>
                                  <when test="p.operator == 'EQ'">
@@ -138,6 +173,41 @@
                                  </when>
                                  <when test="p.operator == 'LTE'">
                                      AND create_time &lt;= #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'GT'">
+                                     AND create_time &gt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LT'">
+                                     AND create_time &lt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND create_time != #{p.values[0]}
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+
+                         <!-- title（STRING）：EQ/IN/NE/PREFIX（D42/D43/D47）——PREFIX 三层竖线 REPLACE 转义链
+                              （| doubling 先行，% _ 次之；ESCAPE '|' 实证 P10/P11；未转义通配符=过度授权）；
+                              test()=startsWithIgnoreCase 双侧不 stripTrailing（探针 P2-P5） -->
+                         <when test="p.field == 'title'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND title = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND title IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND title != #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'PREFIX'">
+                                     AND title LIKE CONCAT(REPLACE(REPLACE(REPLACE(#{p.values[0]}, '|', '||'), '%', '|%'), '_', '|_'), '%') ESCAPE '|'
                                  </when>
                                  <otherwise>
                                      AND 1 = 0

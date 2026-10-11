@@ -33,11 +33,11 @@ class FilterColumnsTest {
     @Test
     void assertDeclared_green_allColumnsWithParentField() {
         List<FilterColumn> columns = List.of(
-                new FilterColumn("id", "id", FilterColumnTypeEnum.NUMBER, "单号"),
-                new FilterColumn("leaveType", "leave_type", FilterColumnTypeEnum.NUMBER, "请假类型"),
-                new FilterColumn("startDate", "start_date", FilterColumnTypeEnum.DATE, "开始日期"),
-                new FilterColumn("endDate", "end_date", FilterColumnTypeEnum.DATE, "结束日期"),
-                new FilterColumn("createTime", "create_time", FilterColumnTypeEnum.DATETIME, "发起时间"));
+                new FilterColumn("id", "id", FilterColumnTypeEnum.NUMBER, "单号", null),
+                new FilterColumn("leaveType", "leave_type", FilterColumnTypeEnum.NUMBER, "请假类型", null),
+                new FilterColumn("startDate", "start_date", FilterColumnTypeEnum.DATE, "开始日期", null),
+                new FilterColumn("endDate", "end_date", FilterColumnTypeEnum.DATE, "结束日期", null),
+                new FilterColumn("createTime", "create_time", FilterColumnTypeEnum.DATETIME, "发起时间", null));
 
         // 绿态：四型全过 + createTime 在父类（类层级遍历，D32 与 Applier 的差异记档点）
         assertThatCode(() -> FilterColumns.assertDeclared(FixtureEntity.class, columns))
@@ -46,7 +46,7 @@ class FilterColumnsTest {
 
     @Test
     void assertDeclared_red_unknownField() {
-        FilterColumn unknown = new FilterColumn("ghost", "ghost", FilterColumnTypeEnum.NUMBER, "不存在");
+        FilterColumn unknown = new FilterColumn("ghost", "ghost", FilterColumnTypeEnum.NUMBER, "不存在", null);
 
         assertThatThrownBy(() -> FilterColumns.assertDeclared(FixtureEntity.class, List.of(unknown)))
                 .isInstanceOf(IllegalStateException.class)
@@ -56,7 +56,7 @@ class FilterColumnsTest {
     @Test
     void assertDeclared_red_typeMismatch() {
         FilterColumn mismatch = new FilterColumn("startDate", "start_date",
-                FilterColumnTypeEnum.NUMBER, "日期列误声明数值");
+                FilterColumnTypeEnum.NUMBER, "日期列误声明数值", null);
 
         assertThatThrownBy(() -> FilterColumns.assertDeclared(FixtureEntity.class, List.of(mismatch)))
                 .isInstanceOf(IllegalStateException.class)
@@ -67,7 +67,7 @@ class FilterColumnsTest {
     @Test
     void assertDeclared_red_stringFieldDeclaredAsNumber() {
         FilterColumn mismatch = new FilterColumn("createBy", "create_by",
-                FilterColumnTypeEnum.NUMBER, "字符串列误声明数值");
+                FilterColumnTypeEnum.NUMBER, "字符串列误声明数值", null);
 
         assertThatThrownBy(() -> FilterColumns.assertDeclared(FixtureEntity.class, List.of(mismatch)))
                 .isInstanceOf(IllegalStateException.class)

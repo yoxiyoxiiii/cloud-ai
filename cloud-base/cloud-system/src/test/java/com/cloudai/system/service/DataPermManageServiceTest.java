@@ -61,6 +61,8 @@ class DataPermManageServiceTest {
     private SysUserMapper userMapper;
     @Mock
     private DataPermEvaluator evaluator;
+    @Mock
+    private com.cloudai.common.translate.core.TranslationCacheService translationCacheService;
     @InjectMocks
     private DataPermManageService manageService;
 
@@ -665,10 +667,14 @@ class DataPermManageServiceTest {
         var resources = manageService.listResources();
 
         var leave = resources.stream().filter(r -> "leave".equals(r.getResource())).findFirst().orElseThrow();
-        assertThat(leave.getFilterColumns()).hasSize(4);
+        // v2（操作符扩展轮 D42/D45）：+title 五列；dictKey 出参（前端字典下拉依据）
+        assertThat(leave.getFilterColumns()).hasSize(5);
         assertThat(leave.getFilterColumns().get(0).getField()).isEqualTo("id");
         assertThat(leave.getFilterColumns().get(0).getType()).isEqualTo("NUMBER");
         assertThat(leave.getFilterColumns().get(0).getLabel()).isEqualTo("单号");
+        assertThat(leave.getFilterColumns().get(1).getDictKey()).isEqualTo("system_leave_type");
+        assertThat(leave.getFilterColumns().get(4).getField()).isEqualTo("title");
+        assertThat(leave.getFilterColumns().get(4).getType()).isEqualTo("STRING");
         var approval = resources.stream()
                 .filter(r -> "bpmn_approval".equals(r.getResource())).findFirst().orElseThrow();
         assertThat(approval.getFilterColumns()).extracting(
@@ -677,7 +683,9 @@ class DataPermManageServiceTest {
                         org.assertj.core.groups.Tuple.tuple("id", "NUMBER"),
                         org.assertj.core.groups.Tuple.tuple("status", "NUMBER"),
                         org.assertj.core.groups.Tuple.tuple("businessType", "STRING"),
-                        org.assertj.core.groups.Tuple.tuple("createTime", "DATETIME"));
+                        org.assertj.core.groups.Tuple.tuple("createTime", "DATETIME"),
+                        org.assertj.core.groups.Tuple.tuple("title", "STRING"));
+        assertThat(approval.getFilterColumns().get(1).getDictKey()).isEqualTo("bpmn_approval_status");
     }
 
     @Test
@@ -701,6 +709,135 @@ class DataPermManageServiceTest {
 
         // 判定序 v2 第 3 位：命中含条件规则 → 条件范围（§1.6 摘要），优先于账号档位标签
         assertThat(vo.getScopeLabel()).isEqualTo("条件范围（请假类型等于1）");
+    }
+
+    // ---- 操作符扩展轮（D41/D42/D45，2026-10-11）：新操作符校验链 v3 + title 列 + 摘要译文 ----
+
+    @Test
+    void saveRule_stringComparisonOperator_rejected3036() {
+        // D41 矩阵终态：STRING×GT（ci 排序规则下字符串大小比较语义不稳）
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("title", "GT", "e2e")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3036);
+        assertThat(ex.getMessage()).contains("title:GT");
+    }
+
+    @Test
+    void saveRule_numberPrefix_rejected3036() {
+        // D41 矩阵终态：任意类型×PREFIX（数值「前缀」是字符串化比较，语义怪异）
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("id", "PREFIX", "10")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3036);
+        assertThat(ex.getMessage()).contains("id:PREFIX");
+    }
+
+    @Test
+    void saveRule_newOperatorArityMismatch_rejected3037() {
+        // GT 单值 arity（getArity 泛化值数校验，D46）：双值 → 3037
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("id", "GT", "1", "100")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3037);
+        assertThat(ex.getMessage()).contains("需 1 个值");
+    }
+
+    @Test
+    void saveRule_prefixValueOver50_rejected3037() {
+        // STRING ≤50 上限对新操作符同样生效（normalize 单源）
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("title", "PREFIX", "e".repeat(51))));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3037);
+        assertThat(ex.getMessage()).contains("条件值非法");
+    }
+
+    @Test
+    void saveRule_titlePredicates_persistedAsJson() {
+        // title（D42 新列）EQ/NE/PREFIX 全链正常：校验过 → JSON 落库
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(
+                predicate("title", "PREFIX", "e2e"),
+                predicate("leaveType", "NE", "2")));
+        stubRoleSubject();
+        when(ruleMapper.findBySubject(RESOURCE, 0, 2L)).thenReturn(null);
+
+        manageService.saveRule(req);
+
+        ArgumentCaptor<SysDataPermRule> ruleCaptor = ArgumentCaptor.forClass(SysDataPermRule.class);
+        verify(ruleMapper).save(ruleCaptor.capture());
+        assertThat(ruleCaptor.getValue().getPredicates())
+                .isEqualTo("[{\"field\":\"title\",\"operator\":\"PREFIX\",\"values\":[\"e2e\"]},"
+                        + "{\"field\":\"leaveType\",\"operator\":\"NE\",\"values\":[\"2\"]}]");
+    }
+
+    @Test
+    void findRuleConfig_predicatesSummary_dictTranslated() {
+        RuleConfigQuery query = configQuery();
+        stubRoleSubject();
+        SysDataPermRule rule = rule(9L, 0, 2L, 0);
+        rule.setPredicates("[{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"1\"]}]");
+        when(ruleMapper.findBySubject(RESOURCE, 0, 2L)).thenReturn(rule);
+        when(columnMapper.listBySubject(RESOURCE, 0, 2L)).thenReturn(List.of());
+        when(translationCacheService.findDictLabels("system_leave_type", List.of("1")))
+                .thenReturn(java.util.Map.of("1", "事假"));
+
+        DataPermRuleConfigVo vo = manageService.findRuleConfig(query);
+
+        // D45 摘要译文（契约 §1.6 C6 显式变更）：请假类型等于1 → 请假类型等于事假；wire 回显原值
+        assertThat(vo.getPredicateSummary()).isEqualTo("请假类型等于事假");
+        assertThat(vo.getPredicates().get(0).getValues()).containsExactly("1");
+    }
+
+    @Test
+    void pageListRules_predicatesSummary_dictTranslated() {
+        SysDataPermRule roleRule = rule(3L, 0, 2L, 2);
+        roleRule.setPredicates("[{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"1\"]}]");
+        when(ruleMapper.pageList(any(), eq(RESOURCE), any(), any()))
+                .thenReturn(pageOf(List.of(roleRule)));
+        when(roleMapper.listByIds(List.of(2L))).thenReturn(List.of(role(2L, "主管")));
+        when(columnMapper.listByRoleIds(RESOURCE, List.of(2L))).thenReturn(List.of());
+        when(translationCacheService.findDictLabels("system_leave_type", List.of("1")))
+                .thenReturn(java.util.Map.of("1", "事假"));
+
+        List<DataPermRuleVo> rows = manageService.pageListRules(
+                queryOf(RESOURCE)).getRows();
+
+        assertThat(rows.get(0).getPredicateSummary()).isEqualTo("请假类型等于事假");
+    }
+
+    @Test
+    void myScope_conditionalRules_summary_dictTranslated() {
+        MyScopeQuery query = new MyScopeQuery();
+        query.setResource(RESOURCE);
+        DataPermDecision decision = new DataPermDecision();
+        decision.setResource(RESOURCE);
+        decision.setAccount("userA");
+        decision.setDataScope(com.cloudai.system.api.dataperm.DataScope.of(java.util.Set.of("userA")));
+        decision.setColumnScope(com.cloudai.system.api.dataperm.ColumnScope.of(
+                java.util.Set.of(), java.util.Set.of()));
+        decision.setRowFilter(com.cloudai.system.api.dataperm.RowFilter.of(java.util.List.of(
+                com.cloudai.system.api.dataperm.RowGroup.of(false, java.util.Set.of("userA"), java.util.List.of()))));
+        DataPermDecision.HitRule hit = hitRule(SysDataPermRule.RowScopeEnum.SELF.getCode());
+        hit.getPredicates().add(predicate("leaveType", "EQ", "1"));
+        decision.getHitRules().add(hit);
+        when(evaluator.evaluateForSelf(RESOURCE)).thenReturn(decision);
+        when(translationCacheService.findDictLabels("system_leave_type", List.of("1")))
+                .thenReturn(java.util.Map.of("1", "事假"));
+
+        MyScopeVo vo = manageService.myScope(query);
+
+        // 第六态摘要经三参路径带译文（D45）：条件范围（请假类型等于事假）
+        assertThat(vo.getScopeLabel()).isEqualTo("条件范围（请假类型等于事假）");
     }
 
     // ---- 脚手架 ----

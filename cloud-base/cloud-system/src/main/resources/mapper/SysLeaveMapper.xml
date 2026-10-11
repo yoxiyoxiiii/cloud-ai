@@ -29,7 +29,9 @@
          （每列×合法操作符，设计 §5.4b）；
          otherwise 1 = 0 fail-closed：未匹配分支按恒假处理（不放大授权，求值器 enrichment
          已过滤越界字段——本层是纵深防御）。IN 命中 idx_apply_user(apply_user, deleted)；
-         空集范围 Service 短路不达此处（防 IN ()） -->
+         空集范围 Service 短路不达此处（防 IN ()）；
+         操作符扩展轮（2026-10-11 D41-D47）：四 NUMBER/DATE 列块 +GT/LT/NE、新增 title 列块
+         （EQ/IN/NE/PREFIX——PREFIX 三层竖线 REPLACE 转义链 + ESCAPE '|'），分支计数 36 -->
     <select id="pageList" resultType="com.cloudai.system.vo.SysLeaveVo">
         SELECT <include refid="listColumns"/>
           FROM sys_leave l
@@ -52,6 +54,7 @@
                  </choose>
                  <foreach collection="grp.predicates" item="p">
                      <choose>
+                         <!-- id（NUMBER）：EQ/IN/BETWEEN/GTE/LTE/GT/LT/NE（操作符扩展轮 D44 +GT/LT/NE，D47） -->
                          <when test="p.field == 'id'">
                              <choose>
                                  <when test="p.operator == 'EQ'">
@@ -72,11 +75,22 @@
                                  <when test="p.operator == 'LTE'">
                                      AND l.id &lt;= #{p.values[0]}
                                  </when>
+                                 <when test="p.operator == 'GT'">
+                                     AND l.id &gt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LT'">
+                                     AND l.id &lt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND l.id != #{p.values[0]}
+                                 </when>
                                  <otherwise>
                                      AND 1 = 0
                                  </otherwise>
                              </choose>
                          </when>
+
+                         <!-- leaveType（NUMBER，字典 system_leave_type）：EQ/IN/BETWEEN/GTE/LTE/GT/LT/NE（D44/D47） -->
                          <when test="p.field == 'leaveType'">
                              <choose>
                                  <when test="p.operator == 'EQ'">
@@ -97,11 +111,22 @@
                                  <when test="p.operator == 'LTE'">
                                      AND l.leave_type &lt;= #{p.values[0]}
                                  </when>
+                                 <when test="p.operator == 'GT'">
+                                     AND l.leave_type &gt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LT'">
+                                     AND l.leave_type &lt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND l.leave_type != #{p.values[0]}
+                                 </when>
                                  <otherwise>
                                      AND 1 = 0
                                  </otherwise>
                              </choose>
                          </when>
+
+                         <!-- startDate（DATE）：EQ/IN/BETWEEN/GTE/LTE/GT/LT/NE（D44/D47） -->
                          <when test="p.field == 'startDate'">
                              <choose>
                                  <when test="p.operator == 'EQ'">
@@ -122,11 +147,22 @@
                                  <when test="p.operator == 'LTE'">
                                      AND l.start_date &lt;= #{p.values[0]}
                                  </when>
+                                 <when test="p.operator == 'GT'">
+                                     AND l.start_date &gt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LT'">
+                                     AND l.start_date &lt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND l.start_date != #{p.values[0]}
+                                 </when>
                                  <otherwise>
                                      AND 1 = 0
                                  </otherwise>
                              </choose>
                          </when>
+
+                         <!-- endDate（DATE）：EQ/IN/BETWEEN/GTE/LTE/GT/LT/NE（D44/D47） -->
                          <when test="p.field == 'endDate'">
                              <choose>
                                  <when test="p.operator == 'EQ'">
@@ -146,6 +182,41 @@
                                  </when>
                                  <when test="p.operator == 'LTE'">
                                      AND l.end_date &lt;= #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'GT'">
+                                     AND l.end_date &gt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LT'">
+                                     AND l.end_date &lt; #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND l.end_date != #{p.values[0]}
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+
+                         <!-- title（STRING）：EQ/IN/NE/PREFIX（D42/D43/D47）——PREFIX 三层竖线 REPLACE 转义链
+                              （| doubling 先行，% _ 次之；ESCAPE '|' 实证 P10/P11；未转义通配符=过度授权）；
+                              test()=startsWithIgnoreCase 双侧不 stripTrailing（探针 P2-P5） -->
+                         <when test="p.field == 'title'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND l.title = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND l.title IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <when test="p.operator == 'NE'">
+                                     AND l.title != #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'PREFIX'">
+                                     AND l.title LIKE CONCAT(REPLACE(REPLACE(REPLACE(#{p.values[0]}, '|', '||'), '%', '|%'), '_', '|_'), '%') ESCAPE '|'
                                  </when>
                                  <otherwise>
                                      AND 1 = 0

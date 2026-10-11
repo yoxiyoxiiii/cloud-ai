@@ -1,11 +1,15 @@
 <script setup lang="ts">
 /**
  * 数据权限规则配置弹窗（契约 2026-10-10-data-permission-api §3.2/§3.3，设计 §8；
- * 谓词增量契约 2026-10-11-dataperm-predicate-api §2.2/§2.3/§2.4——行级条件段）
+ * 谓词增量契约 2026-10-11-dataperm-predicate-api §2.2/§2.3/§2.4——行级条件段；
+ * 操作符扩展契约 2026-10-11-dataperm-operators-api §1.1/§8（R7 合并视图）——九操作符矩阵 + 字典下拉）
  * - 表单域：资源 select（listResources）→ 主体类型 radio → 主体 select（subject-options，随类型换源）
  *   → 行档位 radio 五档 → CUSTOM 档显示账号多选（filterable）→ **行级条件段**（档位下方，条件三元组
  *   行列表：列 select（注册表 filterColumns，§2.4）→ 操作符 select（operatorsForType 按列 type 过滤，
- *   §1.2 矩阵镜像）→ 值输入器类型驱动（NUMBER 数值/DATE·DATETIME 日期选择器/STRING 短文本/介于双值/属于多值 tag））
+ *   操作符契约 §1.1 矩阵镜像 v2）→ 值输入器三驱动：字典列（dictKey 非空）切 el-select 字典下拉
+ *   （getDictItems 数据源，EQ/NE/GTE/GT/LTE 单选、IN 多选、BETWEEN 双选；filterable+allow-create
+ *   兜底存量原值回显——§8/设计 D45）/ 非字典列沿类型驱动（NUMBER 数值/DATE·DATETIME 日期选择器/
+ *   STRING 短文本）/ PREFIX（非字典 STRING 列）单行文本提交 trimEnd（§1.1 软规范））
  *   → 列配置逐列动作 select（可配列由资源注册表下发，默认可视）
  * - 条件语义（谓词契约 §1.1）：条件组内 AND、与档位行内 AND——可见行 = 档位账号集合 ∧ 条件组全满足；
  *   **空条件列表 = 无条件（随档位保存）**，upsert 全量覆盖语义下显式提交 [] 即清空条件（§2.3）
@@ -23,10 +27,12 @@ import { computed, reactive, ref, watch } from 'vue'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { getRuleConfig, listResources, listSubjectOptions, saveRule } from '../../../../api/dataPerm'
+import { getDictItems } from '../../../../api/dict'
 import type {
   ColumnRuleVo,
   DataPermResourceVo,
   DataPermRuleVo,
+  DictItemVo,
   FilterColumnVo,
   FilterColumnType,
   PredicateItem,
@@ -42,9 +48,13 @@ import {
   IN_VALUE_MAX,
   OPERATOR_BETWEEN,
   OPERATOR_EQ,
+  OPERATOR_GT,
   OPERATOR_GTE,
   OPERATOR_IN,
+  OPERATOR_LT,
   OPERATOR_LTE,
+  OPERATOR_NE,
+  OPERATOR_PREFIX,
   PREDICATE_MAX,
   ROW_SCOPE_ALL,
   ROW_SCOPE_CUSTOM,
@@ -191,9 +201,51 @@ const filterColumns = computed<FilterColumnVo[]>(() => {
   return hit?.filterColumns ?? []
 })
 
-/** 列 field → 可过滤列（type/label 查询锚点） */
+/** 列 field → 可过滤列（type/label/dictKey 查询锚点） */
 function filterColumnOf(field: string): FilterColumnVo | undefined {
   return filterColumns.value.find((c) => c.field === field)
+}
+
+/* ---- 字典列值输入器（操作符契约 §5.2/§8 + 设计 D45：dictKey 非空列切字典下拉） ---- */
+
+/** 字典选项缓存（dictKey → 启用项，契约 2026-10-07-translation-api §2.1）：弹窗生命周期内复用，失败留空走 allow-create 手输兜底 */
+const dictOptionsMap = ref<Record<string, DictItemVo[]>>({})
+
+/**
+ * 行值输入器是否走字典下拉（契约 §8）：列 dictKey 非空且操作符非 PREFIX——
+ * PREFIX 恒走前缀文本输入器（前缀语义面向任意文本，字典枚举无「前缀」意义）
+ */
+function useDictInput(row: PredicateRow): boolean {
+  const col = filterColumnOf(row.field)
+  return col !== undefined && col.dictKey !== null && col.dictKey !== '' && row.operator !== OPERATOR_PREFIX
+}
+
+/** 行字典列选项：非字典列/未加载返回 []（下拉空态 + allow-create 仍可手输原值） */
+function dictOptionsOf(row: PredicateRow): DictItemVo[] {
+  const key = filterColumnOf(row.field)?.dictKey
+  if (key !== null && key !== undefined && key !== '') {
+    return dictOptionsMap.value[key] ?? []
+  }
+  return []
+}
+
+/** 预取当前资源全部字典列选项（去重；已缓存跳过）：未知 dictKey/停用类型后端返回空数组（表单容错语义，非错误） */
+async function loadDictOptions(): Promise<void> {
+  const keys = [
+    ...new Set(filterColumns.value.map((c) => c.dictKey).filter((k): k is string => k !== null && k !== '')),
+  ]
+  await Promise.all(
+    keys.map(async (key) => {
+      if (dictOptionsMap.value[key]) {
+        return
+      }
+      try {
+        dictOptionsMap.value[key] = await getDictItems(key)
+      } catch {
+        // 拦截器已统一 toast；该键保持空态，allow-create 手输原值兜底
+      }
+    }),
+  )
 }
 
 /** 行当前列类型（未选列给 NUMBER 兜底——未选列时值输入器不渲染，兜底值不参与提交） */
@@ -201,9 +253,17 @@ function rowColumnType(row: PredicateRow): FilterColumnType {
   return filterColumnOf(row.field)?.type ?? FILTER_TYPE_NUMBER
 }
 
-/** 单值操作符（EQ/GTE/LTE）：值形态为一个输入器 */
+/** 单值操作符（EQ/GTE/LTE/GT/LT/NE，操作符契约 §1.1 值数=1）：值形态为一个输入器；
+ * PREFIX 亦单值但独立前缀文本输入器（提交 trimEnd 软规范，§1.1——LIKE 非 PAD SPACE 尾空格是字面窄化） */
 function isSingleOp(operator: PredicateOperator | ''): boolean {
-  return operator === OPERATOR_EQ || operator === OPERATOR_GTE || operator === OPERATOR_LTE
+  return (
+    operator === OPERATOR_EQ ||
+    operator === OPERATOR_GTE ||
+    operator === OPERATOR_LTE ||
+    operator === OPERATOR_GT ||
+    operator === OPERATOR_LT ||
+    operator === OPERATOR_NE
+  )
 }
 
 /** 新增条件行（上限 PREDICATE_MAX——后端 §2.3 校验链 3037 权威，UI 同值拦截） */
@@ -328,9 +388,16 @@ function buildPredicates(): PredicateItem[] | null {
         ElMessage.warning(`条件 ${no}（${col.label}）：属于至少填写一个值`)
         return null
       }
+      if (row.valueList.length > IN_VALUE_MAX) {
+        // 字典多选下拉不经 appendInValue 的入口上限，提交口径统一兜底（后端 3037 权威）
+        ElMessage.warning(`条件 ${no}（${col.label}）：属于的值上限 ${IN_VALUE_MAX} 个`)
+        return null
+      }
       values = [...row.valueList]
     } else {
-      const single = textOf(row.valueA).trim()
+      const raw = textOf(row.valueA)
+      // PREFIX 仅裁尾随空格（操作符契约 §1.1 软规范——值首空格是字面、尾空格几乎必是手滑）；其余单值两侧 trim
+      const single = row.operator === OPERATOR_PREFIX ? raw.trimEnd() : raw.trim()
       if (single === '') {
         ElMessage.warning(`条件 ${no}（${col.label}）：请填写条件值`)
         return null
@@ -354,7 +421,12 @@ function buildPredicates(): PredicateItem[] | null {
   return result
 }
 
-/** config.predicates → 条件行回显（契约 §2.2；configured=false 调用方传空数组） */
+/**
+ * config.predicates → 条件行回显（契约 §2.2；configured=false 调用方传空数组）：
+ * BETWEEN 双值/IN 多值/其余（EQ/GTE/LTE/GT/LT/NE/PREFIX 单值）三分支承载九操作符；
+ * 字典列值按配置原值回显（wire 恒原值，操作符契约 §1.5——el-select 值不在字典项时显示原值，
+ * allow-create 保证停用项/存量原值可回显可续编）
+ */
 function rebuildPredicates(predicates: PredicateItem[]): void {
   predicateRows.value = predicates.map((item) => {
     const row = emptyPredicateRow()
@@ -411,11 +483,12 @@ async function loadSubjectOptions(): Promise<void> {
   }
 }
 
-/** 资源切换（新增模式）：可配列/可过滤列随之变化，列动作重置为全可视、条件行清空 */
+/** 资源切换（新增模式）：可配列/可过滤列随之变化，列动作重置为全可视、条件行清空、字典列选项预取 */
 function handleResourceChange(): void {
   formRef.value?.clearValidate(['resource'])
   rebuildColumnActions([])
   predicateRows.value = []
+  void loadDictOptions()
 }
 
 /** 档位切换到非 CUSTOM：清空账号集合（§3.3 其余档位必须空；提交时亦强制兜底） */
@@ -481,6 +554,8 @@ watch(
         predicateRows.value = []
         await loadSubjectOptions()
       }
+      // 当前资源字典列选项预取（dictKey 非空列值输入器数据源；缓存幂等）
+      void loadDictOptions()
     } catch {
       // 拦截器已统一 toast；弹窗保持可关闭
     } finally {
@@ -612,7 +687,8 @@ async function handleSubmit(): Promise<void> {
             >
               <el-option v-for="c in filterColumns" :key="c.field" :label="c.label" :value="c.field" />
             </el-select>
-            <!-- 操作符：operatorsForType 按列 type 过滤（§1.2 矩阵镜像——STRING 仅 等于/属于） -->
+            <!-- 操作符：operatorsForType 按列 type 过滤（操作符契约 §1.1 矩阵镜像 v2——
+                STRING 仅 等于/属于/不等于/前缀；其余类型八操作符无 前缀） -->
             <el-select
               v-model="row.operator"
               placeholder="操作符"
@@ -629,139 +705,211 @@ async function handleSubmit(): Promise<void> {
             </el-select>
             <el-button link type="danger" :disabled="loading" @click="removePredicateRow(i)">删除</el-button>
           </div>
-          <!-- 值输入器：列 type（输入器形态）× 操作符（单值/双值/多值）双驱动 -->
+          <!-- 值输入器三驱动（操作符契约 §8/设计 D45）：字典列（dictKey 非空，PREFIX 除外）→ 字典下拉；
+               非字典列 → 类型驱动 × 操作符（单值/双值/多值；PREFIX 前缀文本提交 trimEnd） -->
           <div v-if="row.field !== '' && row.operator !== ''" class="predicate-values">
-            <!-- 单值（等于/大于等于/小于等于） -->
-            <el-input
-              v-if="isSingleOp(row.operator) && rowColumnType(row) === FILTER_TYPE_NUMBER"
-              v-model="row.valueA"
-              placeholder="数值（整数/小数，负数可）"
-              clearable
-              :disabled="loading"
-              class="predicate-value-input"
-            />
-            <el-input
-              v-else-if="isSingleOp(row.operator) && rowColumnType(row) === FILTER_TYPE_STRING"
-              v-model="row.valueA"
-              :placeholder="`文本（精确匹配，≤${STRING_VALUE_MAX} 字）`"
-              clearable
-              :maxlength="STRING_VALUE_MAX"
-              :disabled="loading"
-              class="predicate-value-input"
-            />
-            <el-date-picker
-              v-else-if="isSingleOp(row.operator) && rowColumnType(row) === FILTER_TYPE_DATE"
-              v-model="row.valueA"
-              type="date"
-              value-format="YYYY-MM-DD"
-              placeholder="选择日期"
-              :disabled="loading"
-              class="predicate-value-input"
-            />
-            <el-date-picker
-              v-else-if="isSingleOp(row.operator)"
-              v-model="row.valueA"
-              type="datetime"
-              value-format="YYYY-MM-DD HH:mm:ss"
-              placeholder="选择日期时间"
-              :disabled="loading"
-              class="predicate-value-input"
-            />
-            <!-- 介于：双值起/止（有序闭区间，提交前校验 起≤止；STRING 无介于——操作符矩阵已过滤） -->
-            <div v-else-if="row.operator === OPERATOR_BETWEEN" class="predicate-between">
-              <template v-if="rowColumnType(row) === FILTER_TYPE_NUMBER">
-                <el-input v-model="row.valueA" placeholder="起值" clearable :disabled="loading" class="predicate-between-input" />
-                <span class="predicate-sep">~</span>
-                <el-input v-model="row.valueB" placeholder="止值" clearable :disabled="loading" class="predicate-between-input" />
-              </template>
-              <template v-else-if="rowColumnType(row) === FILTER_TYPE_DATE">
-                <el-date-picker
-                  v-model="row.valueA"
-                  type="date"
-                  value-format="YYYY-MM-DD"
-                  placeholder="起日期"
-                  :disabled="loading"
-                  class="predicate-between-input"
-                />
-                <span class="predicate-sep">~</span>
-                <el-date-picker
-                  v-model="row.valueB"
-                  type="date"
-                  value-format="YYYY-MM-DD"
-                  placeholder="止日期"
-                  :disabled="loading"
-                  class="predicate-between-input"
-                />
-              </template>
-              <template v-else>
-                <el-date-picker
-                  v-model="row.valueA"
-                  type="datetime"
-                  value-format="YYYY-MM-DD HH:mm:ss"
-                  placeholder="起时间"
-                  :disabled="loading"
-                  class="predicate-between-input"
-                />
-                <span class="predicate-sep">~</span>
-                <el-date-picker
-                  v-model="row.valueB"
-                  type="datetime"
-                  value-format="YYYY-MM-DD HH:mm:ss"
-                  placeholder="止时间"
-                  :disabled="loading"
-                  class="predicate-between-input"
-                />
-              </template>
-            </div>
-            <!-- 属于：多值 tag 追加（≤IN_VALUE_MAX，重复忽略；DATE/DATETIME 选择即添加） -->
-            <div v-else class="predicate-in">
-              <div
-                v-if="rowColumnType(row) === FILTER_TYPE_NUMBER || rowColumnType(row) === FILTER_TYPE_STRING"
-                class="predicate-in-line"
+            <!-- 字典列：el-select 字典下拉（getDictItems 数据源，EQ/NE/GTE/GT/LTE 单选、IN 多选、BETWEEN 双选）；
+                 filterable+allow-create 兜底存量原值回显与手输原值（值域软约束不校验，设计 D38） -->
+            <template v-if="useDictInput(row)">
+              <!-- 属于（IN）：字典多选 -->
+              <el-select
+                v-if="row.operator === OPERATOR_IN"
+                v-model="row.valueList"
+                multiple
+                filterable
+                allow-create
+                placeholder="选择或输入值（可多选）"
+                :disabled="loading"
+                class="predicate-value-input"
               >
-                <el-input
-                  v-model="row.valueInput"
-                  :placeholder="rowColumnType(row) === FILTER_TYPE_STRING ? `文本（回车添加）` : '数值（回车添加）'"
+                <el-option v-for="d in dictOptionsOf(row)" :key="d.value" :label="d.label" :value="d.value" />
+              </el-select>
+              <!-- 介于（BETWEEN）：字典双选有序（起≤止提交前校验；仅 NUMBER 字典列可达） -->
+              <div v-else-if="row.operator === OPERATOR_BETWEEN" class="predicate-between">
+                <el-select
+                  v-model="row.valueA"
+                  filterable
+                  allow-create
                   clearable
-                  :maxlength="rowColumnType(row) === FILTER_TYPE_STRING ? STRING_VALUE_MAX : undefined"
+                  placeholder="起值"
                   :disabled="loading"
-                  class="predicate-in-input"
-                  @keyup.enter="appendInValue(row)"
-                />
-                <el-button :disabled="loading" @click="appendInValue(row)">添加</el-button>
+                  class="predicate-between-input"
+                >
+                  <el-option v-for="d in dictOptionsOf(row)" :key="d.value" :label="d.label" :value="d.value" />
+                </el-select>
+                <span class="predicate-sep">~</span>
+                <el-select
+                  v-model="row.valueB"
+                  filterable
+                  allow-create
+                  clearable
+                  placeholder="止值"
+                  :disabled="loading"
+                  class="predicate-between-input"
+                >
+                  <el-option v-for="d in dictOptionsOf(row)" :key="d.value" :label="d.label" :value="d.value" />
+                </el-select>
               </div>
+              <!-- 单值（等于/不等于/大于等于/大于/小于等于/小于）：字典单选 -->
+              <el-select
+                v-else
+                v-model="row.valueA"
+                filterable
+                allow-create
+                clearable
+                placeholder="选择或输入值"
+                :disabled="loading"
+                class="predicate-value-input"
+              >
+                <el-option v-for="d in dictOptionsOf(row)" :key="d.value" :label="d.label" :value="d.value" />
+              </el-select>
+              <div class="field-hint">字典列：下拉选择；亦可直接输入原值（如已停用项）</div>
+            </template>
+            <!-- 非字典列：既有类型驱动输入器 -->
+            <template v-else>
+              <!-- 单值（等于/大于等于/小于等于/大于/小于/不等于——GT/LT/NE 为操作符契约 §1.1 增量） -->
+              <el-input
+                v-if="isSingleOp(row.operator) && rowColumnType(row) === FILTER_TYPE_NUMBER"
+                v-model="row.valueA"
+                placeholder="数值（整数/小数，负数可）"
+                clearable
+                :disabled="loading"
+                class="predicate-value-input"
+              />
+              <el-input
+                v-else-if="isSingleOp(row.operator) && rowColumnType(row) === FILTER_TYPE_STRING"
+                v-model="row.valueA"
+                :placeholder="`文本（精确值，≤${STRING_VALUE_MAX} 字）`"
+                clearable
+                :maxlength="STRING_VALUE_MAX"
+                :disabled="loading"
+                class="predicate-value-input"
+              />
               <el-date-picker
-                v-else-if="rowColumnType(row) === FILTER_TYPE_DATE"
-                v-model="row.valueInput"
+                v-else-if="isSingleOp(row.operator) && rowColumnType(row) === FILTER_TYPE_DATE"
+                v-model="row.valueA"
                 type="date"
                 value-format="YYYY-MM-DD"
-                placeholder="选择即添加"
+                placeholder="选择日期"
                 :disabled="loading"
                 class="predicate-value-input"
-                @change="appendInValue(row)"
               />
               <el-date-picker
-                v-else
-                v-model="row.valueInput"
+                v-else-if="isSingleOp(row.operator)"
+                v-model="row.valueA"
                 type="datetime"
                 value-format="YYYY-MM-DD HH:mm:ss"
-                placeholder="选择即添加"
+                placeholder="选择日期时间"
                 :disabled="loading"
                 class="predicate-value-input"
-                @change="appendInValue(row)"
               />
-              <div v-if="row.valueList.length > 0" class="predicate-tags">
-                <el-tag
-                  v-for="(v, vi) in row.valueList"
-                  :key="`${v}-${vi}`"
-                  closable
-                  :disable-transitions="true"
-                  @close="removeInValue(row, vi)"
-                  >{{ v }}</el-tag
-                >
+              <!-- 前缀（PREFIX，矩阵 STRING 专属、非字典列）：单行文本，提交仅裁尾随空格（契约 §1.1 软规范——
+                   值内 %/_/| 字面合法，SQL 渲染层转义消解；尾随空格是字面窄化条件，裁剪防手滑） -->
+              <el-input
+                v-else-if="row.operator === OPERATOR_PREFIX"
+                v-model="row.valueA"
+                :placeholder="`前缀文本（右模糊，≤${STRING_VALUE_MAX} 字；尾随空格提交时裁剪）`"
+                clearable
+                :maxlength="STRING_VALUE_MAX"
+                :disabled="loading"
+                class="predicate-value-input"
+              />
+              <!-- 介于：双值起/止（有序闭区间，提交前校验 起≤止；STRING 无介于——操作符矩阵已过滤） -->
+              <div v-else-if="row.operator === OPERATOR_BETWEEN" class="predicate-between">
+                <template v-if="rowColumnType(row) === FILTER_TYPE_NUMBER">
+                  <el-input v-model="row.valueA" placeholder="起值" clearable :disabled="loading" class="predicate-between-input" />
+                  <span class="predicate-sep">~</span>
+                  <el-input v-model="row.valueB" placeholder="止值" clearable :disabled="loading" class="predicate-between-input" />
+                </template>
+                <template v-else-if="rowColumnType(row) === FILTER_TYPE_DATE">
+                  <el-date-picker
+                    v-model="row.valueA"
+                    type="date"
+                    value-format="YYYY-MM-DD"
+                    placeholder="起日期"
+                    :disabled="loading"
+                    class="predicate-between-input"
+                  />
+                  <span class="predicate-sep">~</span>
+                  <el-date-picker
+                    v-model="row.valueB"
+                    type="date"
+                    value-format="YYYY-MM-DD"
+                    placeholder="止日期"
+                    :disabled="loading"
+                    class="predicate-between-input"
+                  />
+                </template>
+                <template v-else>
+                  <el-date-picker
+                    v-model="row.valueA"
+                    type="datetime"
+                    value-format="YYYY-MM-DD HH:mm:ss"
+                    placeholder="起时间"
+                    :disabled="loading"
+                    class="predicate-between-input"
+                  />
+                  <span class="predicate-sep">~</span>
+                  <el-date-picker
+                    v-model="row.valueB"
+                    type="datetime"
+                    value-format="YYYY-MM-DD HH:mm:ss"
+                    placeholder="止时间"
+                    :disabled="loading"
+                    class="predicate-between-input"
+                  />
+                </template>
               </div>
-              <div class="field-hint">已 {{ row.valueList.length }}/{{ IN_VALUE_MAX }} 个值（重复自动忽略）</div>
-            </div>
+              <!-- 属于：多值 tag 追加（≤IN_VALUE_MAX，重复忽略；DATE/DATETIME 选择即添加） -->
+              <div v-else class="predicate-in">
+                <div
+                  v-if="rowColumnType(row) === FILTER_TYPE_NUMBER || rowColumnType(row) === FILTER_TYPE_STRING"
+                  class="predicate-in-line"
+                >
+                  <el-input
+                    v-model="row.valueInput"
+                    :placeholder="rowColumnType(row) === FILTER_TYPE_STRING ? `文本（回车添加）` : '数值（回车添加）'"
+                    clearable
+                    :maxlength="rowColumnType(row) === FILTER_TYPE_STRING ? STRING_VALUE_MAX : undefined"
+                    :disabled="loading"
+                    class="predicate-in-input"
+                    @keyup.enter="appendInValue(row)"
+                  />
+                  <el-button :disabled="loading" @click="appendInValue(row)">添加</el-button>
+                </div>
+                <el-date-picker
+                  v-else-if="rowColumnType(row) === FILTER_TYPE_DATE"
+                  v-model="row.valueInput"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  placeholder="选择即添加"
+                  :disabled="loading"
+                  class="predicate-value-input"
+                  @change="appendInValue(row)"
+                />
+                <el-date-picker
+                  v-else
+                  v-model="row.valueInput"
+                  type="datetime"
+                  value-format="YYYY-MM-DD HH:mm:ss"
+                  placeholder="选择即添加"
+                  :disabled="loading"
+                  class="predicate-value-input"
+                  @change="appendInValue(row)"
+                />
+                <div v-if="row.valueList.length > 0" class="predicate-tags">
+                  <el-tag
+                    v-for="(v, vi) in row.valueList"
+                    :key="`${v}-${vi}`"
+                    closable
+                    :disable-transitions="true"
+                    @close="removeInValue(row, vi)"
+                    >{{ v }}</el-tag
+                  >
+                </div>
+                <div class="field-hint">已 {{ row.valueList.length }}/{{ IN_VALUE_MAX }} 个值（重复自动忽略）</div>
+              </div>
+            </template>
           </div>
         </div>
         <div class="predicate-footer">

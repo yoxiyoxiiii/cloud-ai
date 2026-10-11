@@ -119,13 +119,26 @@ class DataPermResourcesTest {
 
     @Test
     void leave_filterColumnsDeclared() {
+        // v2（操作符扩展轮 D42）：+title（STRING，PREFIX 兑现后进清单）
         List<FilterColumn> columns = DataPermResources.getFilterColumns("leave");
         assertThat(columns).extracting(FilterColumn::field, FilterColumn::column)
                 .containsExactly(
                         tuple("id", "id"),
                         tuple("leaveType", "leave_type"),
                         tuple("startDate", "start_date"),
-                        tuple("endDate", "end_date"));
+                        tuple("endDate", "end_date"),
+                        tuple("title", "title"));
+    }
+
+    @Test
+    void leave_filterColumns_dictKeyDeclarations() {
+        // D45 字典列声明：leaveType 有字典（摘要/narratives 值译标签 + 前端字典下拉），其余列 null 原值
+        assertThat(DataPermResources.findFilterColumn("leave", "leaveType").dictKey())
+                .isEqualTo("system_leave_type");
+        assertThat(DataPermResources.findFilterColumn("leave", "id").dictKey()).isNull();
+        assertThat(DataPermResources.findFilterColumn("leave", "startDate").dictKey()).isNull();
+        assertThat(DataPermResources.findFilterColumn("leave", "endDate").dictKey()).isNull();
+        assertThat(DataPermResources.findFilterColumn("leave", "title").dictKey()).isNull();
     }
 
     @Test
@@ -143,13 +156,36 @@ class DataPermResourcesTest {
     }
 
     @Test
+    void leave_titleFilterColumn_stringTyped() {
+        FilterColumn title = DataPermResources.findFilterColumn("leave", "title");
+        assertThat(title).isNotNull();
+        assertThat(title.type()).isEqualTo(FilterColumnTypeEnum.STRING);
+        assertThat(title.label()).isEqualTo("标题");
+    }
+
+    @Test
     void bpmnApproval_filterColumnsRemoteDeclaredWithTypes() {
+        // v2（操作符扩展轮 D42）：+title（STRING）
         assertThat(DataPermResources.getFilterColumns(DataPermResources.BPMN_APPROVAL))
                 .extracting(FilterColumn::field, FilterColumn::type)
                 .containsExactly(
                         tuple("id", FilterColumnTypeEnum.NUMBER),
                         tuple("status", FilterColumnTypeEnum.NUMBER),
                         tuple("businessType", FilterColumnTypeEnum.STRING),
-                        tuple("createTime", FilterColumnTypeEnum.DATETIME));
+                        tuple("createTime", FilterColumnTypeEnum.DATETIME),
+                        tuple("title", FilterColumnTypeEnum.STRING));
+    }
+
+    @Test
+    void bpmnApproval_filterColumns_dictKeyDeclarations() {
+        // D45：status 有字典（bpmn_approval_status），其余列（含 title/businessType）null 原值
+        assertThat(DataPermResources.findFilterColumn(DataPermResources.BPMN_APPROVAL, "status")
+                .dictKey()).isEqualTo("bpmn_approval_status");
+        assertThat(DataPermResources.findFilterColumn(DataPermResources.BPMN_APPROVAL, "id")
+                .dictKey()).isNull();
+        assertThat(DataPermResources.findFilterColumn(DataPermResources.BPMN_APPROVAL, "businessType")
+                .dictKey()).isNull();
+        assertThat(DataPermResources.findFilterColumn(DataPermResources.BPMN_APPROVAL, "title")
+                .dictKey()).isNull();
     }
 }

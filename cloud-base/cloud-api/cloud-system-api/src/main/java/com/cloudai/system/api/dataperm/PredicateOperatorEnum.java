@@ -1,16 +1,19 @@
 package com.cloudai.system.api.dataperm;
 
 /**
- * 行级条件操作符封闭集（设计 D29，2026-10-11 谓词轮）：EQ/IN/BETWEEN/GTE/LTE 五枚举——
- * 顶层枚举落 api 模块（不在 system entity 扫描面，守护测试 Enum 后缀规则不适用）。
+ * 行级条件操作符封闭集 v2（设计 D41，2026-10-11 操作符扩展轮）：EQ/IN/BETWEEN/GTE/LTE +
+ * GT/LT/NE/PREFIX 九枚举——顶层枚举落 api 模块（不在 system entity 扫描面，守护测试 Enum 后缀规则不适用）。
  *
- * <p>落选记档（设计 §1.3/D29）：LIKE/PREFIX 一切模糊操作符（拍板①首版不做）、GT/LT（GTE/LTE
- * 已覆盖单边区间）、NE（白名单思维下可用 IN 其余值替代）、IS-NULL（试点列全 NOT NULL）。
+ * <p>扩展轮记档（设计 §1.2/D41）：GT/LT（比较族补全——严格不等开边界）、NE（「除某值外全部」
+ * 对新增值封闭，免 IN 列举漏更新）、PREFIX（右模糊 {@code LIKE 'x%'}——D29「模糊操作符整体不做」
+ * 排除面仅开右前缀一道口）。仍不落：LIKE 中缀/后缀模糊、REGEXP、IS-NULL（契约 §1.1）。
  *
  * <p>code 摘要符号（digest 用 ASCII 紧凑型，契约 §1.6：{@code =} {@code in} {@code ~}
- * {@code >=} {@code <=}）；label 中文与前端 OPERATOR_OPTIONS 双处冻结（任一变更为契约变更）。
- * 类型矩阵（{@link #supports}，配置校验 3036 依据）：NUMBER/DATE/DATETIME × 全五操作符；
- * STRING × 仅 EQ/IN（ci 排序规则下字符串大小比较语义不稳，禁比较符类）。
+ * {@code >=} {@code <=} {@code >} {@code <} {@code !=} {@code ^}——PREFIX 符号取正则起始锚语义）；
+ * label 中文与前端 OPERATOR_OPTIONS 双处冻结（任一变更为契约变更）。
+ * 类型矩阵终态（{@link #supports}，配置校验 3036 依据）：NUMBER/DATE/DATETIME × 除 PREFIX 外八操作符
+ * （数值/日期「前缀」是字符串化比较，无索引价值语义怪异）；STRING × EQ/IN/NE/PREFIX 四操作符
+ * （ci 排序规则下字符串大小比较语义不稳，禁比较符类，D29 口径不变）。
  */
 public enum PredicateOperatorEnum {
 
@@ -27,7 +30,19 @@ public enum PredicateOperatorEnum {
     GTE(">=", "大于等于"),
 
     /** 小于等于（闭端） */
-    LTE("<=", "小于等于");
+    LTE("<=", "小于等于"),
+
+    /** 大于（严格不等，开边界——边界值不命中，与 GTE 差异，设计 D44） */
+    GT(">", "大于"),
+
+    /** 小于（严格不等，开边界） */
+    LT("<", "小于"),
+
+    /** 不等于（等值求反，排除值——对新增值封闭，免 IN 列举漏更新；NULL 恒不满足含 NE） */
+    NE("!=", "不等于"),
+
+    /** 前缀（右模糊 {@code LIKE 'x%'}；值内 %/_/| 一律字面——SQL 侧三层竖线 REPLACE 转义链，设计 D43） */
+    PREFIX("^", "前缀");
 
     private final String symbol;
     private final String label;
@@ -47,21 +62,21 @@ public enum PredicateOperatorEnum {
         return label;
     }
 
-    /** 期望值数量：EQ/GTE/LTE=1、BETWEEN=2、IN 变长（1~30 上限由配置校验 3037 把守） */
+    /** 期望值数量：EQ/GTE/LTE/GT/LT/NE/PREFIX=1、BETWEEN=2、IN 变长（1~30 上限由配置校验 3037 把守） */
     public int getArity() {
         return switch (this) {
-            case EQ, GTE, LTE -> 1;
+            case EQ, GTE, LTE, GT, LT, NE, PREFIX -> 1;
             case BETWEEN -> 2;
             case IN -> -1;
         };
     }
 
-    /** 操作符×列类型矩阵（D38 校验依据）：STRING 仅 EQ/IN，其余类型全五操作符合法 */
+    /** 操作符×列类型矩阵终态（D41，校验 3036 依据）：STRING 仅 EQ/IN/NE/PREFIX，其余类型除 PREFIX 全开 */
     public boolean supports(FilterColumnTypeEnum type) {
-        if (type == FilterColumnTypeEnum.STRING) {
-            return this == EQ || this == IN;
-        }
-        return true;
+        return switch (type) {
+            case STRING -> this == EQ || this == IN || this == NE || this == PREFIX;
+            case NUMBER, DATE, DATETIME -> this != PREFIX;
+        };
     }
 
     /**

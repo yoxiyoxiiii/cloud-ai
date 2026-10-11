@@ -44,16 +44,21 @@ public final class DataPermResources {
     private static final Map<String, ResourceDef> REGISTRY = new LinkedHashMap<>();
 
     static {
+        // 可过滤列 v2（操作符扩展轮 D42/D45）：+title（STRING，PREFIX 兑现后进清单）+ 字典列 dictKey
         register(LEAVE, SysLeaveVo.class, List.of("title", "reason"), SysLeave.class, List.of(
-                new FilterColumn("id", "id", FilterColumnTypeEnum.NUMBER, "单号"),
-                new FilterColumn("leaveType", "leave_type", FilterColumnTypeEnum.NUMBER, "请假类型"),
-                new FilterColumn("startDate", "start_date", FilterColumnTypeEnum.DATE, "开始日期"),
-                new FilterColumn("endDate", "end_date", FilterColumnTypeEnum.DATE, "结束日期")));
+                new FilterColumn("id", "id", FilterColumnTypeEnum.NUMBER, "单号", null),
+                new FilterColumn("leaveType", "leave_type", FilterColumnTypeEnum.NUMBER, "请假类型",
+                        "system_leave_type"),
+                new FilterColumn("startDate", "start_date", FilterColumnTypeEnum.DATE, "开始日期", null),
+                new FilterColumn("endDate", "end_date", FilterColumnTypeEnum.DATE, "结束日期", null),
+                new FilterColumn("title", "title", FilterColumnTypeEnum.STRING, "标题", null)));
         registerRemote(BPMN_APPROVAL, List.of("title"), List.of(
-                new FilterColumn("id", "id", FilterColumnTypeEnum.NUMBER, "审批单号"),
-                new FilterColumn("status", "status", FilterColumnTypeEnum.NUMBER, "状态"),
-                new FilterColumn("businessType", "business_type", FilterColumnTypeEnum.STRING, "业务类型"),
-                new FilterColumn("createTime", "create_time", FilterColumnTypeEnum.DATETIME, "发起时间")));
+                new FilterColumn("id", "id", FilterColumnTypeEnum.NUMBER, "审批单号", null),
+                new FilterColumn("status", "status", FilterColumnTypeEnum.NUMBER, "状态",
+                        "bpmn_approval_status"),
+                new FilterColumn("businessType", "business_type", FilterColumnTypeEnum.STRING, "业务类型", null),
+                new FilterColumn("createTime", "create_time", FilterColumnTypeEnum.DATETIME, "发起时间", null),
+                new FilterColumn("title", "title", FilterColumnTypeEnum.STRING, "标题", null)));
     }
 
     /** 资源定义（D15 + 谓词轮 D32）：可配列 VO 类（D17 断言锚点，远程 null）+ 可过滤列清单（entity 锚） */

@@ -361,7 +361,7 @@ try {
     ids.ruleLeaveC = rowC.id
     assertEq(JSON.stringify(rowC.predicates), JSON.stringify([{ field: 'leaveType', operator: 'EQ', values: ['1'] }]),
       `条件规则 predicates 应原样回显，实际 ${JSON.stringify(rowC.predicates)}`)
-    assertEq(rowC.predicateSummary, '请假类型等于1', `条件规则 predicateSummary 应为「请假类型等于1」，实际 "${rowC.predicateSummary}"`)
+    assertEq(rowC.predicateSummary, '请假类型等于事假', `条件规则 predicateSummary 应为「请假类型等于事假」，实际 "${rowC.predicateSummary}"`)
     const pageD = await apiAs('admin', 'GET', `/system/data-perm/rule/page?pageNum=1&pageSize=10&resource=leave&subjectType=0&subjectId=${ids.roleD}`)
     assertEq(Number(pageD.data.total), 1, `部门规则应恰 1 行，实际 total=${pageD.data.total}`)
     const rowD = pageD.data.rows[0]
@@ -375,7 +375,7 @@ try {
     assertEq(cfg.data.configured, true, '条件主体 configured 应 true')
     assertEq(JSON.stringify(cfg.data.predicates), JSON.stringify([{ field: 'leaveType', operator: 'EQ', values: ['1'] }]),
       `config predicates 应回显，实际 ${JSON.stringify(cfg.data.predicates)}`)
-    assertEq(cfg.data.predicateSummary, '请假类型等于1', `config predicateSummary 应「请假类型等于1」，实际 "${cfg.data.predicateSummary}"`)
+    assertEq(cfg.data.predicateSummary, '请假类型等于事假', `config predicateSummary 应「请假类型等于事假」，实际 "${cfg.data.predicateSummary}"`)
     log(`  规则: leave/条件角色=${ids.ruleLeaveC}（ALL+leaveType=1）/ leave/部门角色=${ids.ruleLeaveD}（DEPT_AND_CHILD 无条件）`)
   })
 
@@ -402,13 +402,13 @@ try {
     await browserLogin(USER_U1, PASSWORD)
     const alertText = await leaveAlertText()
     log(`  U1 提示条: "${alertText}"`)
-    assert(alertText.includes('条件范围（请假类型等于1）'), `U1 提示条应含第六态「条件范围（请假类型等于1）」，实际 "${alertText}"`)
+    assert(alertText.includes('条件范围（请假类型等于事假）'), `U1 提示条应含第六态「条件范围（请假类型等于事假）」，实际 "${alertText}"`)
     await shot(page, 'dpp4-u1-cond-scope.png')
 
     // my-scope API（契约 §6 判定序 v2 第 3 位——ALL+条件用户非豁免非空集落条件态）
     const ms = await apiAs(USER_U1, 'GET', '/system/data-perm/my-scope?resource=leave')
     assertEq(ms.code, 200, 'U1 my-scope 应 200')
-    assertEq(ms.data.scopeLabel, '条件范围（请假类型等于1）', `U1 scopeLabel 应为条件范围态，实际 "${ms.data.scopeLabel}"`)
+    assertEq(ms.data.scopeLabel, '条件范围（请假类型等于事假）', `U1 scopeLabel 应为条件范围态，实际 "${ms.data.scopeLabel}"`)
     assert(ms.data.columnSummary == null, `U1 无列规则 columnSummary 应 null，实际 "${ms.data.columnSummary}"`)
 
     // 列表行集（owner 无关证明）：全行事假——含 U2 的单（ALL+条件放行非本人发起）、零病假（含本人发起的）
@@ -438,11 +438,11 @@ try {
     await browserLogin(USER_U2, PASSWORD)
     const alertText = await leaveAlertText()
     log(`  U2 提示条: "${alertText}"`)
-    assert(alertText.includes('条件范围（请假类型等于1）'), `U2 提示条应含「条件范围（请假类型等于1）」，实际 "${alertText}"`)
+    assert(alertText.includes('条件范围（请假类型等于事假）'), `U2 提示条应含「条件范围（请假类型等于事假）」，实际 "${alertText}"`)
     await shot(page, 'dpp5-u2-union-scope.png')
 
     const ms = await apiAs(USER_U2, 'GET', '/system/data-perm/my-scope?resource=leave')
-    assertEq(ms.data.scopeLabel, '条件范围（请假类型等于1）', `U2 scopeLabel 应条件态（判定序 v2 第 3 位优先于部门档），实际 "${ms.data.scopeLabel}"`)
+    assertEq(ms.data.scopeLabel, '条件范围（请假类型等于事假）', `U2 scopeLabel 应条件态（判定序 v2 第 3 位优先于部门档），实际 "${ms.data.scopeLabel}"`)
 
     // 行集并集不变式：加条件规则未收紧部门档——部门成员（U2/U3）全部单 ∪ 全部事假
     const deptMembers = new Set([USER_U2, USER_U3])
@@ -466,7 +466,7 @@ try {
     assertEq(JSON.stringify(ex1.data.hitRules[0].predicates), JSON.stringify([{ field: 'leaveType', operator: 'EQ', values: ['1'] }]),
       `explain HitRule predicates 应回显，实际 ${JSON.stringify(ex1.data.hitRules[0].predicates)}`)
     const n1 = ex1.data.narratives
-    assert(n1.some((s) => s.includes('命中条件：请假类型 等于 1')), `explain U1 narratives 应含条件句「命中条件：请假类型 等于 1」，实际 ${JSON.stringify(n1)}`)
+    assert(n1.some((s) => s.includes('命中条件：请假类型 等于 事假')), `explain U1 narratives 应含条件句「命中条件：请假类型 等于 事假」，实际 ${JSON.stringify(n1)}`)
     assert(n1.some((s) => s.includes('行范围收敛：并集含条件过滤（1 条规则，1 条含条件）')),
       `explain U1 narratives 应含条件收敛句，实际 ${JSON.stringify(n1)}`)
     log(`  explain U1 narratives: ${JSON.stringify(n1)}`)

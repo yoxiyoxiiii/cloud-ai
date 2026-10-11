@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.dataperm.FilterColumn;
 import com.cloudai.system.api.dataperm.PredicateOperatorEnum;
 import com.cloudai.system.dto.DataPermLogPageQuery;
@@ -87,6 +88,7 @@ public class DataPermManageService {
     private final SysRoleMapper roleMapper;
     private final SysUserMapper userMapper;
     private final DataPermEvaluator evaluator;
+    private final TranslationCacheService translationCacheService;
 
     /**
      * 规则分页（契约 §3.1）：resource 非法值宽松语义=不报错返回空集（与 §3.2 配置回显严格 3034 相区分）；
@@ -206,11 +208,12 @@ public class DataPermManageService {
         return DataPermConvert.toExplainVo(decision);
     }
 
-    /** 我的数据范围（契约 §3.9）：当前登录人自查，不留痕（D7）——轻量摘要供 leave 页提示条 */
+    /** 我的数据范围（契约 §3.9）：当前登录人自查，不留痕（D7）——轻量摘要供 leave 页提示条。
+     * 操作符扩展轮 D45：第六态条件摘要经三参路径带字典译文（无字典列原值不变）。 */
     public MyScopeVo myScope(MyScopeQuery query) {
         validateResourceParam(query.getResource());
         DataPermDecision decision = evaluator.evaluateForSelf(query.getResource());
-        return DataPermConvert.toMyScopeVo(decision);
+        return DataPermConvert.toMyScopeVo(decision, translationCacheService::findDictLabels);
     }
 
     // ---- 分页行回填（subjectName 批量二查 + columns 分组批查） ----
@@ -228,7 +231,8 @@ public class DataPermManageService {
                             : List.of(),
                     DataPermConvert.toColumnRuleVos(
                             columnMap.getOrDefault(columnMapKey(rule.getResource(), rule.getSubjectType(),
-                                    rule.getSubjectId()), List.of()))));
+                                    rule.getSubjectId()), List.of())),
+                    translationCacheService::findDictLabels));
         }
         return vos;
     }
@@ -378,7 +382,7 @@ public class DataPermManageService {
         }
     }
 
-    /** 操作符枚举（非 EQ/IN/BETWEEN/GTE/LTE → 1002「操作符无效」） */
+    /** 操作符枚举（非 EQ/IN/BETWEEN/GTE/LTE/GT/LT/NE/PREFIX 九 name → 1002「操作符无效」，D41） */
     private PredicateOperatorEnum requirePredicateOperator(String operator) {
         try {
             return PredicateOperatorEnum.of(operator);
@@ -564,14 +568,16 @@ public class DataPermManageService {
         return Integer.valueOf(SysDataPermRule.RowScopeEnum.CUSTOM.getCode()).equals(rowScope);
     }
 
-    /** 配置回显条件组（契约 §2.2）：解析失败 null → 空列表兜底（仅展示语义）+ 中文摘要（无条件 null） */
+    /** 配置回显条件组（契约 §2.2）：解析失败 null → 空列表兜底（仅展示语义）+ 中文摘要
+     * （无条件 null；操作符扩展轮 D45 三参带字典译文）。 */
     private void fillConfigPredicates(DataPermRuleConfigVo vo, SysDataPermRule rule) {
         if (rule == null) {
             return;
         }
         List<PredicateItem> predicates = DataPermConvert.parsePredicates(rule.getPredicates());
         vo.setPredicates(predicates == null ? List.of() : predicates);
-        vo.setPredicateSummary(DataPermConvert.toPredicateSummary(vo.getResource(), vo.getPredicates()));
+        vo.setPredicateSummary(DataPermConvert.toPredicateSummary(vo.getResource(), vo.getPredicates(),
+                translationCacheService::findDictLabels));
     }
 
     private String blankToNull(String value) {

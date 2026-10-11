@@ -26,12 +26,15 @@ public class DataPermColumnDeclarationRunner implements ApplicationRunner {
     /** bpmn_approval 可配列（与 provider 注册行逐字一致）：title=标题快照（ApprovalVo String 字段） */
     static final List<String> APPROVAL_COLUMNS = List.of("title");
 
-    /** bpmn_approval 可过滤列（与 provider 注册行逐字一致，D32——XML 谓词分支对照面） */
+    /** bpmn_approval 可过滤列 v2（与 provider 注册行逐字一致，D32/D42/D45——XML 谓词分支对照面；
+     * 操作符扩展轮 +title（STRING）与 status 字典键 bpmn_approval_status 镜像） */
     static final List<FilterColumn> APPROVAL_FILTER_COLUMNS = List.of(
-            new FilterColumn("id", "id", FilterColumnTypeEnum.NUMBER, "审批单号"),
-            new FilterColumn("status", "status", FilterColumnTypeEnum.NUMBER, "状态"),
-            new FilterColumn("businessType", "business_type", FilterColumnTypeEnum.STRING, "业务类型"),
-            new FilterColumn("createTime", "create_time", FilterColumnTypeEnum.DATETIME, "发起时间"));
+            new FilterColumn("id", "id", FilterColumnTypeEnum.NUMBER, "审批单号", null),
+            new FilterColumn("status", "status", FilterColumnTypeEnum.NUMBER, "状态",
+                    "bpmn_approval_status"),
+            new FilterColumn("businessType", "business_type", FilterColumnTypeEnum.STRING, "业务类型", null),
+            new FilterColumn("createTime", "create_time", FilterColumnTypeEnum.DATETIME, "发起时间", null),
+            new FilterColumn("title", "title", FilterColumnTypeEnum.STRING, "标题", null));
 
     @Override
     public void run(ApplicationArguments args) {

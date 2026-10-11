@@ -20,7 +20,9 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.BiFunction;
 
 /**
  * 数据权限域转换（原生 setter 逐字段，禁三方拷贝工具）：规则分页行 / 配置回显 /
@@ -36,9 +38,20 @@ public final class DataPermConvert {
     private DataPermConvert() {
     }
 
-    /** 规则分页行（subjectName/columns/customAccounts 由 Service 批量补齐后传入；predicates/摘要自实体解析） */
+    /**
+     * 规则分页行（subjectName/columns/customAccounts 由 Service 批量补齐后传入；predicates/摘要自实体解析）。
+     * 操作符扩展轮 D45：原值形态（无字典 resolver）——Service 侧经 {@link #toRuleVo(SysDataPermRule, String,
+     * List, List, BiFunction)} 五参 overload 注入 TranslationCacheService 构造的 resolver 产译文摘要。
+     */
     public static DataPermRuleVo toRuleVo(SysDataPermRule rule, String subjectName,
                                           List<String> customAccounts, List<DataPermRuleVo.ColumnRuleVo> columns) {
+        return toRuleVo(rule, subjectName, customAccounts, columns, null);
+    }
+
+    /** 规则分页行（操作符扩展轮 D45 五参形态）：dictResolver 非空时 predicateSummary 字典列值译标签 */
+    public static DataPermRuleVo toRuleVo(SysDataPermRule rule, String subjectName,
+                                          List<String> customAccounts, List<DataPermRuleVo.ColumnRuleVo> columns,
+                                          BiFunction<String, List<String>, Map<String, String>> dictResolver) {
         DataPermRuleVo vo = new DataPermRuleVo();
         vo.setId(rule.getId());
         vo.setResource(rule.getResource());
@@ -48,7 +61,7 @@ public final class DataPermConvert {
         vo.setRowScope(rule.getRowScope());
         vo.setCustomAccounts(customAccounts == null ? List.of() : customAccounts);
         vo.setColumns(columns == null ? List.of() : columns);
-        fillPredicates(vo, rule.getResource(), parsePredicates(rule.getPredicates()));
+        fillPredicates(vo, rule.getResource(), parsePredicates(rule.getPredicates()), dictResolver);
         vo.setUpdateBy(rule.getUpdateBy());
         vo.setUpdateTime(rule.getUpdateTime());
         return vo;
@@ -87,10 +100,16 @@ public final class DataPermConvert {
         return vo;
     }
 
-    /** 自查摘要：scopeLabel 五态判定（契约 §6.8）+ 列结论（无动作 null） */
+    /** 自查摘要：scopeLabel 五态判定（契约 §6.8）+ 列结论（无动作 null）。原值形态（D45 两参 overload 委托） */
     public static MyScopeVo toMyScopeVo(DataPermDecision decision) {
+        return toMyScopeVo(decision, null);
+    }
+
+    /** 自查摘要（操作符扩展轮 D45 两参形态）：dictResolver 非空时第六态条件摘要字典列值译标签 */
+    public static MyScopeVo toMyScopeVo(DataPermDecision decision,
+            BiFunction<String, List<String>, Map<String, String>> dictResolver) {
         MyScopeVo vo = new MyScopeVo();
-        vo.setScopeLabel(resolveScopeLabel(decision));
+        vo.setScopeLabel(resolveScopeLabel(decision, dictResolver));
         vo.setColumnSummary(decision.getColumnScope().isEmpty() ? null
                 : decision.getColumnScope().getSummary());
         return vo;
@@ -154,14 +173,25 @@ public final class DataPermConvert {
      * 条件中文摘要（契约 §1.6，config/rule/my-scope 共用）：每谓词 {@code {列label}{操作符中文}{值}}
      * （值原样配置值，IN 顿号连接、BETWEEN v0~v1），多谓词分号连接——如 {@code 审批单号介于1~100;状态等于0}。
      * 无条件/全部不可叙述 → null；越界条件（字段不在清单）跳过该谓词（D39 一致性检查告警对象）。
+     * 操作符扩展轮 D45：原值形态——两参 overload 委托三参（null resolver）。
      */
     public static String toPredicateSummary(String resource, List<PredicateItem> predicates) {
+        return toPredicateSummary(resource, predicates, null);
+    }
+
+    /**
+     * 条件中文摘要（操作符扩展轮 D45 三参形态）：dictResolver 非空且列声明 dictKey 在场时
+     * 值文本逐值译字典标签（译文缺失回退原值）——如 {@code 请假类型等于1} → {@code 请假类型等于事假}；
+     * digest（机器面向）与 wire 回显不经本路径（原值，设计 D45 不翻译面）。
+     */
+    public static String toPredicateSummary(String resource, List<PredicateItem> predicates,
+            BiFunction<String, List<String>, Map<String, String>> dictResolver) {
         if (predicates == null || predicates.isEmpty()) {
             return null;
         }
         List<String> parts = new ArrayList<>();
         for (PredicateItem item : predicates) {
-            String part = predicateSummaryPart(resource, item);
+            String part = predicateSummaryPart(resource, item, dictResolver);
             if (part != null) {
                 parts.add(part);
             }
@@ -169,7 +199,8 @@ public final class DataPermConvert {
         return parts.isEmpty() ? null : String.join(";", parts);
     }
 
-    private static String predicateSummaryPart(String resource, PredicateItem item) {
+    private static String predicateSummaryPart(String resource, PredicateItem item,
+            BiFunction<String, List<String>, Map<String, String>> dictResolver) {
         FilterColumn declared = DataPermResources.findFilterColumn(resource, item.getField());
         PredicateOperatorEnum operator;
         try {
@@ -181,21 +212,45 @@ public final class DataPermConvert {
                 || (operator == PredicateOperatorEnum.BETWEEN && item.getValues().size() < 2)) {
             return null;
         }
+        List<String> values = translateValues(declared, item.getValues(), dictResolver);
         String valueText = switch (operator) {
-            case IN -> String.join("、", item.getValues());
-            case BETWEEN -> item.getValues().get(0) + "~" + item.getValues().get(1);
-            default -> item.getValues().get(0);
+            case IN -> String.join("、", values);
+            case BETWEEN -> values.get(0) + "~" + values.get(1);
+            default -> values.get(0);
         };
         return declared.label() + operator.getLabel() + valueText;
     }
 
-    /** 可过滤列声明 → FilterColumnVo（资源注册表端点出参，契约 §5.2） */
+    /**
+     * 字典值文本（操作符扩展轮 D45，summary/narratives 共用单源）：列声明 dictKey 在场且 resolver
+     * 可用 → 逐值 {@code resolver.apply(dictKey, values).getOrDefault(v, v)}（译文缺失回退原值）；
+     * resolver 异常回退原值列表——显示层 fail-open（与权限域 fail-open 严格区分记档：标签无害）。
+     */
+    public static List<String> translateValues(FilterColumn declared, List<String> values,
+            BiFunction<String, List<String>, Map<String, String>> dictResolver) {
+        if (dictResolver == null || declared.dictKey() == null) {
+            return values;
+        }
+        try {
+            Map<String, String> labels = dictResolver.apply(declared.dictKey(), values);
+            if (labels == null) {
+                return values;
+            }
+            return values.stream().map(v -> labels.getOrDefault(v, v)).toList();
+        } catch (Exception e) {
+            log.error("条件值字典翻译失败（显示层 fail-open 回退原值）：dictKey={}", declared.dictKey(), e);
+            return values;
+        }
+    }
+
+    /** 可过滤列声明 → FilterColumnVo（资源注册表端点出参，契约 §5.2；+dictKey，操作符扩展轮 D45） */
     public static FilterColumnVo toFilterColumnVo(FilterColumn column) {
         FilterColumnVo vo = new FilterColumnVo();
         vo.setField(column.field());
         vo.setColumn(column.column());
         vo.setType(column.type().name());
         vo.setLabel(column.label());
+        vo.setDictKey(column.dictKey());
         return vo;
     }
 
@@ -226,10 +281,11 @@ public final class DataPermConvert {
         return vo;
     }
 
-    /** 规则行条件回显：解析失败 null → 空列表兜底（仅展示语义）+ 中文摘要（无条件 null） */
-    private static void fillPredicates(DataPermRuleVo vo, String resource, List<PredicateItem> predicates) {
+    /** 规则行条件回显：解析失败 null → 空列表兜底（仅展示语义）+ 中文摘要（无条件 null；D45 三参带译文） */
+    private static void fillPredicates(DataPermRuleVo vo, String resource, List<PredicateItem> predicates,
+            BiFunction<String, List<String>, Map<String, String>> dictResolver) {
         vo.setPredicates(predicates == null ? List.of() : predicates);
-        vo.setPredicateSummary(toPredicateSummary(resource, vo.getPredicates()));
+        vo.setPredicateSummary(toPredicateSummary(resource, vo.getPredicates(), dictResolver));
     }
 
     private static List<DataPermExplainVo.ColumnDecisionVo> toColumnDecisionVos(ColumnScope columnScope) {
@@ -260,7 +316,8 @@ public final class DataPermConvert {
      * 判据 1/2 以 rowFilter 为准（行集判定唯一权威 D31）；rowFilter 缺席（手工构造 Decision 的既有
      * 单测路径）回退 dataScope 同义判定——无条件场景两判据等价，五态文案逐字不变（零 diff 红线）。
      */
-    private static String resolveScopeLabel(DataPermDecision decision) {
+    private static String resolveScopeLabel(DataPermDecision decision,
+            BiFunction<String, List<String>, Map<String, String>> dictResolver) {
         RowFilterView view = RowFilterView.of(decision);
         if (view.rowAll()) {
             return "全部";
@@ -269,7 +326,7 @@ public final class DataPermConvert {
             return "无（空范围）";
         }
         if (hasConditionalRule(decision)) {
-            return "条件范围（" + conditionalScopeText(decision) + "）";
+            return "条件范围（" + conditionalScopeText(decision, dictResolver) + "）";
         }
         Set<String> accounts = decision.getDataScope().getAccounts();
         String self = decision.getAccount();
@@ -291,11 +348,12 @@ public final class DataPermConvert {
                 .anyMatch(hit -> hit.getPredicates() != null && !hit.getPredicates().isEmpty());
     }
 
-    /** 条件态摘要：全部命中条件规则的谓词摘要分号连接（§1.6；全不可叙述时空串兜底） */
-    private static String conditionalScopeText(DataPermDecision decision) {
+    /** 条件态摘要：全部命中条件规则的谓词摘要分号连接（§1.6；全不可叙述时空串兜底；D45 三参带译文） */
+    private static String conditionalScopeText(DataPermDecision decision,
+            BiFunction<String, List<String>, Map<String, String>> dictResolver) {
         List<String> parts = new ArrayList<>();
         for (DataPermDecision.HitRule hit : decision.getHitRules()) {
-            String summary = toPredicateSummary(decision.getResource(), hit.getPredicates());
+            String summary = toPredicateSummary(decision.getResource(), hit.getPredicates(), dictResolver);
             if (summary != null) {
                 parts.add(summary);
             }

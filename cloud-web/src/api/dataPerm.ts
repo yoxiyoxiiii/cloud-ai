@@ -5,6 +5,9 @@
  * 谓词增量（契约 2026-10-11-dataperm-predicate-api §2）：规则 = 档位 ∧ 条件组（field/operator/values
  * 三元组，组内 AND、与档位行内 AND）——saveRule/getRuleConfig/pageRule/listResources 四端点 additive
  * 增量随本文件既有函数自然携带（零新函数）；错误码段本轮扩至 3035-3037（谓词契约 §7）
+ * 操作符扩展（契约 2026-10-11-dataperm-operators-api——R7 合并视图，§1.1/§2.3/§5.2）：操作符封闭集
+ * 扩九（+GT/LT/NE/PREFIX）、FilterColumnVo +dictKey（值域字典键）、校验链 v3——端点面零新增，
+ * 亦随本文件既有函数自然携带（零新函数）
  */
 import { request } from '../utils/request'
 import type {
@@ -51,9 +54,11 @@ export function getRuleConfig(query: RuleConfigQuery): Promise<DataPermRuleConfi
 /**
  * 保存规则（契约 §3.3，perms system:dataPerm:save）：upsert 全量覆盖语义——
  * 行规则按 uk 判存 insert/update + 列规则按主体物理全删后批插（空列表仅删不插）。
- * 入参增量 predicates 条件组（谓词契约 §2.3）：null/[] = 无条件（不传即清空条件，随档位保存）；
- * 组内 AND、与档位行内 AND；校验链后端权威——field ∈ filterColumns 3035 / 操作符枚举与同列重复 1002 /
- * 操作符×类型矩阵 3036（STRING 禁 介于/大于等于/小于等于）/ 值形态 3037（格式/数量/有序/长度/条件数 ≤5/IN ≤30）
+ * 入参增量 predicates 条件组（谓词契约 §2.3 + 操作符契约 §2.3 校验链 v3）：null/[] = 无条件（不传即清空条件，随档位保存）；
+ * 组内 AND、与档位行内 AND；校验链后端权威——field ∈ filterColumns 3035（title 自操作符轮可配）/
+ * 操作符枚举（九 name）与同列重复 1002 / 操作符×类型矩阵 3036（STRING 禁 介于/大于等于/小于等于/大于/小于；
+ * NUMBER·DATE·DATETIME 禁 前缀）/ 值形态 3037（格式/数量——GT/LT/NE/PREFIX 单值、BETWEEN 双值有序、
+ * IN ≤30/长度——STRING 类含 PREFIX ≤50/条件数 ≤5/序列化 ≤2000）
  */
 export function saveRule(payload: DataPermRuleSavePayload): Promise<null> {
   return request<null>({ url: '/system/data-perm/rule', method: 'post', data: payload })
@@ -65,9 +70,11 @@ export function deleteRule(id: string): Promise<null> {
 }
 
 /**
- * 资源注册表（契约 §3.5，perms system:dataPerm:list）：全部已注册资源与可配列清单（试点单元素 leave）。
+ * 资源注册表（契约 §3.5，perms system:dataPerm:list）：全部已注册资源与可配列清单。
  * 出参增量 filterColumns 可过滤列双清单之一（谓词契约 §2.4/§1.4：columns=列级可配列 VO 字段名 /
- * filterColumns=行级可过滤列 entity 字段名+类型+中文名）——条件段「列」下拉与类型驱动值输入器的数据源
+ * filterColumns=行级可过滤列 entity 字段名+类型+中文名）——条件段「列」下拉与值输入器的数据源；
+ * 操作符契约 §1.4/§5.2 v2：双清单各 +title（STRING/标题/无字典），FilterColumnVo 增 dictKey
+ * （leaveType→system_leave_type、status→bpmn_approval_status，其余 null——非空列值输入器切字典下拉）
  */
 export function listResources(): Promise<DataPermResourceVo[]> {
   return request<DataPermResourceVo[]>({ url: '/system/data-perm/resources', method: 'get' })

@@ -196,4 +196,172 @@ class RowPredicateTest {
         assertThat(predicate.test("approval")).isTrue();
         assertThat(predicate.test("todo")).isFalse();
     }
+
+    // ---- 扩展轮（D43/D44，2026-10-11）：GT/LT 严格不等、NE 求反、PREFIX 前缀与矩阵外防御 ----
+
+    @Test
+    void number_gtLt_strictBoundary() {
+        RowPredicate gt = numberPredicate(PredicateOperatorEnum.GT, "10");
+        RowPredicate lt = numberPredicate(PredicateOperatorEnum.LT, "10");
+
+        // 开边界：边界值 10 不命中（与 GTE/LTE 闭端成对差异，设计 D44）
+        assertThat(gt.test(10L)).isFalse();
+        assertThat(gt.test(11L)).isTrue();
+        assertThat(gt.test(new BigDecimal("10.5"))).isTrue();
+        assertThat(lt.test(10L)).isFalse();
+        assertThat(lt.test(9L)).isTrue();
+    }
+
+    @Test
+    void number_gt_typedForms_equivalent() {
+        RowPredicate predicate = numberPredicate(PredicateOperatorEnum.GT, "10");
+
+        // VO 字符串形态经 NUMBER 归一器后同样参与严格比较
+        assertThat(predicate.test("11")).isTrue();
+        assertThat(predicate.test("10")).isFalse();
+        assertThat(predicate.test(new BigDecimal("10.0001"))).isTrue();
+    }
+
+    @Test
+    void number_ne_inversion() {
+        RowPredicate predicate = numberPredicate(PredicateOperatorEnum.NE, "2");
+
+        assertThat(predicate.test(1L)).isTrue();
+        assertThat(predicate.test(3)).isTrue();
+        assertThat(predicate.test("2")).isFalse();
+    }
+
+    @Test
+    void number_neNull_neverSatisfied() {
+        // MySQL NULL != 1 不命中（探针 P7）：NE 与其他操作符同向 fail-closed
+        assertThat(numberPredicate(PredicateOperatorEnum.NE, "1").test(null)).isFalse();
+    }
+
+    @Test
+    void number_prefix_matrixOutDefensiveFalse() {
+        // NUMBER×PREFIX 矩阵外组合（配置态 3036 已拦）测试器防御恒 false
+        RowPredicate predicate = numberPredicate(PredicateOperatorEnum.PREFIX, "10");
+
+        assertThat(predicate.test(100L)).isFalse();
+        assertThat(predicate.test(10L)).isFalse();
+    }
+
+    @Test
+    void date_gtLt_strictBoundary() {
+        RowPredicate gt = datePredicate(PredicateOperatorEnum.GT, "2026-01-15");
+        RowPredicate lt = datePredicate(PredicateOperatorEnum.LT, "2026-01-15");
+
+        assertThat(gt.test(LocalDate.of(2026, 1, 15))).isFalse();
+        assertThat(gt.test(LocalDate.of(2026, 1, 16))).isTrue();
+        assertThat(lt.test(LocalDate.of(2026, 1, 15))).isFalse();
+        assertThat(lt.test(LocalDate.of(2026, 1, 14))).isTrue();
+    }
+
+    @Test
+    void date_ne_inversion() {
+        RowPredicate predicate = datePredicate(PredicateOperatorEnum.NE, "2026-01-15");
+
+        assertThat(predicate.test(LocalDate.of(2026, 1, 14))).isTrue();
+        assertThat(predicate.test("2026-01-15")).isFalse();
+    }
+
+    @Test
+    void dateAndDateTime_prefix_matrixOutDefensiveFalse() {
+        // 值仍为合法类型化形态（配置态矩阵 3036 已拦此类组合，此处仅验证测试器 switch 防御分支）
+        assertThat(datePredicate(PredicateOperatorEnum.PREFIX, "2026-01-01")
+                .test(LocalDate.of(2026, 1, 1))).isFalse();
+        assertThat(dateTimePredicate(PredicateOperatorEnum.PREFIX, "2026-01-01 00:00:00")
+                .test(LocalDateTime.of(2026, 1, 1, 0, 0))).isFalse();
+    }
+
+    @Test
+    void dateTime_gtLtStrict_andNe() {
+        RowPredicate gt = dateTimePredicate(PredicateOperatorEnum.GT, "2026-01-01 12:00:00");
+        RowPredicate lt = dateTimePredicate(PredicateOperatorEnum.LT, "2026-01-01 12:00:00");
+        RowPredicate ne = dateTimePredicate(PredicateOperatorEnum.NE, "2026-01-01 12:00:00");
+
+        assertThat(gt.test(LocalDateTime.of(2026, 1, 1, 12, 0, 0))).isFalse();
+        assertThat(gt.test(LocalDateTime.of(2026, 1, 1, 12, 0, 1))).isTrue();
+        assertThat(lt.test(LocalDateTime.of(2026, 1, 1, 12, 0, 0))).isFalse();
+        assertThat(lt.test(LocalDateTime.of(2026, 1, 1, 11, 59, 59))).isTrue();
+        assertThat(ne.test(LocalDateTime.of(2026, 1, 1, 12, 0, 0))).isFalse();
+        assertThat(ne.test(LocalDateTime.of(2026, 1, 1, 12, 0, 1))).isTrue();
+    }
+
+    @Test
+    void string_ne_inversion_ciAndPad() {
+        RowPredicate predicate = stringPredicate(PredicateOperatorEnum.NE, "abc");
+
+        // 规则④求反（探针 P8）：等值判定（ci+stripTrailing）先成立再求反——"ABC " 视为等于 "abc"，NE 不命中
+        assertThat(predicate.test("abc")).isFalse();
+        assertThat(predicate.test("ABC")).isFalse();
+        assertThat(predicate.test("ABC ")).isFalse();
+        assertThat(predicate.test("abd")).isTrue();
+    }
+
+    @Test
+    void string_neNull_neverSatisfied() {
+        assertThat(stringPredicate(PredicateOperatorEnum.NE, "leave").test(null)).isFalse();
+    }
+
+    @Test
+    void string_prefix_caseInsensitive() {
+        RowPredicate predicate = stringPredicate(PredicateOperatorEnum.PREFIX, "E2e");
+
+        assertThat(predicate.test("e2e-leave-1")).isTrue();
+        assertThat(predicate.test("E2E-leave-1")).isTrue();
+        assertThat(predicate.test(" leave")).isFalse();
+        assertThat(predicate.test("xe2e")).isFalse();
+    }
+
+    @Test
+    void string_prefix_entityTrailingSpace_hit() {
+        // 探针 P4：LIKE 'e2e%' 命中列值 'e2e '（前缀比较长度有界，实体值尾随空格无影响）
+        RowPredicate predicate = stringPredicate(PredicateOperatorEnum.PREFIX, "e2e");
+
+        assertThat(predicate.test("e2e ")).isTrue();
+    }
+
+    @Test
+    void string_prefix_prefixTrailingSpace_narrows() {
+        // 探针 P5：配置前缀尾随空格是字面窄化——LIKE 'e2e %' 不命中 'e2e'（PREFIX 非 PAD SPACE，与规则④不对称）
+        RowPredicate predicate = stringPredicate(PredicateOperatorEnum.PREFIX, "e2e ");
+
+        assertThat(predicate.test("e2e")).isFalse();
+        assertThat(predicate.test("e2e x")).isTrue();
+    }
+
+    @Test
+    void string_prefix_wildcardsLiteral() {
+        // %/_ 在测试器侧为字面字符（SQL 侧由三层 REPLACE 转义链保证，设计 D43）
+        RowPredicate percent = stringPredicate(PredicateOperatorEnum.PREFIX, "e2e%");
+        RowPredicate underscore = stringPredicate(PredicateOperatorEnum.PREFIX, "e2e_");
+
+        assertThat(percent.test("e2e%x")).isTrue();
+        assertThat(percent.test("e2ex")).isFalse();
+        assertThat(underscore.test("e2e_x")).isTrue();
+        assertThat(underscore.test("e2ex")).isFalse();
+    }
+
+    @Test
+    void string_prefix_backslashLiteral() {
+        // 反斜杠在 PreparedStatement 参数中零参与（值原样绑定），测试器侧同为字面
+        RowPredicate predicate = stringPredicate(PredicateOperatorEnum.PREFIX, "e2e\\");
+
+        assertThat(predicate.test("e2e\\x")).isTrue();
+        assertThat(predicate.test("e2ex")).isFalse();
+    }
+
+    @Test
+    void string_prefix_nullEntityValue_neverSatisfied() {
+        assertThat(stringPredicate(PredicateOperatorEnum.PREFIX, "e2e").test(null)).isFalse();
+    }
+
+    @Test
+    void string_comparisonOps_matrixOutDefensiveFalse() {
+        // STRING×GTE/GT/LT 矩阵外组合（配置态 3036 已拦）测试器防御恒 false
+        assertThat(stringPredicate(PredicateOperatorEnum.GTE, "a").test("b")).isFalse();
+        assertThat(stringPredicate(PredicateOperatorEnum.GT, "a").test("b")).isFalse();
+        assertThat(stringPredicate(PredicateOperatorEnum.LT, "z").test("b")).isFalse();
+    }
 }

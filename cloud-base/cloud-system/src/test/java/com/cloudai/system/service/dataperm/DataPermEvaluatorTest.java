@@ -60,6 +60,8 @@ class DataPermEvaluatorTest {
     private SysDeptMapper deptMapper;
     @Spy
     private ObjectMapper objectMapper = new ObjectMapper();
+    @Mock
+    private com.cloudai.common.translate.core.TranslationCacheService translationCacheService;
     @InjectMocks
     private DataPermEvaluator evaluator;
 
@@ -560,7 +562,95 @@ class DataPermEvaluatorTest {
         assertThat(decision.getNarratives()).contains("命中条件：单号 介于 1~100", "命中条件：请假类型 等于 1");
     }
 
+    // ---- 操作符扩展轮（D41/D43/D44/D45，2026-10-11）：新操作符 enrichment/digest 符号/narratives 译文 ----
+
+    @Test
+    void evaluate_newOperators_enrichedTyped() {
+        loginAs("userA", 5L);
+        stubConditionalRule("[{\"field\":\"id\",\"operator\":\"GT\",\"values\":[\"100\"]},"
+                + "{\"field\":\"endDate\",\"operator\":\"LT\",\"values\":[\"2026-12-31\"]},"
+                + "{\"field\":\"leaveType\",\"operator\":\"NE\",\"values\":[\"2\"]},"
+                + "{\"field\":\"title\",\"operator\":\"PREFIX\",\"values\":[\"e2e\"]}]");
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // enrichment 类型化对新操作符零分叉：GT/LT/NE/PREFIX 值同走列类型归一器（NUMBER→BigDecimal、
+        // DATE→LocalDate、STRING 原串）；title（D42 新列）注册表定位正常
+        List<com.cloudai.system.api.dataperm.RowPredicate> predicates =
+                decision.getRowFilter().getGroups().get(0).getPredicates();
+        assertThat(predicates).hasSize(4);
+        assertThat(predicates.get(0).getValues().get(0)).isEqualTo(new java.math.BigDecimal("100"));
+        assertThat(predicates.get(1).getValues().get(0)).isEqualTo(java.time.LocalDate.of(2026, 12, 31));
+        assertThat(predicates.get(2).getValues().get(0)).isEqualTo(new java.math.BigDecimal("2"));
+        assertThat(predicates.get(3).getColumn()).isEqualTo("title");
+        assertThat(predicates.get(3).getValues().get(0)).isEqualTo("e2e");
+    }
+
+    @Test
+    void evaluate_observability_digestNewSymbols() {
+        loginAs("userA", 5L);
+        stubConditionalRule("[{\"field\":\"id\",\"operator\":\"GT\",\"values\":[\"100\"]},"
+                + "{\"field\":\"endDate\",\"operator\":\"LT\",\"values\":[\"2026-12-31\"]},"
+                + "{\"field\":\"leaveType\",\"operator\":\"NE\",\"values\":[\"2\"]},"
+                + "{\"field\":\"title\",\"operator\":\"PREFIX\",\"values\":[\"e2e\"]}]");
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // D41 新四符号（契约 §1.6 C5）：> < != ^——值一律原值不翻译（digest 机器面向）；
+        // ∧ 前缀单次，多谓词分号连接（既有形态）
+        verify(logMapper).save(org.mockito.ArgumentMatchers.argThat(row ->
+                row.getRuleDigest().contains(
+                        "∧id>100;end_date<2026-12-31;leave_type!=2;title^e2e")));
+        assertThat(decision.getHitRules().get(0).getPredicates()).hasSize(4);
+    }
+
+    @Test
+    void evaluate_narratives_dictTranslated_digestOriginal() {
+        loginAs("userA", 5L);
+        stubConditionalRule("[{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"1\"]}]");
+        when(translationCacheService.findDictLabels("system_leave_type", List.of("1")))
+                .thenReturn(java.util.Map.of("1", "事假"));
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // D45 双面：narratives 值译标签（请假类型 等于 事假）；digest 原值（leave_type=1）
+        assertThat(decision.getNarratives()).contains("命中条件：请假类型 等于 事假");
+        verify(logMapper).save(org.mockito.ArgumentMatchers.argThat(row ->
+                row.getRuleDigest().contains("∧leave_type=1")));
+    }
+
+    @Test
+    void evaluate_narratives_missingTranslation_fallsBackOriginal() {
+        loginAs("userA", 5L);
+        stubConditionalRule("[{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"1\"]}]");
+        // mock 未打桩 → findDictLabels 返回空 map → 回退原值（译文缺失路径）
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        assertThat(decision.getNarratives()).contains("命中条件：请假类型 等于 1");
+    }
+
+    @Test
+    void evaluate_narratives_nonDictColumn_neverCallsResolver() {
+        loginAs("userA", 5L);
+        stubConditionalRule("[{\"field\":\"title\",\"operator\":\"PREFIX\",\"values\":[\"e2e\"]}]");
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // dictKey=null 列不触 resolver（businessType/title 原值守恒的机制面）
+        verify(translationCacheService, never()).findDictLabels(any(), any());
+        assertThat(decision.getNarratives()).contains("命中条件：标题 前缀 e2e");
+    }
+
     // ---- 脚手架 ----
+
+    /** 扩展轮脚手架：单条用户直绑 SELF+条件规则（条件 JSON 直传落库形态） */
+    private void stubConditionalRule(String predicates) {
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of());
+        when(ruleMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of(
+                rule(7L, 1, 5L, SysDataPermRule.RowScopeEnum.SELF.getCode(), null, predicates)));
+        when(columnMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+    }
 
     private void stubSelfUser(long userId, Long deptId) {
         SysUser self = new SysUser();

@@ -487,6 +487,111 @@ class ApprovalQueryServiceTest {
         verify(hq, never()).singleResult();
     }
 
+    // ---- 操作符扩展轮（D41/D43/D44，2026-10-11）：title PREFIX/NE 行属性判定 + id GT 行集透传 ----
+
+    @Test
+    void findById_titlePrefixMatched_visible() {
+        // ALL+title PREFIX 'annual'：title="annual leave" 前缀命中 → 可见（owner 无关，契约 §4.3 增量）
+        when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
+        PredicateVo titlePrefix = new PredicateVo("title", "title", "PREFIX",
+                FilterColumnTypeEnum.STRING, List.of("annual"));
+        DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
+                List.of(new RowGroupVo(true, List.of(), List.of(titlePrefix))));
+        stubEval(scopeVo, "userA", "detail", "5");
+        stubConfig();
+        when(taskService.getProcessInstanceComments("pid-1")).thenReturn(List.of());
+        when(translationCacheService.findDictLabels(eq("bpmn_approval_status"), anySet()))
+                .thenReturn(Map.of());
+        when(translationCacheService.findUserNames(anySet())).thenReturn(Map.of());
+
+        ApprovalDetailVo detail = service.findById(5L, "userA");
+
+        assertThat(detail.getApproval().getTitle()).isEqualTo("annual leave");
+        verify(dataPermClient, never()).deny(any(DataPermDenyRequest.class));
+    }
+
+    @Test
+    void findById_titlePrefixNotMatched_deniesAndRejects4018() {
+        // 前缀不命中 → 组失败 → 4018 + deny（与 id BETWEEN 不满足同路径）
+        when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
+        PredicateVo titlePrefix = new PredicateVo("title", "title", "PREFIX",
+                FilterColumnTypeEnum.STRING, List.of("zzz"));
+        DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
+                List.of(new RowGroupVo(true, List.of(), List.of(titlePrefix))));
+        stubEval(scopeVo, "userA", "detail", "5");
+        when(dataPermClient.deny(new DataPermDenyRequest("userA", "bpmn_approval", "5")))
+                .thenReturn(R.ok());
+
+        assertThatThrownBy(() -> service.findById(5L, "userA"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(4018);
+        verify(dataPermClient).deny(new DataPermDenyRequest("userA", "bpmn_approval", "5"));
+        verifyNoInteractions(taskService, historyService);
+    }
+
+    @Test
+    void findById_titleNe_valueDifferent_visible() {
+        // title NE 'other'：值不同 → 排除语义放行
+        when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
+        PredicateVo titleNe = new PredicateVo("title", "title", "NE",
+                FilterColumnTypeEnum.STRING, List.of("other"));
+        DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
+                List.of(new RowGroupVo(true, List.of(), List.of(titleNe))));
+        stubEval(scopeVo, "userA", "detail", "5");
+        stubConfig();
+        when(taskService.getProcessInstanceComments("pid-1")).thenReturn(List.of());
+        when(translationCacheService.findDictLabels(eq("bpmn_approval_status"), anySet()))
+                .thenReturn(Map.of());
+        when(translationCacheService.findUserNames(anySet())).thenReturn(Map.of());
+
+        ApprovalDetailVo detail = service.findById(5L, "userA");
+
+        assertThat(detail.getApproval().getId()).isEqualTo(5L);
+        verify(dataPermClient, never()).deny(any(DataPermDenyRequest.class));
+    }
+
+    @Test
+    void findById_titleNe_ciEqualValue_deniesAndRejects4018() {
+        // NE 规则④求反（探针 P8）："ANNUAL LEAVE " 与 "annual leave" ci+尾随空格视为相等 → NE 不满足 → 4018
+        when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
+        PredicateVo titleNe = new PredicateVo("title", "title", "NE",
+                FilterColumnTypeEnum.STRING, List.of("ANNUAL LEAVE "));
+        DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
+                List.of(new RowGroupVo(true, List.of(), List.of(titleNe))));
+        stubEval(scopeVo, "userA", "detail", "5");
+        when(dataPermClient.deny(new DataPermDenyRequest("userA", "bpmn_approval", "5")))
+                .thenReturn(R.ok());
+
+        assertThatThrownBy(() -> service.findById(5L, "userA"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(4018);
+    }
+
+    @Test
+    void pageListMy_idGtPredicate_rowFilterPassedToMapper() {
+        // ALL+id GT 100 条件组：wire 形态 → toRowFilter 类型化（GT/BigDecimal）→ mapper 收组
+        PredicateVo idGt = new PredicateVo("id", "id", "GT",
+                FilterColumnTypeEnum.NUMBER, List.of("100"));
+        DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of("userA"), List.of(), List.of(),
+                List.of(new RowGroupVo(true, List.of(), List.of(idGt))));
+        stubEval(scopeVo, "userA", "list", null);
+        Page<BpmnApproval> page = new Page<>(1, 5);
+        page.setTotal(0);
+        when(approvalMapper.pageList(any(Page.class), argThat(filter ->
+                !filter.isRowAll() && filter.getGroups().size() == 1
+                        && filter.getGroups().get(0).isAllAccounts()
+                        && filter.getGroups().get(0).getPredicates().size() == 1
+                        && "GT".equals(filter.getGroups().get(0).getPredicates().get(0).getOperator())
+                        && filter.getGroups().get(0).getPredicates().get(0).getValues().get(0)
+                                .equals(new java.math.BigDecimal("100"))))).thenReturn(page);
+
+        service.pageListMy(query(), "userA");
+
+        verify(approvalMapper).pageList(any(Page.class), any(RowFilter.class));
+    }
+
     // ---- 脚手架 ----
 
     private PageQuery query() {
