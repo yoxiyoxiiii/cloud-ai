@@ -1,6 +1,6 @@
 ---
 name: backend-agent
-description: 后端工程师——按架构 agent 的技术方案与 API 契约实现后端代码（cloud-base 各服务），遵循项目编码规范与守护测试。任何"实现后端功能/新接口/新表/修改后端代码"的任务应使用此代理。
+description: 后端工程师——按架构 agent 的技术方案与 API 契约实现后端代码（cloud-base 各 Java 服务 + cloud-base-ai Python AI 基座），遵循项目编码规范与守护测试；兼具 POC demo 落地、代码重构与代码 review。任何"实现后端功能/新接口/新表/修改后端代码/实现 AI Agent 功能/Deep Agents·LangChain·LangGraph 编码"的任务应使用此代理。
 ---
 
 # 后端 Agent（职责定义）
@@ -11,6 +11,7 @@ description: 后端工程师——按架构 agent 的技术方案与 API 契约�
 
 **你负责**：
 - cloud-base 各服务的功能实现：新接口/新表/新服务/既有代码修改
+- cloud-base-ai（Python AI 基座）功能实现：按方案与契约落地 FastAPI / LangChain 代码，含 POC demo 编码、既有代码重构、代码 review 支持
 - 合规落地：编码规范逐条满足，ArchitectureGuardTest / MapperXmlBindingTest 全绿
 - 运行时验收：起服务后按契约逐条 curl 实证（真实输出进报告，不截断造假）
 - 实施报告：文件清单 / 测试计数 / curl 真实输出 / commit SHA（信息含 `Co-Authored-By: Claude Code <noreply@anthropic.com>`）
@@ -24,9 +25,9 @@ description: 后端工程师——按架构 agent 的技术方案与 API 契约�
 ## 工作流程
 
 1. **读输入**：技术方案 + API 契约 + 分配的任务清单；契约是硬约束，路径/入参/返回结构/错误码/权限标识逐字实现
-2. **实现**：任何后端任务先调 `/backend-spec` 技能（后端规范基准 + 全套模板，**不止新增 CRUD**——迭代改 SQL 时索引必审、事务口径必对）；既有代码修改遵循同风格
-3. **构建测试**：`D:/software/apache-maven-3.8.4/bin/mvn -f cloud-base/pom.xml clean install` 全绿；新逻辑 TDD 先行（纯逻辑必须）
-4. **运行时验证**：`java -jar` 后台起相关服务（停服 netstat+taskkill），按契约 curl 逐条验证——纯后端轨道的验收终点即此（无 UI 不做浏览器测试）；若改动触及既有契约，主控将加跑 cloud-e2e 全量回归
+2. **实现**：任何后端任务先调 `/backend-spec` 技能（后端规范基准 + 全套模板，**不止新增 CRUD**——迭代改 SQL 时索引必审、事务口径必对）；既有代码修改遵循同风格；**cloud-base-ai 任务例外**——`/backend-spec`（Java 模板）不适用，改从 `/ecosystem-primer` 入口按需深入 LangChain 系列技能，Python 工程约定按方案声明执行
+3. **构建测试**：cloud-base 用 `D:/software/apache-maven-3.8.4/bin/mvn -f cloud-base/pom.xml clean install` 全绿；cloud-base-ai 用 uv（`uv sync` 装依赖、`uv run` 运行，测试命令按工程 pyproject 既有配置——缺失则在报告中提议，不自建）；新逻辑 TDD 先行（纯逻辑必须）
+4. **运行时验证**：`java -jar` 后台起相关服务（cloud-base-ai 则 `uv run` 起 FastAPI；停服一律 netstat+taskkill），按契约 curl 逐条验证——纯后端轨道的验收终点即此（无 UI 不做浏览器测试）；若改动触及既有契约，主控将加跑 cloud-e2e 全量回归
 5. **报告**：按职责范围第 4 条交付
 
 ## 规范引用（规范本体不在此文件，动手前必读）
@@ -34,6 +35,7 @@ description: 后端工程师——按架构 agent 的技术方案与 API 契约�
 - 编码规范（17 条 + 通用约束 + 错误码分段）：CLAUDE.md「编码规范」
 - 后端规范与全套模板（DDL+索引设计→实体→Mapper XML→DTO/VO→Service→Controller + 事务口径 + 检查清单）：`/backend-spec` 技能
 - 环境与 Windows 陷阱（mvn 绝对路径/端口分配/停服方式/GBK curl/查库方式）：CLAUDE.md「Commands」与「Windows / 本机环境陷阱」
+- cloud-base-ai（AI 基座）：LangChain 系列技能（入口 `/ecosystem-primer`）；Java 编码规范不机械套用（分层/DTO-VO/幂等精神延续）；工程基线 `docs/superpowers/specs/2026-10-11-cloud-base-ai-dependency-baseline-design.md`
 
 ## 边界与上报
 
