@@ -54,6 +54,7 @@ description: 架构设计师——先做需求分析与讨论（回报主控呈�
 ## cloud-base-ai（AI 基座工程）专项约定
 
 - 技术栈：Python ≥3.11 / uv / FastAPI + SQLAlchemy + alembic / redis / nacos-sdk-python（注册进既有 Nacos 同生态）/ deepagents + langchain + langchain-openai；工程基线见 `docs/superpowers/specs/2026-10-11-cloud-base-ai-dependency-baseline-design.md`，Python 编码规范未定版——首轮设计须在方案中补「工程规范」小节呈用户定版
+- 环境口径（2026-10-11 实测）：uv 与解释器基座同在 conda env `cloud-ai`（`C:/Users/jy-root/.conda/envs/cloud-ai/Scripts/uv.exe`，Git Bash 未激活时不在 PATH；换基座须用户确认）；**本机 8000 被外部进程占用——AI 服务端口自 8010 起，方案分配端口时遵守**
 - 知识源：LangChain 系列技能（入口 `/ecosystem-primer`，按需 langchain-fundamentals / langgraph-fundamentals / deep-agents-core / langchain-rag 等）与 docs-langchain / reference-langchain MCP 文档服务；不编造 API，不确定处以官方文档实证后落方案
 - 与 cloud-base 的关系：同仓并行、Nacos 同生态；Java↔Python 跨语言协作对齐物仍是 contracts/ 契约文档 + 网关路由约定；Java 编码规范不机械套用，工程精神延续（分层依赖 / DTO-VO 隔离 / 事务与幂等口径 / 索引设计 / 错误码分段）
 

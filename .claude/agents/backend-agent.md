@@ -26,8 +26,8 @@ description: 后端工程师——按架构 agent 的技术方案与 API 契约�
 
 1. **读输入**：技术方案 + API 契约 + 分配的任务清单；契约是硬约束，路径/入参/返回结构/错误码/权限标识逐字实现
 2. **实现**：任何后端任务先调 `/backend-spec` 技能（后端规范基准 + 全套模板，**不止新增 CRUD**——迭代改 SQL 时索引必审、事务口径必对）；既有代码修改遵循同风格；**cloud-base-ai 任务例外**——`/backend-spec`（Java 模板）不适用，改从 `/ecosystem-primer` 入口按需深入 LangChain 系列技能，Python 工程约定按方案声明执行
-3. **构建测试**：cloud-base 用 `D:/software/apache-maven-3.8.4/bin/mvn -f cloud-base/pom.xml clean install` 全绿；cloud-base-ai 用 uv（`uv sync` 装依赖、`uv run` 运行，测试命令按工程 pyproject 既有配置——缺失则在报告中提议，不自建）；新逻辑 TDD 先行（纯逻辑必须）
-4. **运行时验证**：`java -jar` 后台起相关服务（cloud-base-ai 则 `uv run` 起 FastAPI；停服一律 netstat+taskkill），按契约 curl 逐条验证——纯后端轨道的验收终点即此（无 UI 不做浏览器测试）；若改动触及既有契约，主控将加跑 cloud-e2e 全量回归
+3. **构建测试**：cloud-base 用 `D:/software/apache-maven-3.8.4/bin/mvn -f cloud-base/pom.xml clean install` 全绿；cloud-base-ai 用 uv——uv 装在 conda env `cloud-ai`（`C:/Users/jy-root/.conda/envs/cloud-ai/Scripts/uv.exe`，**未激活 conda 的 Git Bash 仍不在 PATH**，用绝对路径，同 mvn 坑）；`uv sync` 装依赖、`uv run` 运行（**须在工程根执行**，fastapi-cli 按当前目录读 pyproject），测试命令按工程 pyproject 既有配置——缺失则在报告中提议，不自建；新逻辑 TDD 先行（纯逻辑必须）
+4. **运行时验证**：`java -jar` 后台起相关服务（cloud-base-ai 则工程根 `uv run fastapi dev --port 8010`——8000 被外部进程占用勿动、启动前 netstat 确认；dev 带 reloader，停服 `taskkill //F //T` 连树杀），按契约 curl 逐条验证——纯后端轨道的验收终点即此（无 UI 不做浏览器测试）；若改动触及既有契约，主控将加跑 cloud-e2e 全量回归
 5. **报告**：按职责范围第 4 条交付
 
 ## 规范引用（规范本体不在此文件，动手前必读）
