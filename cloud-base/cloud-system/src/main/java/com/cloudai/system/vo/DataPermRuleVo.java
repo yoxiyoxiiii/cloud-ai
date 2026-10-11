@@ -1,13 +1,16 @@
 package com.cloudai.system.vo;
 
+import com.cloudai.system.dto.PredicateItem;
 import lombok.Data;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 数据权限规则分页行（契约 §6.2）：subjectName/columns 由服务层补齐（已删主体降级 "(已删除)"）。
+ * 数据权限规则分页行（契约 §6.2 + 谓词轮 §2.1 增量）：subjectName/columns 由服务层补齐
+ * （已删主体降级 "(已删除)"）；predicates/predicateSummary 自实体条件组解析（无条件 []/null）。
  */
 @Data
 public class DataPermRuleVo implements Serializable {
@@ -34,6 +37,12 @@ public class DataPermRuleVo implements Serializable {
 
     /** CUSTOM 档账号集合（其余档 []） */
     private List<String> customAccounts;
+
+    /** 条件组配置原样回显（无条件 []；组内 AND，与档位行内 AND——契约 §2.1） */
+    private List<PredicateItem> predicates = new ArrayList<>();
+
+    /** 条件中文摘要（契约 §1.6，如 请假类型等于1；无条件 null） */
+    private String predicateSummary;
 
     /** 列规则（无则 []） */
     private List<ColumnRuleVo> columns;

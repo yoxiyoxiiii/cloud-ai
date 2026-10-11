@@ -428,6 +428,10 @@ function columnDecisionRowOf(row: unknown): DataPermExplainVo['columns'][number]
               <span>{{ ruleRowOf(row).customAccounts.length > 0 ? ruleRowOf(row).customAccounts.length : '-' }}</span>
             </template>
           </el-table-column>
+          <!-- 条件中文摘要（谓词契约 §2.1 增量：后端单源生成，无条件 null → '-'；多谓词分号连接可较长） -->
+          <el-table-column label="条件" min-width="150" show-overflow-tooltip>
+            <template #default="{ row }">{{ ruleRowOf(row).predicateSummary ?? '-' }}</template>
+          </el-table-column>
           <el-table-column label="列规则" min-width="140">
             <template #default="{ row }">{{ columnSummaryOf(ruleRowOf(row).columns) }}</template>
           </el-table-column>

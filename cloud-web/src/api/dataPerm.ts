@@ -2,6 +2,9 @@
  * 数据权限接口（契约 2026-10-10-data-permission-api §3，cloud-system，网关前缀 /system）
  * 注意：id 均为字符串（Long→String）；错误码 3031-3034 归数据权限域（契约 §8）
  * 规则即时生效（每请求实时求值，无快照无缓存——与功能权限的登录快照语义不同，契约 §1）
+ * 谓词增量（契约 2026-10-11-dataperm-predicate-api §2）：规则 = 档位 ∧ 条件组（field/operator/values
+ * 三元组，组内 AND、与档位行内 AND）——saveRule/getRuleConfig/pageRule/listResources 四端点 additive
+ * 增量随本文件既有函数自然携带（零新函数）；错误码段本轮扩至 3035-3037（谓词契约 §7）
  */
 import { request } from '../utils/request'
 import type {
@@ -20,7 +23,10 @@ import type {
   SubjectOptionVo,
 } from '../types/api'
 
-/** 规则分页（契约 §3.1，perms system:dataPerm:list）：动态筛选组合，id 倒序；服务层补 subjectName */
+/**
+ * 规则分页（契约 §3.1，perms system:dataPerm:list）：动态筛选组合，id 倒序；服务层补 subjectName。
+ * 行出参增量 predicates + predicateSummary（谓词契约 §2.1：条件组原样与后端单源中文摘要，无条件 [] / null）
+ */
 export function pageRule(query: DataPermRulePageQuery): Promise<PageResult<DataPermRuleVo>> {
   return request<PageResult<DataPermRuleVo>>({
     url: '/system/data-perm/rule/page',
@@ -31,7 +37,8 @@ export function pageRule(query: DataPermRulePageQuery): Promise<PageResult<DataP
 
 /**
  * 规则配置回显（契约 §3.2，perms system:dataPerm:list）：三项全必填；
- * 无行规则返回 configured=false 且字段默认（前端弹窗据此走新增态）；主体无效 3032 / 资源非法 3034
+ * 无行规则返回 configured=false 且字段默认（前端弹窗据此走新增态）；主体无效 3032 / 资源非法 3034。
+ * 出参增量 predicates + predicateSummary（谓词契约 §2.2：configured=false 时 predicates=[]）——弹窗条件段回显依据
  */
 export function getRuleConfig(query: RuleConfigQuery): Promise<DataPermRuleConfigVo> {
   return request<DataPermRuleConfigVo>({
@@ -43,7 +50,10 @@ export function getRuleConfig(query: RuleConfigQuery): Promise<DataPermRuleConfi
 
 /**
  * 保存规则（契约 §3.3，perms system:dataPerm:save）：upsert 全量覆盖语义——
- * 行规则按 uk 判存 insert/update + 列规则按主体物理全删后批插（空列表仅删不插）
+ * 行规则按 uk 判存 insert/update + 列规则按主体物理全删后批插（空列表仅删不插）。
+ * 入参增量 predicates 条件组（谓词契约 §2.3）：null/[] = 无条件（不传即清空条件，随档位保存）；
+ * 组内 AND、与档位行内 AND；校验链后端权威——field ∈ filterColumns 3035 / 操作符枚举与同列重复 1002 /
+ * 操作符×类型矩阵 3036（STRING 禁 介于/大于等于/小于等于）/ 值形态 3037（格式/数量/有序/长度/条件数 ≤5/IN ≤30）
  */
 export function saveRule(payload: DataPermRuleSavePayload): Promise<null> {
   return request<null>({ url: '/system/data-perm/rule', method: 'post', data: payload })
@@ -54,7 +64,11 @@ export function deleteRule(id: string): Promise<null> {
   return request<null>({ url: `/system/data-perm/rule/${id}`, method: 'delete' })
 }
 
-/** 资源注册表（契约 §3.5，perms system:dataPerm:list）：全部已注册资源与可配列清单（试点单元素 leave） */
+/**
+ * 资源注册表（契约 §3.5，perms system:dataPerm:list）：全部已注册资源与可配列清单（试点单元素 leave）。
+ * 出参增量 filterColumns 可过滤列双清单之一（谓词契约 §2.4/§1.4：columns=列级可配列 VO 字段名 /
+ * filterColumns=行级可过滤列 entity 字段名+类型+中文名）——条件段「列」下拉与类型驱动值输入器的数据源
+ */
 export function listResources(): Promise<DataPermResourceVo[]> {
   return request<DataPermResourceVo[]>({ url: '/system/data-perm/resources', method: 'get' })
 }

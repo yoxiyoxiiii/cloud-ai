@@ -26,17 +26,129 @@
     </select>
 
     <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT；
-         组件化轮（契约 dataperm-component §3.1）：行集=数据权限求值范围——all=true 过滤豁免，
-         否则账号白名单 IN；IN 命中 idx_apply_user(apply_user, deleted)（range scan）；
+         谓词轮（设计 D33/契约 §4.1）：行集 = RowFilter 组间 OR——rowAll=true 过滤豁免；
+         组 = (allAccounts || apply_user IN accounts) AND 组谓词全过（值类型化绑定，D33）。
+         列名硬编码 choose 分支是字符串占位禁令（守护测试禁 dollar 占位）的必然对价
+         （businessType STRING 仅 EQ/IN 两支——矩阵违例组合配置态已 3036 拦截，
+         otherwise 1 = 0 为纵深防御 fail-closed）；
+         IN 命中 idx_apply_user(apply_user, deleted)（range scan）；
          空集范围 Service 短路不达此处（防 IN ()） -->
     <select id="pageList" resultType="com.cloudai.bpmn.entity.BpmnApproval">
         SELECT <include refid="allColumns"/>
           FROM bpmn_approval
          WHERE deleted = 0
-         <if test="scope.all == false">
-             AND apply_user IN
-             <foreach collection="scope.accounts" item="account" open="(" separator="," close=")">
-                 #{account}
+         <if test="filter.rowAll == false">
+             AND
+             <foreach collection="filter.groups" item="grp" open="(" separator=" OR " close=")">
+                 <choose>
+                     <when test="grp.allAccounts">
+                         1 = 1
+                     </when>
+                     <otherwise>
+                         apply_user IN
+                         <foreach collection="grp.accounts" item="account" open="(" separator="," close=")">
+                             #{account}
+                         </foreach>
+                     </otherwise>
+                 </choose>
+                 <foreach collection="grp.predicates" item="p">
+                     <choose>
+                         <when test="p.field == 'id'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND id = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND id IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <when test="p.operator == 'BETWEEN'">
+                                     AND id BETWEEN #{p.values[0]} AND #{p.values[1]}
+                                 </when>
+                                 <when test="p.operator == 'GTE'">
+                                     AND id &gt;= #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LTE'">
+                                     AND id &lt;= #{p.values[0]}
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+                         <when test="p.field == 'status'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND status = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND status IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <when test="p.operator == 'BETWEEN'">
+                                     AND status BETWEEN #{p.values[0]} AND #{p.values[1]}
+                                 </when>
+                                 <when test="p.operator == 'GTE'">
+                                     AND status &gt;= #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LTE'">
+                                     AND status &lt;= #{p.values[0]}
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+                         <when test="p.field == 'businessType'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND business_type = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND business_type IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+                         <when test="p.field == 'createTime'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND create_time = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND create_time IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <when test="p.operator == 'BETWEEN'">
+                                     AND create_time BETWEEN #{p.values[0]} AND #{p.values[1]}
+                                 </when>
+                                 <when test="p.operator == 'GTE'">
+                                     AND create_time &gt;= #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LTE'">
+                                     AND create_time &lt;= #{p.values[0]}
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+                         <otherwise>
+                             AND 1 = 0
+                         </otherwise>
+                     </choose>
+                 </foreach>
              </foreach>
          </if>
          ORDER BY id DESC

@@ -1,5 +1,6 @@
 package com.cloudai.system.vo;
 
+import com.cloudai.system.dto.PredicateItem;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -7,7 +8,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 模拟解释出参（契约 §6.7）：以任意账号身份复算的决策全过程（不执行业务查询、不留痕）。
+ * 模拟解释出参（契约 §6.7 + 谓词轮 §2.5 增量）：以任意账号身份复算的决策全过程
+ * （不执行业务查询、不留痕）；HitRuleVo 增条件组原样回显、narratives 增条件句。
  */
 @Data
 public class DataPermExplainVo implements Serializable {
@@ -35,10 +37,10 @@ public class DataPermExplainVo implements Serializable {
     /** 列决策（无动作 []） */
     private List<ColumnDecisionVo> columns = new ArrayList<>();
 
-    /** 中文解释句（每命中规则一句 + 收敛结论 + 列结论） */
+    /** 中文解释句（每命中规则一句 + 每条件一句 + 收敛结论 + 列结论） */
     private List<String> narratives = new ArrayList<>();
 
-    /** 命中规则明细：ruleId/subjectType/subjectName/rowScope/customCount/expandedCount */
+    /** 命中规则明细：ruleId/subjectType/subjectName/rowScope/customCount/expandedCount/predicates */
     @Data
     public static class HitRuleVo implements Serializable {
 
@@ -61,6 +63,9 @@ public class DataPermExplainVo implements Serializable {
 
         /** 该规则展开账号数 */
         private int expandedCount;
+
+        /** 条件组配置原样回显（无条件 []——契约 §2.5） */
+        private List<PredicateItem> predicates = new ArrayList<>();
     }
 
     /** 列决策项：columnKey / action（0 隐藏 1 脱敏） */

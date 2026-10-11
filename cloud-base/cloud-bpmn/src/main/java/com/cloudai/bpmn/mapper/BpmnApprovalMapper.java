@@ -3,7 +3,7 @@ package com.cloudai.bpmn.mapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.bpmn.entity.BpmnApproval;
-import com.cloudai.system.api.dataperm.DataScope;
+import com.cloudai.system.api.dataperm.RowFilter;
 import org.apache.ibatis.annotations.Param;
 
 import java.time.LocalDateTime;
@@ -23,10 +23,11 @@ public interface BpmnApprovalMapper {
                                 @Param("businessKey") String businessKey);
 
     /**
-     * 我的审批分页：无 LIMIT，由 PaginationInnerInterceptor 追加；行集按数据权限 scope 过滤
-     * （契约 dataperm-component §3.1：全部档无账号条件全量、白名单档账号 IN、空集范围 Service 层短路不达库）。
+     * 我的审批分页：无 LIMIT，由 PaginationInnerInterceptor 追加；行集按数据权限 filter 过滤
+     * （谓词轮契约 §4.1/D33：RowFilter 组间 OR——rowAll 豁免全量、组=(allAccounts || apply_user
+     * IN accounts) AND 组谓词全过；空集范围 Service 层短路不达库）。
      */
-    IPage<BpmnApproval> pageList(Page<BpmnApproval> page, @Param("scope") DataScope scope);
+    IPage<BpmnApproval> pageList(Page<BpmnApproval> page, @Param("filter") RowFilter filter);
 
     /** 批量按业务键查（/inner status-list 纠偏回源；单批 ≤100 由调用方分批保证） */
     List<BpmnApproval> listByBusinessKeys(@Param("businessType") String businessType,

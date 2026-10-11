@@ -8,7 +8,8 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
 import com.cloudai.system.api.dataperm.DataPermColumnApplier;
 import com.cloudai.system.api.dataperm.DataPermOperation;
-import com.cloudai.system.api.dataperm.DataScope;
+import com.cloudai.system.api.dataperm.EntityFieldResolver;
+import com.cloudai.system.api.dataperm.RowFilter;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
@@ -31,7 +32,8 @@ import java.util.Set;
 /**
  * 请假读路径（数据权限轮契约 2026-10-10-data-permission-api §4 取代版）：
  * status/approvalId 仍 JOIN approval_projection 派生（投影轮语义不变）；
- * 行集与列出参改由数据权限求值决定（D5 显式编程式：Service 求值 → mapper 收 DataScope 参数）——
+ * 行集与列出参改由数据权限求值决定（D5 显式编程式：Service 求值 → mapper 收 RowFilter 参数——
+ * 谓词轮 D33 起 DataScope 参数退役，行集判定唯一权威 = rowFilter；detail 行属性判定 D34）——
  * 列表恒回填 applyUserName/approverName（管理员视角辨识申请人），title/reason 可能 null 或 ***
  * （列级隐藏/脱敏）；详情行级判定 + IDOR 收口（3026 + deny 留痕，D13）。
  * 列应用经通用反射工具 DataPermColumnApplier（重构轮 D16），行为与手写版逐字段等价。
@@ -59,18 +61,19 @@ public class LeaveManageService {
     private final DataPermEvaluator dataPermEvaluator;
 
     /**
-     * 请假分页（契约 §4.1）：按当前登录人数据权限求值——全部档全量、空集档短路空页（不查库）、
-     * 白名单档按账号 IN；行内姓名批量回填 + 列级动作应用（title/reason）。
+     * 请假分页（契约 §4.1，谓词轮 D33 改型）：按当前登录人数据权限求值——rowAll 豁免全量、
+     * 空集档短路空页（不查库）、否则组间 OR（账号 IN ∧ 组谓词）；行内姓名批量回填 +
+     * 列级动作应用（title/reason）。DataScope 参数退役，行集判定唯一权威 = rowFilter（D31）。
      */
     public PageResult<SysLeaveVo> pageList(PageQuery query) {
         DataPermDecision decision = dataPermEvaluator.evaluate(
                 DataPermResources.LEAVE, DataPermOperation.LIST, null);
-        DataScope scope = decision.getDataScope();
-        if (scope.isEmptyScope()) {
+        RowFilter filter = decision.getRowFilter();
+        if (filter.isEmptyScope()) {
             return PageResult.of(0, List.of());
         }
         IPage<SysLeaveVo> page = leaveMapper.pageList(
-                new Page<>(query.getPageNum(), query.getPageSize()), BUSINESS_TYPE_LEAVE, scope);
+                new Page<>(query.getPageNum(), query.getPageSize()), BUSINESS_TYPE_LEAVE, filter);
         List<SysLeaveVo> rows = page.getRecords();
         fillListNames(rows);
         rows.forEach(row -> DataPermColumnApplier.apply(row, decision.getColumnScope()));
@@ -88,7 +91,7 @@ public class LeaveManageService {
         }
         DataPermDecision decision = dataPermEvaluator.evaluate(
                 DataPermResources.LEAVE, DataPermOperation.DETAIL, String.valueOf(id));
-        if (!decision.getDataScope().allows(vo.getApplyUser())) {
+        if (!decision.getRowFilter().allowsDetail(vo.getApplyUser(), EntityFieldResolver.of(vo))) {
             dataPermEvaluator.logDeny(SecurityUtils.currentAccount(), DataPermResources.LEAVE, String.valueOf(id));
             throw new BusinessException(ERR_LEAVE_NO_ACCESS, "无权访问该数据");
         }

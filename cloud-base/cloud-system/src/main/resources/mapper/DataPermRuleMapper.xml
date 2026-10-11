@@ -5,7 +5,7 @@
     <!-- 物理删除表（设计 D9）：无 deleted 列，语句无 deleted 条件；
          审计四列由 Service 显式传参（插入四值 / 更新两值），同手写 SQL 全局约定 -->
     <sql id="allColumns">
-        id, resource, subject_type, subject_id, row_scope, custom_accounts,
+        id, resource, subject_type, subject_id, row_scope, custom_accounts, predicates,
         create_by, create_time, update_by, update_time
     </sql>
 
@@ -48,6 +48,13 @@
           FROM sys_data_perm_rule
     </select>
 
+    <!-- 一致性检查第三维度（谓词轮 D39）：全表规则（predicates 逐条解析/字段越界检查，启动一次性全扫） -->
+    <select id="listAll" resultType="com.cloudai.system.entity.SysDataPermRule">
+        SELECT <include refid="allColumns"/>
+          FROM sys_data_perm_rule
+         ORDER BY id ASC
+    </select>
+
     <!-- 规则分页：动态筛选组合（resource 非法值宽松语义——不报错自然返回空集，契约 §3.1） -->
     <select id="pageList" resultType="com.cloudai.system.entity.SysDataPermRule">
         SELECT <include refid="allColumns"/>
@@ -67,17 +74,18 @@
     </select>
 
     <insert id="save" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO sys_data_perm_rule (resource, subject_type, subject_id, row_scope, custom_accounts,
+        INSERT INTO sys_data_perm_rule (resource, subject_type, subject_id, row_scope, custom_accounts, predicates,
                                         create_by, create_time, update_by, update_time)
-        VALUES (#{resource}, #{subjectType}, #{subjectId}, #{rowScope}, #{customAccounts},
+        VALUES (#{resource}, #{subjectType}, #{subjectId}, #{rowScope}, #{customAccounts}, #{predicates},
                 #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
     </insert>
 
-    <!-- upsert 更新分支：档位与账号集合整体覆盖 + update 审计两值 -->
+    <!-- upsert 更新分支：档位与账号集合/条件组整体覆盖 + update 审计两值 -->
     <update id="update">
         UPDATE sys_data_perm_rule
            SET row_scope = #{rowScope},
                custom_accounts = #{customAccounts},
+               predicates = #{predicates},
                update_by = #{updateBy},
                update_time = #{updateTime}
          WHERE id = #{id}

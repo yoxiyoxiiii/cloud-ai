@@ -1,13 +1,18 @@
 package com.cloudai.system.convert;
 
 import com.cloudai.system.api.dataperm.ColumnScope;
+import com.cloudai.system.api.dataperm.FilterColumn;
+import com.cloudai.system.api.dataperm.PredicateOperatorEnum;
+import com.cloudai.system.dto.PredicateItem;
 import com.cloudai.system.entity.SysDataPermColumn;
 import com.cloudai.system.entity.SysDataPermLog;
 import com.cloudai.system.entity.SysDataPermRule;
 import com.cloudai.system.service.dataperm.DataPermDecision;
+import com.cloudai.system.service.dataperm.DataPermResources;
 import com.cloudai.system.vo.DataPermExplainVo;
 import com.cloudai.system.vo.DataPermLogVo;
 import com.cloudai.system.vo.DataPermRuleVo;
+import com.cloudai.system.vo.FilterColumnVo;
 import com.cloudai.system.vo.MyScopeVo;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,7 +24,9 @@ import java.util.Set;
 
 /**
  * 数据权限域转换（原生 setter 逐字段，禁三方拷贝工具）：规则分页行 / 配置回显 /
- * 留痕行 / 模拟解释 / 自查摘要 + customAccounts JSON 编解码（读路径降级空集）。
+ * 留痕行 / 模拟解释 / 自查摘要 + customAccounts/predicates JSON 编解码
+ * （customAccounts 读路径降级空集；predicates 解析失败返回 null 由求值器按 D39 整规则不授权，
+ * 回显场景调用方自行空列表兜底——两口径刻意分流，见 {@link #parsePredicates}）。
  */
 @Slf4j
 public final class DataPermConvert {
@@ -29,7 +36,7 @@ public final class DataPermConvert {
     private DataPermConvert() {
     }
 
-    /** 规则分页行（subjectName/columns/customAccounts 由 Service 批量补齐后传入） */
+    /** 规则分页行（subjectName/columns/customAccounts 由 Service 批量补齐后传入；predicates/摘要自实体解析） */
     public static DataPermRuleVo toRuleVo(SysDataPermRule rule, String subjectName,
                                           List<String> customAccounts, List<DataPermRuleVo.ColumnRuleVo> columns) {
         DataPermRuleVo vo = new DataPermRuleVo();
@@ -41,6 +48,7 @@ public final class DataPermConvert {
         vo.setRowScope(rule.getRowScope());
         vo.setCustomAccounts(customAccounts == null ? List.of() : customAccounts);
         vo.setColumns(columns == null ? List.of() : columns);
+        fillPredicates(vo, rule.getResource(), parsePredicates(rule.getPredicates()));
         vo.setUpdateBy(rule.getUpdateBy());
         vo.setUpdateTime(rule.getUpdateTime());
         return vo;
@@ -112,6 +120,85 @@ public final class DataPermConvert {
         }
     }
 
+    /**
+     * predicates JSON 数组串 → 条件三元组列表（谓词轮 D30/D39）：null/空白 → 空列表（无条件）；
+     * <b>解析失败返回 null</b>——与 {@link #parseCustomAccounts} 的空列表降级刻意分流：
+     * 空列表=无条件（授权语义放宽位），坏数据降级空列表即 fail-open；求值器以 null 为
+     * 「该规则条件恒不满足、整规则不授权」信号（D39 fail-closed）。回显场景（rule/config VO）
+     * 调用方对 null 空列表兜底——仅展示无授权语义。
+     */
+    public static List<PredicateItem> parsePredicates(String json) {
+        if (json == null || json.isBlank()) {
+            return List.of();
+        }
+        try {
+            List<PredicateItem> list = OBJECT_MAPPER.readValue(json, new TypeReference<List<PredicateItem>>() {
+            });
+            return list == null ? List.of() : list;
+        } catch (Exception e) {
+            log.error("predicates 解析失败（求值侧整规则不授权 D39 / 回显侧空列表兜底）：{}", json, e);
+            return null;
+        }
+    }
+
+    /** 条件三元组列表 → predicates JSON（落库承载；≤2000 上限由配置校验链 3037 先行把守） */
+    public static String toPredicatesJson(List<PredicateItem> predicates) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(predicates == null ? List.of() : predicates);
+        } catch (Exception e) {
+            throw new IllegalStateException("predicates 序列化失败", e);
+        }
+    }
+
+    /**
+     * 条件中文摘要（契约 §1.6，config/rule/my-scope 共用）：每谓词 {@code {列label}{操作符中文}{值}}
+     * （值原样配置值，IN 顿号连接、BETWEEN v0~v1），多谓词分号连接——如 {@code 审批单号介于1~100;状态等于0}。
+     * 无条件/全部不可叙述 → null；越界条件（字段不在清单）跳过该谓词（D39 一致性检查告警对象）。
+     */
+    public static String toPredicateSummary(String resource, List<PredicateItem> predicates) {
+        if (predicates == null || predicates.isEmpty()) {
+            return null;
+        }
+        List<String> parts = new ArrayList<>();
+        for (PredicateItem item : predicates) {
+            String part = predicateSummaryPart(resource, item);
+            if (part != null) {
+                parts.add(part);
+            }
+        }
+        return parts.isEmpty() ? null : String.join(";", parts);
+    }
+
+    private static String predicateSummaryPart(String resource, PredicateItem item) {
+        FilterColumn declared = DataPermResources.findFilterColumn(resource, item.getField());
+        PredicateOperatorEnum operator;
+        try {
+            operator = PredicateOperatorEnum.of(item.getOperator());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        if (declared == null || item.getValues() == null || item.getValues().isEmpty()
+                || (operator == PredicateOperatorEnum.BETWEEN && item.getValues().size() < 2)) {
+            return null;
+        }
+        String valueText = switch (operator) {
+            case IN -> String.join("、", item.getValues());
+            case BETWEEN -> item.getValues().get(0) + "~" + item.getValues().get(1);
+            default -> item.getValues().get(0);
+        };
+        return declared.label() + operator.getLabel() + valueText;
+    }
+
+    /** 可过滤列声明 → FilterColumnVo（资源注册表端点出参，契约 §5.2） */
+    public static FilterColumnVo toFilterColumnVo(FilterColumn column) {
+        FilterColumnVo vo = new FilterColumnVo();
+        vo.setField(column.field());
+        vo.setColumn(column.column());
+        vo.setType(column.type().name());
+        vo.setLabel(column.label());
+        return vo;
+    }
+
     /** 列规则实体列表 → ColumnRuleVo 列表（id 升序入参，保序转换） */
     public static List<DataPermRuleVo.ColumnRuleVo> toColumnRuleVos(List<SysDataPermColumn> columns) {
         List<DataPermRuleVo.ColumnRuleVo> result = new ArrayList<>();
@@ -135,7 +222,14 @@ public final class DataPermConvert {
         vo.setRowScope(hit.getRowScope());
         vo.setCustomCount(hit.getCustomCount());
         vo.setExpandedCount(hit.getExpandedCount());
+        vo.getPredicates().addAll(hit.getPredicates() == null ? List.of() : hit.getPredicates());
         return vo;
+    }
+
+    /** 规则行条件回显：解析失败 null → 空列表兜底（仅展示语义）+ 中文摘要（无条件 null） */
+    private static void fillPredicates(DataPermRuleVo vo, String resource, List<PredicateItem> predicates) {
+        vo.setPredicates(predicates == null ? List.of() : predicates);
+        vo.setPredicateSummary(toPredicateSummary(resource, vo.getPredicates()));
     }
 
     private static List<DataPermExplainVo.ColumnDecisionVo> toColumnDecisionVos(ColumnScope columnScope) {
@@ -156,21 +250,26 @@ public final class DataPermConvert {
     }
 
     /**
-     * scopeLabel 五态判定（主控 2026-10-10 终裁判定序：按命中档位语义分类，非按展开结果形状——
-     * scopeLabel 是排查锚点，反映「配置了什么档」而非「展开后集合长什么样」；「仅自己」专属 SELF 档/无规则命中：
-     * 部门档展开恰={自己}时若标「仅自己」会误导排查以为未配规则，且部门进人后档位标签漂移，
-     * 部门档无论展开几人一律「指定范围」）：
-     * 1 全部档 → 全部；2 空集 → 无（空范围）；
-     * 3 命中规则含任一部门档（DEPT/DEPT_AND_CHILD）→ 指定范围（N 人）（N=accounts.size()，N=1 亦然——部门档语义优先于展开形状）；
-     * 4 命中规则含任一 CUSTOM 档 → 集合含自己 → 自定义范围（含自己，共 N 人）；不含自己 → 指定范围（N 人）；
-     * 5 兜底（部门/CUSTOM 均未命中，只剩 SELF 档或无规则）→ 仅自己。
+     * scopeLabel 判定序 v2（契约 §6，2026-10-11 谓词轮语义变更——无条件五态判定序与文案逐字不变）：
+     * 1 行范围豁免（任一 ALL 档<b>无条件</b>规则命中）→ 全部；
+     * 2 行范围空集（无任何可匹配组，判据 rowFilter.isEmptyScope——ALL+条件用户 dataScope 空但行集非空）→ 无（空范围）；
+     * 3 任一命中规则含条件 → 条件范围（{条件中文摘要}）——全部命中条件规则的谓词摘要分号连接（§1.6）；
+     * 4 命中任一部门档（DEPT/DEPT_AND_CHILD）→ 指定范围（N 人）（N=1 亦然——部门档语义优先于展开形状）；
+     * 5 命中任一 CUSTOM 档 → 含自己 → 自定义范围（含自己，共 N 人）；不含自己 → 指定范围（N 人）；
+     * 6 兜底（只剩 SELF 档或无规则）→ 仅自己。
+     * 判据 1/2 以 rowFilter 为准（行集判定唯一权威 D31）；rowFilter 缺席（手工构造 Decision 的既有
+     * 单测路径）回退 dataScope 同义判定——无条件场景两判据等价，五态文案逐字不变（零 diff 红线）。
      */
     private static String resolveScopeLabel(DataPermDecision decision) {
-        if (decision.getDataScope().isAll()) {
+        RowFilterView view = RowFilterView.of(decision);
+        if (view.rowAll()) {
             return "全部";
         }
-        if (decision.getDataScope().isEmptyScope()) {
+        if (view.empty()) {
             return "无（空范围）";
+        }
+        if (hasConditionalRule(decision)) {
+            return "条件范围（" + conditionalScopeText(decision) + "）";
         }
         Set<String> accounts = decision.getDataScope().getAccounts();
         String self = decision.getAccount();
@@ -184,6 +283,40 @@ public final class DataPermConvert {
             return "指定范围（" + accounts.size() + " 人）";
         }
         return "仅自己";
+    }
+
+    /** 命中规则是否含条件（predicates 非空）——条件态判据（§6 第 3 位） */
+    private static boolean hasConditionalRule(DataPermDecision decision) {
+        return decision.getHitRules().stream()
+                .anyMatch(hit -> hit.getPredicates() != null && !hit.getPredicates().isEmpty());
+    }
+
+    /** 条件态摘要：全部命中条件规则的谓词摘要分号连接（§1.6；全不可叙述时空串兜底） */
+    private static String conditionalScopeText(DataPermDecision decision) {
+        List<String> parts = new ArrayList<>();
+        for (DataPermDecision.HitRule hit : decision.getHitRules()) {
+            String summary = toPredicateSummary(decision.getResource(), hit.getPredicates());
+            if (summary != null) {
+                parts.add(summary);
+            }
+        }
+        return String.join(";", parts);
+    }
+
+    /**
+     * rowFilter/dataScope 双判据视图（label v2 内部工具）：rowFilter 在场以其为准（D31 行集唯一权威）；
+     * 缺席（既有单测手工构造 Decision）回退 dataScope——无条件场景等价，防御 NPE 而非语义分叉。
+     */
+    private record RowFilterView(boolean rowAll, boolean empty) {
+
+        static RowFilterView of(DataPermDecision decision) {
+            if (decision.getRowFilter() != null) {
+                return new RowFilterView(decision.getRowFilter().isRowAll(),
+                        decision.getRowFilter().isEmptyScope());
+            }
+            return new RowFilterView(decision.getDataScope().isAll(),
+                    decision.getDataScope().isEmptyScope());
+        }
     }
 
     /** 命中规则是否含部门档（DEPT/DEPT_AND_CHILD）——枚举常量引用，禁魔法数（编码规范 8） */

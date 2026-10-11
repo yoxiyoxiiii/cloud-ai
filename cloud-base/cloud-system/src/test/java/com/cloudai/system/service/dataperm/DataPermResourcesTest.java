@@ -1,6 +1,8 @@
 package com.cloudai.system.service.dataperm;
 
 import com.cloudai.common.core.exception.BusinessException;
+import com.cloudai.system.api.dataperm.FilterColumn;
+import com.cloudai.system.api.dataperm.FilterColumnTypeEnum;
 import com.cloudai.system.vo.SysLeaveVo;
 import org.junit.jupiter.api.Test;
 
@@ -9,6 +11,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.catchThrowableOfType;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * 注册表 Class 化升级单测（设计 D15/D17，红绿两态）：绿——leave 注册与五个公共 API
@@ -110,5 +113,43 @@ class DataPermResourcesTest {
                 IllegalStateException.class);
 
         assertThat(ex.getMessage()).contains("createTime").contains("SysLeaveVo");
+    }
+
+    // ---- 谓词轮（D32）：可过滤列清单（条件配置 3035 校验与求值 enrichment 的数据源） ----
+
+    @Test
+    void leave_filterColumnsDeclared() {
+        List<FilterColumn> columns = DataPermResources.getFilterColumns("leave");
+        assertThat(columns).extracting(FilterColumn::field, FilterColumn::column)
+                .containsExactly(
+                        tuple("id", "id"),
+                        tuple("leaveType", "leave_type"),
+                        tuple("startDate", "start_date"),
+                        tuple("endDate", "end_date"));
+    }
+
+    @Test
+    void findFilterColumn_locatesByFieldWithDeclaration() {
+        FilterColumn leaveType = DataPermResources.findFilterColumn("leave", "leaveType");
+        assertThat(leaveType).isNotNull();
+        assertThat(leaveType.type()).isEqualTo(FilterColumnTypeEnum.NUMBER);
+        assertThat(leaveType.label()).isEqualTo("请假类型");
+    }
+
+    @Test
+    void findFilterColumn_unknownFieldOrResource_returnsNull() {
+        assertThat(DataPermResources.findFilterColumn("leave", "ghost")).isNull();
+        assertThat(DataPermResources.findFilterColumn("ghost", "id")).isNull();
+    }
+
+    @Test
+    void bpmnApproval_filterColumnsRemoteDeclaredWithTypes() {
+        assertThat(DataPermResources.getFilterColumns(DataPermResources.BPMN_APPROVAL))
+                .extracting(FilterColumn::field, FilterColumn::type)
+                .containsExactly(
+                        tuple("id", FilterColumnTypeEnum.NUMBER),
+                        tuple("status", FilterColumnTypeEnum.NUMBER),
+                        tuple("businessType", FilterColumnTypeEnum.STRING),
+                        tuple("createTime", FilterColumnTypeEnum.DATETIME));
     }
 }

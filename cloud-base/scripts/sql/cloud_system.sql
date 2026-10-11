@@ -240,6 +240,7 @@ CREATE TABLE sys_data_perm_rule (
     subject_id      BIGINT        NOT NULL COMMENT '主体ID（subject_type=0 时 sys_role.id，=1 时 sys_user.id）',
     row_scope       TINYINT       NOT NULL COMMENT '行范围档位：0仅自己 1本部门 2本部门及以下 3自定义集合 4全部',
     custom_accounts VARCHAR(1000) NULL     COMMENT '自定义账号集合（row_scope=3 时生效，JSON 数组字符串如 ["zhang3","lisi4"]；其余档位 NULL）',
+    predicates      VARCHAR(2000) NULL     COMMENT '行级条件组(JSON数组串,如 [{"field":"leaveType","operator":"EQ","values":["1"]}];NULL/空=无条件,档位即全量语义;组内多条件AND,跨规则并集;条件数≤5,IN值≤30)',
     create_by       VARCHAR(30)   DEFAULT NULL COMMENT '创建人',
     create_time     DATETIME      DEFAULT NULL COMMENT '创建时间',
     update_by       VARCHAR(30)   DEFAULT NULL COMMENT '更新人',

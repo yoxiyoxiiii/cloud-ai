@@ -489,7 +489,252 @@ class DataPermManageServiceTest {
         verifyNoInteractions(evaluator);
     }
 
+    // ---- 谓词轮校验链（契约 §2.3 v2：逐条件 3035 → 1002 → 3036 → 3037 → 1002 重复 → 规则级 3037） ----
+
+    @Test
+    void saveRule_predicateUnknownField_rejected3035() {
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("ghostField", "EQ", "1")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3035);
+        assertThat(ex.getMessage()).contains("ghostField");
+        verifyNoInteractions(ruleMapper);
+    }
+
+    @Test
+    void saveRule_predicateBadOperator_rejected1002() {
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("leaveType", "LIKE", "x")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(1002);
+        assertThat(ex.getMessage()).isEqualTo("操作符无效");
+    }
+
+    @Test
+    void saveRule_predicateMatrixViolation_rejected3036() {
+        DataPermRuleSaveRequest req = validRequest("bpmn_approval");
+        req.setPredicates(List.of(predicate("businessType", "BETWEEN", "leave", "approval")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        // STRING × BETWEEN 矩阵违例（ci 排序规则下字符串大小比较语义不稳）
+        assertThat(ex.getCode()).isEqualTo(3036);
+        assertThat(ex.getMessage()).contains("businessType:BETWEEN");
+    }
+
+    @Test
+    void saveRule_predicateBadValueFormat_rejected3037() {
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("leaveType", "EQ", "abc")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3037);
+        assertThat(ex.getMessage()).contains("条件值非法");
+    }
+
+    @Test
+    void saveRule_predicateArityMismatch_rejected3037() {
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("id", "BETWEEN", "1")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3037);
+        assertThat(ex.getMessage()).contains("需 2 个值");
+    }
+
+    @Test
+    void saveRule_predicateBetweenUnordered_rejected3037() {
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("id", "BETWEEN", "100", "1")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3037);
+        assertThat(ex.getMessage()).contains("有序");
+    }
+
+    @Test
+    void saveRule_predicateInOver30_rejected3037() {
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("id", "IN", numbers(31))));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3037);
+        assertThat(ex.getMessage()).contains("1~30");
+    }
+
+    @Test
+    void saveRule_predicateDuplicateField_rejected1002() {
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("leaveType", "EQ", "1"), predicate("leaveType", "IN", "1", "2")));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(1002);
+        assertThat(ex.getMessage()).isEqualTo("条件列重复");
+    }
+
+    @Test
+    void saveRule_predicateSerializedOverlong_rejected3037() {
+        DataPermRuleSaveRequest req = validRequest("bpmn_approval");
+        req.setPredicates(List.of(
+                predicate("businessType", "IN", strings(30)),
+                predicate("id", "IN", numbers(30)),
+                predicate("status", "IN", numbers(30)),
+                predicate("createTime", "IN", datetimes(30))));
+
+        BusinessException ex = catchThrowableOfType(() -> manageService.saveRule(req), BusinessException.class);
+
+        // 逐项全合法（IN ≤30、STRING ≤50、字段不重复、条件数 ≤5），聚合序列化 >2000 → 3037 条件组超长
+        assertThat(ex.getCode()).isEqualTo(3037);
+        assertThat(ex.getMessage()).contains("条件组超长");
+    }
+
+    @Test
+    void saveRule_validPredicates_persistedAsJson() {
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        req.setPredicates(List.of(predicate("leaveType", "EQ", "1")));
+        stubRoleSubject();
+        when(ruleMapper.findBySubject(RESOURCE, 0, 2L)).thenReturn(null);
+
+        manageService.saveRule(req);
+
+        ArgumentCaptor<SysDataPermRule> ruleCaptor = ArgumentCaptor.forClass(SysDataPermRule.class);
+        verify(ruleMapper).save(ruleCaptor.capture());
+        assertThat(ruleCaptor.getValue().getPredicates())
+                .isEqualTo("[{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"1\"]}]");
+    }
+
+    @Test
+    void saveRule_emptyPredicates_persistedNull() {
+        DataPermRuleSaveRequest req = validRequest(RESOURCE);
+        stubRoleSubject();
+        when(ruleMapper.findBySubject(RESOURCE, 0, 2L)).thenReturn(null);
+
+        manageService.saveRule(req);
+
+        ArgumentCaptor<SysDataPermRule> ruleCaptor = ArgumentCaptor.forClass(SysDataPermRule.class);
+        verify(ruleMapper).save(ruleCaptor.capture());
+        // 不传即清空：无条件落 NULL（与既有行为逐字一致——零 diff 红线）
+        assertThat(ruleCaptor.getValue().getPredicates()).isNull();
+    }
+
+    @Test
+    void findRuleConfig_configuredWithPredicates_echoesAndSummarizes() {
+        RuleConfigQuery query = configQuery();
+        stubRoleSubject();
+        SysDataPermRule rule = rule(9L, 0, 2L, 0);
+        rule.setPredicates("[{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"1\"]}]");
+        when(ruleMapper.findBySubject(RESOURCE, 0, 2L)).thenReturn(rule);
+        when(columnMapper.listBySubject(RESOURCE, 0, 2L)).thenReturn(List.of());
+
+        DataPermRuleConfigVo vo = manageService.findRuleConfig(query);
+
+        assertThat(vo.isConfigured()).isTrue();
+        assertThat(vo.getPredicates()).hasSize(1);
+        assertThat(vo.getPredicates().get(0).getField()).isEqualTo("leaveType");
+        assertThat(vo.getPredicates().get(0).getValues()).containsExactly("1");
+        assertThat(vo.getPredicateSummary()).isEqualTo("请假类型等于1");
+    }
+
+    @Test
+    void pageListRules_backfillsPredicateSummary() {
+        SysDataPermRule roleRule = rule(3L, 0, 2L, 2);
+        roleRule.setPredicates("[{\"field\":\"id\",\"operator\":\"BETWEEN\",\"values\":[\"1\",\"100\"]}]");
+        when(ruleMapper.pageList(any(), eq(RESOURCE), any(), any()))
+                .thenReturn(pageOf(List.of(roleRule)));
+        when(roleMapper.listByIds(List.of(2L))).thenReturn(List.of(role(2L, "主管")));
+        when(columnMapper.listByRoleIds(RESOURCE, List.of(2L))).thenReturn(List.of());
+
+        List<DataPermRuleVo> rows = manageService.pageListRules(
+                queryOf(RESOURCE)).getRows();
+
+        assertThat(rows.get(0).getPredicates()).hasSize(1);
+        assertThat(rows.get(0).getPredicateSummary()).isEqualTo("单号介于1~100");
+    }
+
+    @Test
+    void listResources_includesFilterColumns() {
+        var resources = manageService.listResources();
+
+        var leave = resources.stream().filter(r -> "leave".equals(r.getResource())).findFirst().orElseThrow();
+        assertThat(leave.getFilterColumns()).hasSize(4);
+        assertThat(leave.getFilterColumns().get(0).getField()).isEqualTo("id");
+        assertThat(leave.getFilterColumns().get(0).getType()).isEqualTo("NUMBER");
+        assertThat(leave.getFilterColumns().get(0).getLabel()).isEqualTo("单号");
+        var approval = resources.stream()
+                .filter(r -> "bpmn_approval".equals(r.getResource())).findFirst().orElseThrow();
+        assertThat(approval.getFilterColumns()).extracting(
+                        com.cloudai.system.vo.FilterColumnVo::getField, com.cloudai.system.vo.FilterColumnVo::getType)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("id", "NUMBER"),
+                        org.assertj.core.groups.Tuple.tuple("status", "NUMBER"),
+                        org.assertj.core.groups.Tuple.tuple("businessType", "STRING"),
+                        org.assertj.core.groups.Tuple.tuple("createTime", "DATETIME"));
+    }
+
+    @Test
+    void myScope_conditionalRules_labeledConditionalRange() {
+        MyScopeQuery query = new MyScopeQuery();
+        query.setResource(RESOURCE);
+        DataPermDecision decision = new DataPermDecision();
+        decision.setResource(RESOURCE);
+        decision.setAccount("userA");
+        decision.setDataScope(com.cloudai.system.api.dataperm.DataScope.of(java.util.Set.of("userA")));
+        decision.setColumnScope(com.cloudai.system.api.dataperm.ColumnScope.of(
+                java.util.Set.of(), java.util.Set.of()));
+        decision.setRowFilter(com.cloudai.system.api.dataperm.RowFilter.of(java.util.List.of(
+                com.cloudai.system.api.dataperm.RowGroup.of(false, java.util.Set.of("userA"), java.util.List.of()))));
+        DataPermDecision.HitRule hit = hitRule(SysDataPermRule.RowScopeEnum.SELF.getCode());
+        hit.getPredicates().add(predicate("leaveType", "EQ", "1"));
+        decision.getHitRules().add(hit);
+        when(evaluator.evaluateForSelf(RESOURCE)).thenReturn(decision);
+
+        MyScopeVo vo = manageService.myScope(query);
+
+        // 判定序 v2 第 3 位：命中含条件规则 → 条件范围（§1.6 摘要），优先于账号档位标签
+        assertThat(vo.getScopeLabel()).isEqualTo("条件范围（请假类型等于1）");
+    }
+
     // ---- 脚手架 ----
+
+    /** 条件三元组（字符串承载形态——契约入参） */
+    private com.cloudai.system.dto.PredicateItem predicate(String field, String operator, String... values) {
+        com.cloudai.system.dto.PredicateItem item = new com.cloudai.system.dto.PredicateItem();
+        item.setField(field);
+        item.setOperator(operator);
+        item.setValues(List.of(values));
+        return item;
+    }
+
+    private String[] numbers(int count) {
+        return java.util.stream.IntStream.rangeClosed(1, count)
+                .mapToObj(i -> String.valueOf(1000 + i)).toArray(String[]::new);
+    }
+
+    /** 45+位字符串（≤50 上限内），30 值 × 4 条件的序列化聚合突破 2000 */
+    private String[] strings(int count) {
+        return java.util.stream.IntStream.rangeClosed(1, count)
+                .mapToObj(i -> "t".repeat(45) + i).toArray(String[]::new);
+    }
+
+    private String[] datetimes(int count) {
+        return java.util.stream.IntStream.rangeClosed(1, count)
+                .mapToObj(i -> "2026-01-01 00:00:" + String.format("%02d", i)).toArray(String[]::new);
+    }
+
+    private DataPermRulePageQuery queryOf(String resource) {
+        DataPermRulePageQuery query = new DataPermRulePageQuery();
+        query.setResource(resource);
+        return query;
+    }
 
     private DataPermRuleSaveRequest validRequest(String resource) {
         DataPermRuleSaveRequest req = new DataPermRuleSaveRequest();

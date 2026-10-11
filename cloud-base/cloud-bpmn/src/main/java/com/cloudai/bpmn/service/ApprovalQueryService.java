@@ -22,6 +22,8 @@ import com.cloudai.system.api.client.DataPermClient;
 import com.cloudai.system.api.dataperm.ColumnScope;
 import com.cloudai.system.api.dataperm.DataPermColumnApplier;
 import com.cloudai.system.api.dataperm.DataPermOperation;
+import com.cloudai.system.api.dataperm.EntityFieldResolver;
+import com.cloudai.system.api.dataperm.RowFilter;
 import com.cloudai.system.api.domain.DataPermDenyRequest;
 import com.cloudai.system.api.domain.DataPermEvaluateRequest;
 import com.cloudai.system.api.domain.DataPermScopeVo;
@@ -87,16 +89,18 @@ public class ApprovalQueryService {
     private final TranslationCacheService translationCacheService;
 
     /**
-     * 我的审批分页（契约 dataperm-component §3.1：行集=当前登录人数据权限求值——全部档全量、
-     * 空集短路空页不查库、白名单档账号 IN；title 列级隐藏/脱敏；id 倒序含全部状态与业务类型）。
+     * 我的审批分页（契约 §3.1 + 谓词轮 §4.1/D33：行集=toRowFilter 组间 OR——rowAll 豁免全量、
+     * 空集短路空页不查库、组=(allAccounts || 账号 IN) ∧ 组谓词全过；title 列级隐藏/脱敏；
+     * id 倒序含全部状态与业务类型）。
      */
     public PageResult<ApprovalVo> pageListMy(PageQuery query, String account) {
         DataPermScopeVo scopeVo = evalScope(account, DataPermOperation.LIST, null);
-        if (scopeVo.toDataScope().isEmptyScope()) {
+        RowFilter filter = scopeVo.toRowFilter();
+        if (filter.isEmptyScope()) {
             return PageResult.of(0, List.of());
         }
         IPage<BpmnApproval> page = approvalMapper.pageList(
-                new Page<>(query.getPageNum(), query.getPageSize()), scopeVo.toDataScope());
+                new Page<>(query.getPageNum(), query.getPageSize()), filter);
         ColumnScope columnScope = scopeVo.toColumnScope();
         List<ApprovalVo> rows = new ArrayList<>();
         Map<String, BpmnBusinessType> configCache = new HashMap<>();
@@ -167,9 +171,10 @@ public class ApprovalQueryService {
         return resp.getData();
     }
 
-    /** 行级判定（详情/图数据共用，D24）：归属账号不在范围 → deny 远程补痕（降级仅记日志）→ 4018 */
+    /** 行级判定（详情/图数据共用，D24 + 谓词轮 D34 行属性升级）：无任一组匹配 →
+     *  deny 远程补痕（降级仅记日志）→ 4018；entity typed 形态取值（D34 双形态 bpmn 侧验证点） */
     private void assertRowVisible(BpmnApproval approval, String account, DataPermScopeVo scopeVo) {
-        if (scopeVo.toDataScope().allows(approval.getApplyUser())) {
+        if (scopeVo.toRowFilter().allowsDetail(approval.getApplyUser(), EntityFieldResolver.of(approval))) {
             return;
         }
         denyQuietly(account, approval.getId());

@@ -5,11 +5,14 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.system.api.dataperm.FilterColumn;
+import com.cloudai.system.api.dataperm.PredicateOperatorEnum;
 import com.cloudai.system.dto.DataPermLogPageQuery;
 import com.cloudai.system.dto.DataPermRulePageQuery;
 import com.cloudai.system.dto.DataPermRuleSaveRequest;
 import com.cloudai.system.dto.ExplainQuery;
 import com.cloudai.system.dto.MyScopeQuery;
+import com.cloudai.system.dto.PredicateItem;
 import com.cloudai.system.dto.RuleConfigQuery;
 import com.cloudai.system.entity.SysDataPermColumn;
 import com.cloudai.system.entity.SysDataPermLog;
@@ -64,6 +67,19 @@ public class DataPermManageService {
     private static final int ERR_SUBJECT_INVALID = 3032;
     /** 自定义范围包含无效账号（契约 §8） */
     private static final int ERR_CUSTOM_INVALID = 3033;
+    /** 无效的过滤条件列（契约 §7，谓词轮） */
+    private static final int ERR_PREDICATE_COLUMN = 3035;
+    /** 条件操作符与列类型不匹配（契约 §7，谓词轮） */
+    private static final int ERR_PREDICATE_MATRIX = 3036;
+    /** 条件值非法（契约 §7，谓词轮：格式/数量/有序/长度/条件数/序列化超长聚合） */
+    private static final int ERR_PREDICATE_VALUE = 3037;
+
+    /** 单规则条件数上限（契约 §1.1） */
+    private static final int PREDICATE_MAX = 5;
+    /** IN 值数量上限（契约 §1.2） */
+    private static final int IN_VALUE_MAX = 30;
+    /** predicates JSON 序列化长度上限（= DDL 列宽 VARCHAR(2000)，防超列宽 DB 500） */
+    private static final int PREDICATES_JSON_MAX = 2000;
 
     private final DataPermRuleMapper ruleMapper;
     private final DataPermColumnMapper columnMapper;
@@ -113,13 +129,15 @@ public class DataPermManageService {
         vo.setCustomAccounts(rule != null && isCustomScope(rule.getRowScope())
                 ? DataPermConvert.parseCustomAccounts(rule.getCustomAccounts())
                 : List.of());
+        fillConfigPredicates(vo, rule);
         vo.setColumns(columns);
         return vo;
     }
 
     /**
-     * 保存规则（契约 §3.3，upsert 全量覆盖）：校验链 注册表 3034 → 枚举 1002 → 主体 3032 →
-     * CUSTOM 账号 3033/联动 1002；事务内行规则 insert/update + 列规则物理全删后批插（空列表仅删不插）。
+     * 保存规则（契约 §3.3 + 谓词轮 §2.3 v2 校验链，upsert 全量覆盖）：注册表 3034 → 枚举 1002 →
+     * 条件组 3035/1002/3036/3037/1002 → 主体 3032 → CUSTOM 账号 3033/联动 1002；
+     * 事务内行规则 insert/update（predicates JSON 同行落库，不传即清空）+ 列规则物理全删后批插。
      */
     @Transactional(rollbackFor = Exception.class)
     public void saveRule(DataPermRuleSaveRequest req) {
@@ -141,13 +159,15 @@ public class DataPermManageService {
         columnMapper.deleteBySubject(rule.getResource(), rule.getSubjectType(), rule.getSubjectId());
     }
 
-    /** 资源注册表（契约 §3.5）：配置弹窗资源下拉与列配置动态渲染的数据源 */
+    /** 资源注册表（契约 §3.5 + 谓词轮 §2.4 增量 filterColumns）：配置弹窗与条件编辑器的数据源 */
     public List<DataPermResourceVo> listResources() {
         List<DataPermResourceVo> result = new ArrayList<>();
         for (String resource : DataPermResources.listRegisteredResources()) {
             DataPermResourceVo vo = new DataPermResourceVo();
             vo.setResource(resource);
             vo.setColumns(DataPermResources.getConfigurableColumns(resource));
+            vo.setFilterColumns(DataPermResources.getFilterColumns(resource).stream()
+                    .map(DataPermConvert::toFilterColumnVo).toList());
             result.add(vo);
         }
         return result;
@@ -285,11 +305,13 @@ public class DataPermManageService {
         return resource + "|" + subjectType + "|" + subjectId;
     }
 
-    // ---- 保存校验链（契约 §3.3 顺序：注册表 3034 → 枚举 1002 → 主体 3032 → CUSTOM 3033/联动 1002） ----
+    // ---- 保存校验链（契约 §2.3 v2 顺序：注册表 3034 → 枚举 1002 → 条件组 3035/1002/3036/3037/1002
+    //      → 规则级 3037 条件数/序列化 → 主体 3032 → CUSTOM 3033/联动 1002） ----
 
     private void validateRuleRequest(DataPermRuleSaveRequest req) {
         validateResourceParam(req.getResource());
         validateColumns(req.getResource(), req.getColumns());
+        validatePredicates(req.getResource(), req.getPredicates());
         requireSubjectType(req.getSubjectType());
         requireRowScope(req.getRowScope());
     }
@@ -311,6 +333,92 @@ public class DataPermManageService {
                 throw new BusinessException("列标识重复");
             }
         }
+    }
+
+    /**
+     * 条件组校验链（契约 §2.3）：逐条件 field 3035 → operator 1002 → 矩阵 3036 → 值形态 3037 →
+     * 同 field 重复 1002 → 条件数 ≤5 3037 → 规则级序列化 ≤2000 3037（值类型化复用
+     * FilterColumnTypeEnum.normalize 单一实现——校验与求值 enrichment 同源）。
+     */
+    private void validatePredicates(String resource, List<PredicateItem> predicates) {
+        if (predicates == null || predicates.isEmpty()) {
+            return;
+        }
+        Set<String> seenFields = new HashSet<>();
+        for (PredicateItem item : predicates) {
+            validatePredicateItem(resource, item, seenFields);
+        }
+        if (predicates.size() > PREDICATE_MAX) {
+            throw new BusinessException(ERR_PREDICATE_VALUE,
+                    "条件值非法: 条件数超上限(≤" + PREDICATE_MAX + ")");
+        }
+        if (DataPermConvert.toPredicatesJson(predicates).length() > PREDICATES_JSON_MAX) {
+            throw new BusinessException(ERR_PREDICATE_VALUE,
+                    "条件值非法: 条件组超长(≤" + PREDICATES_JSON_MAX + ")");
+        }
+    }
+
+    /** 单条件校验：列声明 3035 → 操作符枚举 1002 → 操作符×类型矩阵 3036 → 值形态 3037 → 同列重复 1002 */
+    private void validatePredicateItem(String resource, PredicateItem item, Set<String> seenFields) {
+        if (item.getField() == null || item.getField().isBlank()) {
+            throw new BusinessException("条件列不能为空");
+        }
+        FilterColumn declared = DataPermResources.findFilterColumn(resource, item.getField());
+        if (declared == null) {
+            throw new BusinessException(ERR_PREDICATE_COLUMN, "无效的过滤条件列: " + item.getField());
+        }
+        PredicateOperatorEnum operator = requirePredicateOperator(item.getOperator());
+        if (!operator.supports(declared.type())) {
+            throw new BusinessException(ERR_PREDICATE_MATRIX,
+                    "条件操作符与列类型不匹配: " + item.getField() + ":" + item.getOperator());
+        }
+        validatePredicateValues(declared, operator, item);
+        if (!seenFields.add(item.getField())) {
+            throw new BusinessException("条件列重复");
+        }
+    }
+
+    /** 操作符枚举（非 EQ/IN/BETWEEN/GTE/LTE → 1002「操作符无效」） */
+    private PredicateOperatorEnum requirePredicateOperator(String operator) {
+        try {
+            return PredicateOperatorEnum.of(operator);
+        } catch (IllegalArgumentException e) {
+            throw new BusinessException("操作符无效");
+        }
+    }
+
+    /** 值形态校验（3037）：数量与操作符 arity 相符 → 逐值 normalize（格式/STRING≤50）→ BETWEEN 有序 */
+    private void validatePredicateValues(FilterColumn declared, PredicateOperatorEnum operator, PredicateItem item) {
+        List<String> values = item.getValues();
+        int arity = operator.getArity();
+        if (arity >= 0 && (values == null || values.size() != arity)) {
+            throw new BusinessException(ERR_PREDICATE_VALUE,
+                    "条件值非法: " + item.getField() + " 需 " + arity + " 个值");
+        }
+        if (arity < 0 && (values == null || values.isEmpty() || values.size() > IN_VALUE_MAX)) {
+            throw new BusinessException(ERR_PREDICATE_VALUE,
+                    "条件值非法: " + item.getField() + " 值数量需 1~" + IN_VALUE_MAX);
+        }
+        List<Object> typed = new ArrayList<>();
+        for (String value : values) {
+            try {
+                typed.add(declared.type().normalize(value));
+            } catch (IllegalArgumentException e) {
+                throw new BusinessException(ERR_PREDICATE_VALUE,
+                        "条件值非法: " + item.getField() + " " + e.getMessage());
+            }
+        }
+        if (operator == PredicateOperatorEnum.BETWEEN && isUnordered(typed)) {
+            throw new BusinessException(ERR_PREDICATE_VALUE,
+                    "条件值非法: " + item.getField() + " BETWEEN 两值需有序");
+        }
+    }
+
+    /** BETWEEN 有序判定（矩阵排除 STRING，元素恒 Comparable：BigDecimal/LocalDate/LocalDateTime） */
+    @SuppressWarnings("unchecked")
+    private boolean isUnordered(List<Object> typed) {
+        Comparable<Object> low = (Comparable<Object>) typed.get(0);
+        return low.compareTo(typed.get(1)) > 0;
     }
 
     private void validateResourceParam(String resource) {
@@ -391,6 +499,9 @@ public class DataPermManageService {
         String customJson = isCustomScope(req.getRowScope())
                 ? DataPermConvert.toCustomAccountsJson(req.getCustomAccounts())
                 : null;
+        // 无条件 null / 有条件 JSON（≤2000 已由校验链 3037 把守）；upsert 覆盖语义——不传即清空
+        String predicatesJson = req.getPredicates() == null || req.getPredicates().isEmpty()
+                ? null : DataPermConvert.toPredicatesJson(req.getPredicates());
         if (existing == null) {
             SysDataPermRule rule = new SysDataPermRule();
             rule.setResource(req.getResource());
@@ -398,6 +509,7 @@ public class DataPermManageService {
             rule.setSubjectId(subjectId);
             rule.setRowScope(req.getRowScope());
             rule.setCustomAccounts(customJson);
+            rule.setPredicates(predicatesJson);
             String operator = SecurityUtils.currentAccount();
             LocalDateTime now = LocalDateTime.now();
             rule.setCreateBy(operator);
@@ -416,6 +528,7 @@ public class DataPermManageService {
         rule.setId(existing.getId());
         rule.setRowScope(req.getRowScope());
         rule.setCustomAccounts(customJson);
+        rule.setPredicates(predicatesJson);
         rule.setUpdateBy(SecurityUtils.currentAccount());
         rule.setUpdateTime(LocalDateTime.now());
         ruleMapper.update(rule);
@@ -449,6 +562,16 @@ public class DataPermManageService {
 
     private boolean isCustomScope(Integer rowScope) {
         return Integer.valueOf(SysDataPermRule.RowScopeEnum.CUSTOM.getCode()).equals(rowScope);
+    }
+
+    /** 配置回显条件组（契约 §2.2）：解析失败 null → 空列表兜底（仅展示语义）+ 中文摘要（无条件 null） */
+    private void fillConfigPredicates(DataPermRuleConfigVo vo, SysDataPermRule rule) {
+        if (rule == null) {
+            return;
+        }
+        List<PredicateItem> predicates = DataPermConvert.parsePredicates(rule.getPredicates());
+        vo.setPredicates(predicates == null ? List.of() : predicates);
+        vo.setPredicateSummary(DataPermConvert.toPredicateSummary(vo.getResource(), vo.getPredicates()));
     }
 
     private String blankToNull(String value) {

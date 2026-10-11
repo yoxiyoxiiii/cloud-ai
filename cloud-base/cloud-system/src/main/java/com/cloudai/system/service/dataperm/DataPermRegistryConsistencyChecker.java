@@ -1,6 +1,9 @@
 package com.cloudai.system.service.dataperm;
 
+import com.cloudai.system.convert.DataPermConvert;
+import com.cloudai.system.dto.PredicateItem;
 import com.cloudai.system.entity.SysDataPermColumn;
+import com.cloudai.system.entity.SysDataPermRule;
 import com.cloudai.system.mapper.DataPermColumnMapper;
 import com.cloudai.system.mapper.DataPermRuleMapper;
 import lombok.RequiredArgsConstructor;
@@ -17,7 +20,10 @@ import java.util.List;
  * ① sys_data_perm_rule 全表 DISTINCT resource ⊆ 注册表（越界=未注册资源：不应存在——写入经 3034 校验链，
  * 出现即历史脏数据或注册表收缩遗留）；
  * ② sys_data_perm_column 全表 DISTINCT (resource, column_key) ⊆ 对应资源可配列清单（越界=孤儿列规则：
- * VO 字段改名 / 列清单收缩后的存量，规则永不命中且求值时被工具静默跳过——最需人工排查的形态）。
+ * VO 字段改名 / 列清单收缩后的存量，规则永不命中且求值时被工具静默跳过——最需人工排查的形态）；
+ * ③ sys_data_perm_rule 全表 predicates 逐条解析：JSON 坏（历史脏数据）与 field 越界
+ * （可过滤列改名/收缩后的存量，谓词轮 D39——求值按整规则不授权 fail-closed，静默拒行易误排查，
+ * 最需显式告警）。
  * 越界逐条 log.warn + 一条汇总，不删数据不阻断启动不留痕（开发期观测件非审计件）。
  * 载体口径（设计 §3.3 记档）：ApplicationRunner 上下文就绪后执行（@PostConstruct bean 初始化期不宜触 DB
  * 被弃；守护测试测不到运行环境 DB 存量只能作补充）；run 整体 try-catch——检查自身失败 log.error
@@ -47,7 +53,7 @@ public class DataPermRegistryConsistencyChecker implements ApplicationRunner {
         }
     }
 
-    /** 包可见可测：DB 存量 ⊄ 注册表的越界描述清单（rule 路先 column 路后，顺序稳定；不依赖日志捕获） */
+    /** 包可见可测：DB 存量 ⊄ 注册表的越界描述清单（rule/column/predicate 三路，顺序稳定；不依赖日志捕获） */
     List<String> collectViolations() {
         List<String> violations = new ArrayList<>();
         for (String resource : ruleMapper.listDistinctResources()) {
@@ -62,6 +68,27 @@ public class DataPermRegistryConsistencyChecker implements ApplicationRunner {
                         + " 不在可配清单（疑似孤儿规则）");
             }
         }
+        collectPredicateViolations(violations);
         return violations;
+    }
+
+    /** 第三维度（谓词轮 D39）：全表规则 predicates 解析——JSON 坏 / field 越界逐条告警 */
+    private void collectPredicateViolations(List<String> violations) {
+        for (SysDataPermRule rule : ruleMapper.listAll()) {
+            if (rule.getPredicates() == null || rule.getPredicates().isBlank()) {
+                continue;
+            }
+            List<PredicateItem> predicates = DataPermConvert.parsePredicates(rule.getPredicates());
+            if (predicates == null) {
+                violations.add("规则 " + rule.getId() + " 条件组 JSON 解析失败（疑似孤儿条件，求值整规则不授权）");
+                continue;
+            }
+            for (PredicateItem item : predicates) {
+                if (DataPermResources.findFilterColumn(rule.getResource(), item.getField()) == null) {
+                    violations.add("规则 " + rule.getId() + " 条件列 " + item.getField()
+                            + " 不在 " + rule.getResource() + " 可过滤清单（疑似孤儿条件，求值整规则不授权）");
+                }
+            }
+        }
     }
 }

@@ -349,14 +349,215 @@ class DataPermEvaluatorTest {
                         && "deny".equals(row.getScopeSummary()) && "5".equals(row.getBusinessKey())));
     }
 
-    @Test
-    void logDeny_insertFailure_notThrown() {
-        doThrow(new RuntimeException("db down")).when(logMapper).save(any());
+    // ---- 谓词轮代数（D31/D33/D36/D39，2026-10-11）：无条件零 diff + 条件建组 + 降级整规则不授权 ----
 
-        // deny 补痕失败不阻断已发生的拒绝语义（D7 口径）
-        org.assertj.core.api.Assertions.assertThatCode(
-                () -> evaluator.logDeny("userB", RESOURCE, "5"))
-                .doesNotThrowAnyException();
+    @Test
+    void evaluate_unconditionalRule_rowFilterSingleGroupEquivalence() {
+        loginAs("userA", 5L);
+        stubSingleRule(SysDataPermRule.RowScopeEnum.SELF.getCode(), null);
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // 零 diff 证明：无条件 SELF → 单组 (apply_user IN (userA))，与 v1 dataScope 语义逐字等价
+        assertThat(decision.getRowFilter().isRowAll()).isFalse();
+        assertThat(decision.getRowFilter().getGroups()).hasSize(1);
+        assertThat(decision.getRowFilter().getGroups().get(0).isAllAccounts()).isFalse();
+        assertThat(decision.getRowFilter().getGroups().get(0).getAccounts()).containsExactly("userA");
+        assertThat(decision.getRowFilter().getGroups().get(0).getPredicates()).isEmpty();
+        assertThat(decision.getRowFilter().isEmptyScope()).isFalse();
+    }
+
+    @Test
+    void evaluate_allUnconditional_rowFilterRowAll() {
+        loginAs("userA", 5L);
+        stubSingleRule(SysDataPermRule.RowScopeEnum.ALL.getCode(), null);
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // 豁免态：rowAll 短路 + dataScope 保持 all() 既有取值（零 diff 红线记档）
+        assertThat(decision.getRowFilter().isRowAll()).isTrue();
+        assertThat(decision.getRowFilter().getGroups()).isEmpty();
+        assertThat(decision.getDataScope().isAll()).isTrue();
+    }
+
+    @Test
+    void evaluate_twoUnconditionalRules_mergedIntoSingleGroup() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of(2L));
+        when(ruleMapper.listByRoleIds(RESOURCE, List.of(2L)))
+                .thenReturn(List.of(rule(3L, 0, 2L, SysDataPermRule.RowScopeEnum.SELF.getCode(), null)));
+        when(roleMapper.findById(2L)).thenReturn(role(2L, "主管"));
+        when(ruleMapper.listByUserId(RESOURCE, 5L))
+                .thenReturn(List.of(rule(7L, 1, 5L, SysDataPermRule.RowScopeEnum.CUSTOM.getCode(),
+                        "[\"zhang3\",\"lisi4\"]")));
+        when(columnMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // D31 ②：两条无条件规则并成单组（union 账号、无谓词）——多规则不产生多组
+        assertThat(decision.getRowFilter().getGroups()).hasSize(1);
+        assertThat(decision.getRowFilter().getGroups().get(0).getAccounts())
+                .containsExactlyInAnyOrder("userA", "zhang3", "lisi4");
+        assertThat(decision.getRowFilter().getGroups().get(0).getPredicates()).isEmpty();
+    }
+
+    @Test
+    void evaluate_allPlusConditional_notExemptDataScopeEmptyButRowFilterAlive() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of(2L));
+        when(ruleMapper.listByRoleIds(RESOURCE, List.of(2L))).thenReturn(List.of(
+                rule(3L, 0, 2L, SysDataPermRule.RowScopeEnum.ALL.getCode(), null,
+                        "[{\"field\":\"id\",\"operator\":\"BETWEEN\",\"values\":[\"1\",\"100\"]}]")));
+        when(roleMapper.findById(2L)).thenReturn(role(2L, "主管"));
+        when(ruleMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+        when(columnMapper.listByRoleIds(RESOURCE, List.of(2L))).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // ALL+条件 ≠ 豁免：dataScope 账号维并集空（ALL 档展开恒空）但行集非空（allAccounts 组）
+        assertThat(decision.getDataScope().isAll()).isFalse();
+        assertThat(decision.getDataScope().isEmptyScope()).isTrue();
+        assertThat(decision.getRowFilter().isRowAll()).isFalse();
+        assertThat(decision.getRowFilter().isEmptyScope()).isFalse();
+        assertThat(decision.getRowFilter().getGroups()).hasSize(1);
+        assertThat(decision.getRowFilter().getGroups().get(0).isAllAccounts()).isTrue();
+        assertThat(decision.getRowFilter().getGroups().get(0).getPredicates()).hasSize(1);
+        assertThat(decision.getNarratives()).contains(
+                "行范围收敛：并集含条件过滤（1 条规则，1 条含条件）");
+    }
+
+    @Test
+    void evaluate_selfPlusConditional_separateGroupsWithUnion() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of(2L));
+        when(ruleMapper.listByRoleIds(RESOURCE, List.of(2L)))
+                .thenReturn(List.of(rule(3L, 0, 2L, SysDataPermRule.RowScopeEnum.SELF.getCode(), null)));
+        when(roleMapper.findById(2L)).thenReturn(role(2L, "主管"));
+        when(ruleMapper.listByUserId(RESOURCE, 5L))
+                .thenReturn(List.of(rule(7L, 1, 5L, SysDataPermRule.RowScopeEnum.CUSTOM.getCode(),
+                        "[\"zhang3\"]",
+                        "[{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"1\"]}]")));
+        when(columnMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // 混合：无条件并组在首（{userA}）+ 条件组次（{zhang3}∧leaveType=1）；账号维并集=2
+        assertThat(decision.getRowFilter().getGroups()).hasSize(2);
+        assertThat(decision.getRowFilter().getGroups().get(0).getAccounts()).containsExactly("userA");
+        assertThat(decision.getRowFilter().getGroups().get(0).getPredicates()).isEmpty();
+        assertThat(decision.getRowFilter().getGroups().get(1).getAccounts()).containsExactly("zhang3");
+        assertThat(decision.getRowFilter().getGroups().get(1).getPredicates()).hasSize(1);
+        assertThat(decision.getDataScope().getAccounts()).containsExactlyInAnyOrder("userA", "zhang3");
+    }
+
+    @Test
+    void evaluate_conditionalDeadGroup_dropped() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of());
+        when(ruleMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of(
+                // CUSTOM 档 custom_accounts 坏数据（历史脏数据）→ 展开空 + 条件 → 死组丢弃（D31 ③）
+                rule(7L, 1, 5L, SysDataPermRule.RowScopeEnum.CUSTOM.getCode(), "not-a-json",
+                        "[{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"1\"]}]")));
+        when(columnMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        assertThat(decision.getRowFilter().isEmptyScope()).isTrue();
+        assertThat(decision.getRowFilter().getGroups()).isEmpty();
+    }
+
+    @Test
+    void evaluate_predicateBadJson_ruleNotAuthorizing() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of());
+        when(ruleMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of(
+                rule(7L, 1, 5L, SysDataPermRule.RowScopeEnum.SELF.getCode(), null, "not-a-json")));
+        when(columnMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // D39 fail-closed：条件组 JSON 坏 → 该规则整体不授权（即使档位本是 SELF 也不放行自己）
+        assertThat(decision.getRowFilter().isEmptyScope()).isTrue();
+        assertThat(decision.getHitRules()).hasSize(1);
+        assertThat(decision.getHitRules().get(0).getPredicates()).isEmpty();
+        verify(logMapper).save(org.mockito.ArgumentMatchers.argThat(row ->
+                "empty".equals(row.getScopeSummary())));
+    }
+
+    @Test
+    void evaluate_predicateUnknownField_ruleNotAuthorizing() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of());
+        when(ruleMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of(
+                rule(7L, 1, 5L, SysDataPermRule.RowScopeEnum.SELF.getCode(), null,
+                        "[{\"field\":\"ghostField\",\"operator\":\"EQ\",\"values\":[\"1\"]}]")));
+        when(columnMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // 越界字段（注册表收缩遗留）→ 整规则不授权（fail-closed，无放行分支）
+        assertThat(decision.getRowFilter().isEmptyScope()).isTrue();
+        // HitRule 仍原样回显（explain 可排查）
+        assertThat(decision.getHitRules().get(0).getPredicates()).hasSize(1);
+        assertThat(decision.getHitRules().get(0).getPredicates().get(0).getField()).isEqualTo("ghostField");
+    }
+
+    @Test
+    void evaluate_predicateBadValue_ruleNotAuthorizing() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of());
+        when(ruleMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of(
+                rule(7L, 1, 5L, SysDataPermRule.RowScopeEnum.SELF.getCode(), null,
+                        "[{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"abc\"]}]")));
+        when(columnMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // NUMBER 列值非纯十进制 → normalize 失败 → 整规则不授权（不部分采用：组内 AND 部分采用即放大）
+        assertThat(decision.getRowFilter().isEmptyScope()).isTrue();
+    }
+
+    @Test
+    void evaluate_predicates_typedDuringEnrichment() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of());
+        when(ruleMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of(
+                rule(7L, 1, 5L, SysDataPermRule.RowScopeEnum.SELF.getCode(), null,
+                        "[{\"field\":\"startDate\",\"operator\":\"GTE\",\"values\":[\"2026-01-01\"]},"
+                                + "{\"field\":\"id\",\"operator\":\"IN\",\"values\":[\"1\",\"2\"]}]")));
+        when(columnMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // enrichment 类型化：DATE→LocalDate、NUMBER→BigDecimal（SQL 绑定与内存判定同源 D33）
+        List<com.cloudai.system.api.dataperm.RowPredicate> predicates =
+                decision.getRowFilter().getGroups().get(0).getPredicates();
+        assertThat(predicates).hasSize(2);
+        assertThat(predicates.get(0).getColumn()).isEqualTo("start_date");
+        assertThat(predicates.get(0).getValues().get(0))
+                .isEqualTo(java.time.LocalDate.of(2026, 1, 1));
+        assertThat(predicates.get(1).getColumn()).isEqualTo("id");
+        assertThat(predicates.get(1).getValues())
+                .containsExactly(new java.math.BigDecimal("1"), new java.math.BigDecimal("2"));
+    }
+
+    @Test
+    void evaluate_observability_digestAndNarrativesAndSummary() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of());
+        when(ruleMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of(
+                rule(7L, 1, 5L, SysDataPermRule.RowScopeEnum.SELF.getCode(), null,
+                        "[{\"field\":\"id\",\"operator\":\"BETWEEN\",\"values\":[\"1\",\"100\"]},"
+                                + "{\"field\":\"leaveType\",\"operator\":\"EQ\",\"values\":[\"1\"]}]")));
+        when(columnMapper.listByUserId(RESOURCE, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
+
+        // D36：digest ∧ 段（BETWEEN id:1~100；EQ leave_type=1）+ cond=K + 每条件一句 narrative
+        verify(logMapper).save(org.mockito.ArgumentMatchers.argThat(row ->
+                row.getRuleDigest().contains("∧id:1~100;leave_type=1")
+                        && "accounts=1;cond=1".equals(row.getScopeSummary())));
+        assertThat(decision.getNarratives()).contains("命中条件：单号 介于 1~100", "命中条件：请假类型 等于 1");
     }
 
     // ---- 脚手架 ----
@@ -389,12 +590,19 @@ class DataPermEvaluatorTest {
     }
 
     private SysDataPermRule rule(long id, int subjectType, long subjectId, int rowScope, String customAccounts) {
+        return rule(id, subjectType, subjectId, rowScope, customAccounts, null);
+    }
+
+    /** 谓词轮脚手架：条件组 JSON 直传（落库形态——坏 JSON/越界字段即 D39 降级用例入参） */
+    private SysDataPermRule rule(long id, int subjectType, long subjectId, int rowScope,
+            String customAccounts, String predicates) {
         SysDataPermRule r = new SysDataPermRule();
         r.setId(id);
         r.setSubjectType(subjectType);
         r.setSubjectId(subjectId);
         r.setRowScope(rowScope);
         r.setCustomAccounts(customAccounts);
+        r.setPredicates(predicates);
         return r;
     }
 

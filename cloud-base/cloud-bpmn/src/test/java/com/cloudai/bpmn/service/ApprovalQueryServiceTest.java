@@ -16,10 +16,13 @@ import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.client.DataPermClient;
-import com.cloudai.system.api.dataperm.DataScope;
+import com.cloudai.system.api.dataperm.FilterColumnTypeEnum;
+import com.cloudai.system.api.dataperm.RowFilter;
 import com.cloudai.system.api.domain.DataPermDenyRequest;
 import com.cloudai.system.api.domain.DataPermEvaluateRequest;
 import com.cloudai.system.api.domain.DataPermScopeVo;
+import com.cloudai.system.api.domain.PredicateVo;
+import com.cloudai.system.api.domain.RowGroupVo;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
@@ -54,10 +57,13 @@ import static org.mockito.Mockito.when;
 
 /**
  * 审批单查询单测（契约 2026-10-08-approval-platform-api §3 行为面 + 2026-10-10-dataperm-component-api
- * §3 行级/列级语义）：分页配置渲染 / 4010 先行 / 三源时间线 / 嵌套 VO 手动翻译 / 图数据三态矩阵；
- * 组件化轮新增：list 三态（全部档白名单/空集短路零查库/求值失败 fail-closed）、detail/diagram
- * IDOR 收口（4018 + deny 三参补痕 + deny 降级不阻断）、title 列级经真 DataPermColumnApplier +
- * 真 DataPermScopeVo.toColumnScope() 端到端（D14 教训：不 mock 到底）。
+ * §3 行级/列级语义 + 谓词轮 2026-10-11 §4.1 增量）：分页配置渲染 / 4010 先行 / 三源时间线 /
+ * 嵌套 VO 手动翻译 / 图数据三态矩阵；组件化轮：list 三态（全部档白名单/空集短路零查库/
+ * 求值失败 fail-closed）、detail/diagram IDOR 收口（4018 + deny 三参补痕 + deny 降级不阻断）、
+ * title 列级经真 DataPermColumnApplier + 真 DataPermScopeVo.toColumnScope() 端到端
+ * （D14 教训：不 mock 到底）；谓词轮（D33/D34）：条件组 toRowFilter 透传 + detail 行属性判定
+ * （entity typed 形态 / ALL+条件 owner 无关 4018）——v1 四参构造 ScopeVo 经 toRowFilter
+ * 回退分支保持既有断言语义（机械切换）。
  */
 @ExtendWith(MockitoExtension.class)
 class ApprovalQueryServiceTest {
@@ -87,7 +93,7 @@ class ApprovalQueryServiceTest {
         Page<BpmnApproval> page = new Page<>(1, 5);
         page.setRecords(List.of(approval(StatusEnum.APPROVING.getCode())));
         page.setTotal(1);
-        when(approvalMapper.pageList(any(Page.class), argThat(DataScope::isAll))).thenReturn(page);
+        when(approvalMapper.pageList(any(Page.class), argThat(RowFilter::isRowAll))).thenReturn(page);
         stubConfig();
 
         PageResult<ApprovalVo> result = service.pageListMy(query(), "userA");
@@ -109,7 +115,7 @@ class ApprovalQueryServiceTest {
         Page<BpmnApproval> page = new Page<>(1, 5);
         page.setRecords(List.of(approval(StatusEnum.APPROVING.getCode())));
         page.setTotal(1);
-        when(approvalMapper.pageList(any(Page.class), argThat(DataScope::isAll))).thenReturn(page);
+        when(approvalMapper.pageList(any(Page.class), argThat(RowFilter::isRowAll))).thenReturn(page);
         when(businessTypeRegistry.findByTypeCodeOrNull("leave")).thenReturn(null);
 
         PageResult<ApprovalVo> result = service.pageListMy(query(), "userA");
@@ -128,8 +134,9 @@ class ApprovalQueryServiceTest {
         Page<BpmnApproval> page = new Page<>(1, 5);
         page.setRecords(List.of(approval(StatusEnum.APPROVING.getCode())));
         page.setTotal(1);
-        when(approvalMapper.pageList(any(Page.class), argThat(scope ->
-                !scope.isAll() && scope.getAccounts().equals(Set.of("userA"))))).thenReturn(page);
+        when(approvalMapper.pageList(any(Page.class), argThat(filter ->
+                !filter.isRowAll() && filter.getGroups().get(0).getAccounts().equals(Set.of("userA")))))
+                .thenReturn(page);
         stubConfig();
 
         PageResult<ApprovalVo> result = service.pageListMy(query(), "userA");
@@ -173,6 +180,28 @@ class ApprovalQueryServiceTest {
                 .extracting("code")
                 .isEqualTo(1002);
         verifyNoInteractions(approvalMapper);
+    }
+
+    @Test
+    void pageListMy_conditionalGroups_rowFilterPassedToMapper() {
+        // ALL+条件组（id BETWEEN 1~100，owner 无关）：rowGroups wire 形态 → toRowFilter 类型化 →
+        // mapper 收组间 OR（无条件并组在首 + ALL 条件组含谓词，D33）
+        DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of("userA"), List.of(), List.of(),
+                List.of(new RowGroupVo(false, List.of("userA"), List.of()),
+                        new RowGroupVo(true, List.of(), List.of(idBetween(1, 100)))));
+        stubEval(scopeVo, "userA", "list", null);
+        Page<BpmnApproval> page = new Page<>(1, 5);
+        page.setTotal(0);
+        when(approvalMapper.pageList(any(Page.class), argThat(filter ->
+                !filter.isRowAll() && filter.getGroups().size() == 2
+                        && filter.getGroups().get(0).getPredicates().isEmpty()
+                        && filter.getGroups().get(1).isAllAccounts()
+                        && filter.getGroups().get(1).getPredicates().size() == 1))).thenReturn(page);
+
+        service.pageListMy(query(), "userA");
+
+        // matcher 内联即断言：组形态达 mapper（类型化值 BigDecimal 由 argThat 形状间接覆盖）
+        verify(approvalMapper).pageList(any(Page.class), any(RowFilter.class));
     }
 
     // ---- findById ----
@@ -292,6 +321,51 @@ class ApprovalQueryServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4018);
+    }
+
+    // ---- findById/diagram：谓词轮 D34 行属性判定 ----
+
+    @Test
+    void findById_allPlusIdPredicate_rowOutOfCondition_deniesAndRejects4018() {
+        // ALL+id BETWEEN 1~100：本人单 id=150 ∉ [1,100] → 谓词不满足 → 组失败 → 4018 + deny
+        //（owner 无关证明：账号维放行救不回条件不满足，契约 §4.1）
+        BpmnApproval approval = approval(StatusEnum.APPROVING.getCode());
+        approval.setId(150L);
+        when(approvalMapper.findById(150L)).thenReturn(approval);
+        DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
+                List.of(new RowGroupVo(true, List.of(), List.of(idBetween(1, 100)))));
+        stubEval(scopeVo, "userA", "detail", "150");
+        when(dataPermClient.deny(new DataPermDenyRequest("userA", "bpmn_approval", "150")))
+                .thenReturn(R.ok());
+
+        assertThatThrownBy(() -> service.findById(150L, "userA"))
+                .isInstanceOf(BusinessException.class)
+                .extracting("code")
+                .isEqualTo(4018);
+        verify(dataPermClient).deny(new DataPermDenyRequest("userA", "bpmn_approval", "150"));
+        verifyNoInteractions(taskService, historyService);
+    }
+
+    @Test
+    void findById_createTimeGte_typedEntityCoercion_visible() {
+        // entity typed 形态（D34 bpmn 侧验证点）：createTime LocalDateTime 直比 DATETIME 归一值
+        when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
+        PredicateVo createTimeGte = new PredicateVo("createTime", "create_time", "GTE",
+                FilterColumnTypeEnum.DATETIME, List.of("2026-01-01 00:00:00"));
+        DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
+                List.of(new RowGroupVo(true, List.of(), List.of(createTimeGte))));
+        stubEval(scopeVo, "userA", "detail", "5");
+        stubConfig();
+        when(taskService.getProcessInstanceComments("pid-1")).thenReturn(List.of());
+        when(translationCacheService.findDictLabels(eq("bpmn_approval_status"), anySet()))
+                .thenReturn(Map.of());
+        when(translationCacheService.findUserNames(anySet())).thenReturn(Map.of());
+
+        ApprovalDetailVo detail = service.findById(5L, "userA");
+
+        // approval.createTime=2026-10-08 10:00 ≥ 2026-01-01 → 可见（BaseEntity 层级字段取值命中）
+        assertThat(detail.getApproval().getId()).isEqualTo(5L);
+        verify(dataPermClient, never()).deny(any(DataPermDenyRequest.class));
     }
 
     // ---- findDiagram（三态矩阵：撤销=历史缺失防御 / 运行中 / 终态） ----
@@ -440,6 +514,12 @@ class ApprovalQueryServiceTest {
     /** 全部档求值桩（无列动作）：等价旧「恒按申请人」语义在 admin 视角的期望终态 */
     private void stubEvalAll(String account, String operation, String businessKey) {
         stubEval(new DataPermScopeVo(true, List.of(), List.of(), List.of()), account, operation, businessKey);
+    }
+
+    /** id BETWEEN 谓词（wire 字符串承载形态——provider toScopeVo 回写同款） */
+    private PredicateVo idBetween(long low, long high) {
+        return new PredicateVo("id", "id", "BETWEEN",
+                FilterColumnTypeEnum.NUMBER, List.of(String.valueOf(low), String.valueOf(high)));
     }
 
     /** 求值桩（DataPermEvaluateRequest @Data equals 精确匹配四参） */

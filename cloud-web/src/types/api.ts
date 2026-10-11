@@ -577,6 +577,43 @@ export interface ColumnRuleVo {
 }
 
 /**
+ * 谓词操作符封闭集（契约 2026-10-11-dataperm-predicate-api §1.2，联合类型即值域镜像）：
+ * 明确不在值域——LIKE/前缀类一切模糊操作符、GT/LT/NE/IS-NULL（配了后端 1002「操作符无效」）
+ */
+export type PredicateOperator = 'EQ' | 'IN' | 'BETWEEN' | 'GTE' | 'LTE'
+
+/**
+ * 可过滤列类型（契约 2026-10-11-dataperm-predicate-api §1.3，联合类型即值域镜像）：
+ * 值输入器与格式校验的类型驱动依据——NUMBER `^-?\d+(\.\d+)?$`（禁科学计数）/
+ * STRING ≤50 字符（大小写+尾随空格不敏感比较）/ DATE `yyyy-MM-dd` / DATETIME `yyyy-MM-dd HH:mm:ss`
+ */
+export type FilterColumnType = 'NUMBER' | 'STRING' | 'DATE' | 'DATETIME'
+
+/**
+ * 条件谓词三元组（契约 2026-10-11-dataperm-predicate-api §5.1，save 入参与 rule/config/explain 出参共用）：
+ * 规则的条件组成员，组内多条件 AND、与档位行内 AND（可见行 = 档位账号集合 ∧ 条件组全满足，§1.1）；
+ * field 为 entity 字段名（camelCase 如 leaveType——与列级可配列 columnKey 的 VO 字段名锚点不同，§1.4）；
+ * values 统一字符串承载（Long→String 既有约定防精度）：EQ/GTE/LTE=1 个、BETWEEN=2 个（有序闭区间）、IN=1~30 个
+ */
+export interface PredicateItem {
+  field: string
+  operator: PredicateOperator
+  values: string[]
+}
+
+/**
+ * 可过滤列 VO（契约 2026-10-11-dataperm-predicate-api §5.2）：资源注册表 filterColumns 项——
+ * 条件段「列」下拉与类型驱动值输入器的数据源；field=entity 字段名（条件配置与回显的 key），
+ * column=裸 DB 列名（调试参考，前端不消费），label=中文列名（下拉与摘要文案）
+ */
+export interface FilterColumnVo {
+  field: string
+  column: string
+  type: FilterColumnType
+  label: string
+}
+
+/**
  * 规则分页行 VO（契约 §6.2）：GET /system/data-perm/rule/page 出参行
  * - subjectType 0=角色 / 1=用户；subjectName 后端补（主体已删时 "(已删除)" 降级）
  * - customAccounts 仅 CUSTOM 档非空（其余档 []）；columns 无列规则为 []
@@ -590,6 +627,10 @@ export interface DataPermRuleVo {
   rowScope: number
   customAccounts: string[]
   columns: ColumnRuleVo[]
+  /** 条件组配置原样（契约 2026-10-11-dataperm-predicate-api §2.1 增量，必返，无条件 []） */
+  predicates?: PredicateItem[]
+  /** 条件中文摘要（后端单源生成，契约 §2.1 增量，必返；无条件 null → 表格「条件」列显示 '-'） */
+  predicateSummary?: string | null
   updateBy: string | null
   updateTime: string | null
 }
@@ -606,12 +647,19 @@ export interface DataPermRuleConfigVo {
   rowScope: number | null
   customAccounts: string[]
   columns: ColumnRuleVo[]
+  /** 条件组回显（契约 2026-10-11-dataperm-predicate-api §2.2 增量，必返；configured=false 时空数组）——弹窗条件段据此回显 */
+  predicates?: PredicateItem[]
+  /** 条件中文摘要（契约 §2.2 增量，必返；无条件 null） */
+  predicateSummary?: string | null
 }
 
-/** 资源注册表 VO（契约 §6.4）：试点单元素 { resource:"leave", columns:["title","reason"] }；列配置动态渲染数据源 */
+/** 资源注册表 VO（契约 §6.4）：列配置动态渲染数据源；filterColumns 为谓词增量（见下） */
 export interface DataPermResourceVo {
   resource: string
   columns: string[]
+  /** 可过滤列清单（契约 2026-10-11-dataperm-predicate-api §2.4 增量，必返）——条件段列下拉数据源；
+   * 与 columns（列级可配列，VO 字段名，String only）语义/锚点显式区分（契约 §1.4） */
+  filterColumns: FilterColumnVo[]
 }
 
 /** 主体选项 VO（契约 §6.5）：id 为字符串（Long→String）；label 后端拼好（角色=角色名；用户=`昵称(账号)`） */
@@ -650,6 +698,8 @@ export interface HitRuleVo {
   customCount: number
   /** 该规则展开账号数 */
   expandedCount: number
+  /** 命中规则的条件配置回显（契约 2026-10-11-dataperm-predicate-api §2.5 增量，必返，无条件 []） */
+  predicates?: PredicateItem[]
 }
 
 /** 列决策 VO（契约 §6.7 ColumnDecisionVo）：explain 出参内嵌；无动作为 [] */
@@ -717,6 +767,12 @@ export interface DataPermRuleSavePayload {
   rowScope: number
   customAccounts?: string[]
   columns?: ColumnRuleItem[]
+  /**
+   * 条件组（契约 2026-10-11-dataperm-predicate-api §2.3 增量）：组内 AND、与档位行内 AND；
+   * null/[] = 无条件（档位即全量语义）——upsert 全量覆盖语义下不传即清空条件，前端显式提交 []；
+   * 后端校验链权威（3035 列不在清单 / 1002 操作符无效与同列重复 / 3036 矩阵 / 3037 值形态），前端同值拦截仅友好提示
+   */
+  predicates?: PredicateItem[]
 }
 
 /** 决策留痕分页入参（契约 §3.7）：筛选可选（账号/资源精确） */
@@ -759,6 +815,50 @@ export const SUBJECT_USER = 1
 export const OP_LIST = 'list'
 export const OP_DETAIL = 'detail'
 export const OP_DENY = 'deny'
+
+/* ---- 数据权限谓词常量（契约 2026-10-11-dataperm-predicate-api §1/§2.3/§8：禁魔法数/散落字面量） ---- */
+
+/** 谓词操作符 name（契约 §1.2 封闭集）：等于/属于/介于/大于等于/小于等于 */
+export const OPERATOR_EQ = 'EQ'
+export const OPERATOR_IN = 'IN'
+export const OPERATOR_BETWEEN = 'BETWEEN'
+export const OPERATOR_GTE = 'GTE'
+export const OPERATOR_LTE = 'LTE'
+
+/** 可过滤列类型（契约 §1.3）：值输入器类型驱动依据（NUMBER 数值/STRING 短文本/DATE 日期/DATETIME 日期时间） */
+export const FILTER_TYPE_NUMBER = 'NUMBER'
+export const FILTER_TYPE_STRING = 'STRING'
+export const FILTER_TYPE_DATE = 'DATE'
+export const FILTER_TYPE_DATETIME = 'DATETIME'
+
+/** 谓词上限（契约 §1.1：后端 §2.3 校验链 3037 权威，前端同值拦截仅友好提示）：
+ * PREDICATE_MAX 条件数/规则、IN_VALUE_MAX 属于值个数、STRING_VALUE_MAX 字符串值字符数 */
+export const PREDICATE_MAX = 5
+export const IN_VALUE_MAX = 30
+export const STRING_VALUE_MAX = 50
+
+/**
+ * 操作符候选表（契约 §1.2）：中文 label **双处冻结点**——契约 §1.2 与本前端常量两处对齐，
+ * 任一变更即契约变更（中文同时是后端 predicateSummary/narratives 文案用字，改字会造成前后端摘要口径漂移）
+ */
+export const OPERATOR_OPTIONS: { value: PredicateOperator; label: string }[] = [
+  { value: OPERATOR_EQ, label: '等于' },
+  { value: OPERATOR_IN, label: '属于' },
+  { value: OPERATOR_BETWEEN, label: '介于' },
+  { value: OPERATOR_GTE, label: '大于等于' },
+  { value: OPERATOR_LTE, label: '小于等于' },
+]
+
+/**
+ * 操作符×类型矩阵前端镜像（契约 §1.2「适用类型」列）：NUMBER/DATE/DATETIME 全五操作符，
+ * STRING 仅 EQ/IN（STRING×BETWEEN/GTE/LTE 后端 3036 拒绝——下拉过滤使其不可选）
+ */
+export function operatorsForType(type: FilterColumnType): { value: PredicateOperator; label: string }[] {
+  if (type === FILTER_TYPE_STRING) {
+    return OPERATOR_OPTIONS.filter((opt) => opt.value === OPERATOR_EQ || opt.value === OPERATOR_IN)
+  }
+  return OPERATOR_OPTIONS
+}
 
 /** 数据权限资源标识（契约 2026-10-10-dataperm-component-api §1/§4）：审批单（bpmn 远程资源，
  * 可配列 title）——审批页 my-scope 提示条入参；资源字面量唯一声明点，页面一律引本常量 */

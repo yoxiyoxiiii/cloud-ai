@@ -29,6 +29,13 @@ public class DataPermRuleSaveRequest implements Serializable {
     /** CUSTOM 档(3)账号集合：该档必填非空（1002）且逐账号存在启用（3033）；其余档必须空（1002） */
     private List<String> customAccounts;
 
+    /**
+     * 条件组（谓词轮契约 §2.3，null/[] = 无条件）：组内多条件 AND、与档位行内 AND；
+     * 逐条件校验链 3035（列）→ 1002（操作符）→ 3036（矩阵）→ 3037（值）→ 1002（同列重复），
+     * 规则级 3037（条件数 ≤5、序列化 ≤2000）。无条件配置行为与 v1 逐字等价（D40 红线）。
+     */
+    private List<PredicateItem> predicates;
+
     /** 列规则列表（null/[] = 清空列规则；columnKey 不重复 1002） */
     private List<ColumnRuleItem> columns;
 

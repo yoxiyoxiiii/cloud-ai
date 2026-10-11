@@ -30,6 +30,9 @@ public interface DataPermRuleMapper {
     /** 注册表一致性检查（设计 D17）：全表 DISTINCT resource（物理删表无 deleted 条件；启动一次性全扫配置态小表） */
     List<String> listDistinctResources();
 
+    /** 一致性检查第三维度（谓词轮 D39）：全表规则（predicates 逐条解析与字段越界检查，启动一次性全扫） */
+    List<SysDataPermRule> listAll();
+
     /** 删除前置存在性读取（契约 §3.4：不存在 → 3031） */
     SysDataPermRule findById(@Param("id") Long id);
 

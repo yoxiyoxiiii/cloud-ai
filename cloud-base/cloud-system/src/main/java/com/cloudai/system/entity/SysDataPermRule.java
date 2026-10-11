@@ -31,6 +31,13 @@ public class SysDataPermRule implements Serializable {
     /** 自定义账号集合（rowScope=CUSTOM 时生效，JSON 数组字符串；其余档位 NULL） */
     private String customAccounts;
 
+    /**
+     * 行级条件组（谓词轮 D30，JSON 数组串，如 [{"field":"leaveType","operator":"EQ","values":["1"]}]；
+     * 元素 {field=entity 字段名, operator=枚举 name, values=字符串数组}）：NULL/空 = 无条件
+     * （档位即全量语义，存量规则零变化）；组内多条件 AND，跨规则并集；DDL VARCHAR(2000)。
+     */
+    private String predicates;
+
     private String createBy;
 
     private LocalDateTime createTime;

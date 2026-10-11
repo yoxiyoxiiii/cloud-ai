@@ -6,6 +6,13 @@ import com.cloudai.common.security.util.SecurityUtils;
 import com.cloudai.system.api.dataperm.ColumnScope;
 import com.cloudai.system.api.dataperm.DataPermOperation;
 import com.cloudai.system.api.dataperm.DataScope;
+import com.cloudai.system.api.dataperm.FilterColumn;
+import com.cloudai.system.api.dataperm.PredicateOperatorEnum;
+import com.cloudai.system.api.dataperm.RowFilter;
+import com.cloudai.system.api.dataperm.RowGroup;
+import com.cloudai.system.api.dataperm.RowPredicate;
+import com.cloudai.system.convert.DataPermConvert;
+import com.cloudai.system.dto.PredicateItem;
 import com.cloudai.system.entity.SysDataPermColumn;
 import com.cloudai.system.entity.SysDataPermLog;
 import com.cloudai.system.entity.SysDataPermRule;
@@ -46,6 +53,10 @@ import java.util.stream.Collectors;
  * 组件化轮（2026-10-10 D18/D23）：终态类型 DataScope/ColumnScope/DataPermOperation 改引 api 包
  * （行为零变更）；新增 evaluateFor 账号显式入口（/inner/data-perm 跨服务求值薄壳底层），
  * logDeny 签名账号显式化——leave 本地调用路径行为不变（D26）。
+ * 谓词轮（2026-10-11 D31/D33/D39）：resolveRowScope 升级 resolveRowFilter——每规则解析条件组并
+ * enrichment（坏 JSON/越界字段/归一失败 → 该规则整体不授权，fail-closed 无放行分支）、豁免判定
+ * （ALL 无条件才豁免——ALL+条件不豁免）、无条件规则并成单组 + 死组丢弃；无条件用户代数输出与
+ * 旧版逐字等价（单规则退化为单组 (apply_user IN (...))，dataScope 账号并集口径不变——零 diff 红线）。
  */
 @Slf4j
 @Service
@@ -155,7 +166,7 @@ public class DataPermEvaluator {
         decision.setAccount(account);
         decision.setOperation(operation);
         List<SysDataPermRule> rules = collectRules(resource, userId, roleIds);
-        resolveRowScope(account, userId, rules, decision);
+        resolveRowFilter(resource, account, userId, rules, decision);
         resolveColumns(resource, userId, roleIds, decision);
         buildNarratives(decision);
         return decision;
@@ -173,29 +184,144 @@ public class DataPermEvaluator {
         return rules;
     }
 
-    /** 行级收敛（D3）：任一 ALL → all=true 短路（其余规则不再展开）；否则逐档展开并集 */
-    private void resolveRowScope(String account, Long userId, List<SysDataPermRule> rules,
-                                 DataPermDecision decision) {
+    /**
+     * 行级收敛（D3 + 谓词轮 D31 四步代数）：解析 enrichment → 豁免判定 → 逐规则建组 → 合并。
+     * <b>无条件规则零 diff</b>：无规则默认 SELF 单组、非豁免逐档展开并集、豁免 all() 短路——
+     * dataScope 取值与旧版逐字等价；rowFilter 为行集判定唯一权威（list SQL / detail 判定读它）。
+     */
+    private void resolveRowFilter(String resource, String account, Long userId, List<SysDataPermRule> rules,
+            DataPermDecision decision) {
         List<DataPermDecision.HitRule> hits = rules.stream().map(r -> toHitRule(r, account)).toList();
         decision.setHitRules(new ArrayList<>(hits));
         if (rules.isEmpty()) {
             // 无规则默认 SELF（fail-safe，D3）：普通用户「我的请假」行为与旧版一致；匿名防御=空集
-            decision.setDataScope(account == null ? DataScope.of(Set.of()) : DataScope.of(Set.of(account)));
+            applyDefaultSelfScope(account, decision);
             return;
         }
-        boolean all = rules.stream().anyMatch(
-                r -> Integer.valueOf(SysDataPermRule.RowScopeEnum.ALL.getCode()).equals(r.getRowScope()));
-        if (all) {
-            decision.setDataScope(DataScope.all());
-            return;
-        }
-        Set<String> accounts = new HashSet<>();
+        List<List<RowPredicate>> predicatesPerRule = new ArrayList<>();
         for (int i = 0; i < rules.size(); i++) {
-            Set<String> expanded = expandRule(account, userId, rules.get(i));
-            accounts.addAll(expanded);
-            decision.getHitRules().get(i).setExpandedCount(expanded.size());
+            predicatesPerRule.add(enrichRulePredicates(resource, rules.get(i), decision.getHitRules().get(i)));
         }
-        decision.setDataScope(DataScope.of(accounts));
+        if (hasExemptRule(rules, predicatesPerRule)) {
+            // 豁免态（任一 ALL 无条件）：rowAll 短路；dataScope 保持 all() 既有取值（零 diff 红线记档）
+            decision.setDataScope(DataScope.all());
+            decision.setRowFilter(RowFilter.rowAll());
+            return;
+        }
+        mergeGroups(account, userId, rules, predicatesPerRule, decision);
+    }
+
+    /** 无规则默认 SELF 落 filter 形态（行集=apply_user IN ({自己})，与 dataScope 逐字等价） */
+    private void applyDefaultSelfScope(String account, DataPermDecision decision) {
+        Set<String> selfOnly = account == null ? Set.of() : Set.of(account);
+        decision.setDataScope(DataScope.of(selfOnly));
+        decision.setRowFilter(selfOnly.isEmpty() ? RowFilter.of(List.of())
+                : RowFilter.of(List.of(RowGroup.of(false, selfOnly, List.of()))));
+    }
+
+    /**
+     * 规则条件组解析 + enrichment（D33/D39）：JSON 坏 / 字段越界 / 值归一失败 → 返回 null =
+     * 该规则整体不授权（组与账号维均不贡献，fail-closed 无放行分支——不部分采用：组内 AND
+     * 部分采用即放大语义）。成功返回空列表（无条件）或类型化谓词列表（条件规则）。
+     */
+    private List<RowPredicate> enrichRulePredicates(String resource, SysDataPermRule rule,
+            DataPermDecision.HitRule hit) {
+        List<PredicateItem> items = DataPermConvert.parsePredicates(rule.getPredicates());
+        if (items == null) {
+            return null;
+        }
+        hit.setPredicates(items);
+        if (items.isEmpty()) {
+            return List.of();
+        }
+        List<RowPredicate> enriched = new ArrayList<>();
+        for (PredicateItem item : items) {
+            RowPredicate predicate = enrichPredicate(resource, item);
+            if (predicate == null) {
+                return null;
+            }
+            enriched.add(predicate);
+        }
+        return enriched;
+    }
+
+    /** 单条件 enrichment：注册表定位声明列（3035 同源）→ 操作符枚举 → 值逐个类型化；任一失败 null */
+    private RowPredicate enrichPredicate(String resource, PredicateItem item) {
+        FilterColumn declared = DataPermResources.findFilterColumn(resource, item.getField());
+        if (declared == null) {
+            log.error("条件字段不在资源可过滤清单（该规则整体不授权，D39）：resource={}, field={}",
+                    resource, item.getField());
+            return null;
+        }
+        PredicateOperatorEnum operator;
+        try {
+            operator = PredicateOperatorEnum.of(item.getOperator());
+        } catch (IllegalArgumentException e) {
+            log.error("条件操作符非法（该规则整体不授权，D39）：resource={}, field={}, operator={}",
+                    resource, item.getField(), item.getOperator());
+            return null;
+        }
+        try {
+            List<Object> typed = new ArrayList<>();
+            for (String value : item.getValues() == null ? List.<String>of() : item.getValues()) {
+                typed.add(declared.type().normalize(value));
+            }
+            return RowPredicate.of(item.getField(), declared.column(), operator, typed);
+        } catch (IllegalArgumentException e) {
+            log.error("条件值归一失败（该规则整体不授权，D39）：resource={}, field={}", resource, item.getField(), e);
+            return null;
+        }
+    }
+
+    /** 豁免判定（D31 ①）：任一 ALL 档且无条件（解析失败规则不构成豁免——fail-closed） */
+    private boolean hasExemptRule(List<SysDataPermRule> rules, List<List<RowPredicate>> predicatesPerRule) {
+        for (int i = 0; i < rules.size(); i++) {
+            if (isAllTier(rules.get(i))
+                    && predicatesPerRule.get(i) != null && predicatesPerRule.get(i).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 组装（D31 ②③）：无条件规则账号并成单组（首位——单规则用户退化为 (apply_user IN (...))，
+     * 与旧 SQL 行集语义逐字等价）；死组（!allAccounts && 账号空）丢弃——AND 语义下条件救不回账号空集；
+     * dataScope=非 ALL 活规则账号维并集（ALL+条件规则展开恒空集零贡献，与旧版一致）。
+     */
+    private void mergeGroups(String account, Long userId, List<SysDataPermRule> rules,
+            List<List<RowPredicate>> predicatesPerRule, DataPermDecision decision) {
+        List<RowGroup> groups = new ArrayList<>();
+        Set<String> unconditionalAccounts = new LinkedHashSet<>();
+        Set<String> accountUnion = new HashSet<>();
+        for (int i = 0; i < rules.size(); i++) {
+            SysDataPermRule rule = rules.get(i);
+            List<RowPredicate> predicates = predicatesPerRule.get(i);
+            Set<String> expanded = expandRule(account, userId, rule);
+            decision.getHitRules().get(i).setExpandedCount(expanded.size());
+            if (predicates == null) {
+                continue; // D39 降级规则：整体不授权（组与账号维均不贡献）
+            }
+            accountUnion.addAll(expanded);
+            if (predicates.isEmpty()) {
+                unconditionalAccounts.addAll(expanded);
+                continue;
+            }
+            if (!isAllTier(rule) && expanded.isEmpty()) {
+                continue; // 死组丢弃（D31 ③）
+            }
+            groups.add(RowGroup.of(isAllTier(rule), expanded, predicates));
+        }
+        if (!unconditionalAccounts.isEmpty()) {
+            groups.add(0, RowGroup.of(false, unconditionalAccounts, List.of()));
+        }
+        decision.setDataScope(DataScope.of(accountUnion));
+        decision.setRowFilter(RowFilter.of(groups));
+    }
+
+    /** 档位是否 ALL（与 RowScopeEnum.of 判定同源的字面量封装，私有 helper 免枚举散落） */
+    private boolean isAllTier(SysDataPermRule rule) {
+        return Integer.valueOf(SysDataPermRule.RowScopeEnum.ALL.getCode()).equals(rule.getRowScope());
     }
 
     /** 单规则按档展开为账号集合：SELF→{自己}；DEPT/DEPT_AND_CHILD→部门成员；CUSTOM→JSON 解析 */
@@ -308,10 +434,13 @@ public class DataPermEvaluator {
         return account;
     }
 
-    /** narratives（全中文可解释）：每命中规则一句 + 收敛结论一句 + 列决策一句 */
+    /** narratives（全中文可解释）：每命中规则一句 + 每条件一句 + 收敛结论一句 + 列决策一句 */
     private void buildNarratives(DataPermDecision decision) {
         List<String> narratives = decision.getNarratives();
-        decision.getHitRules().forEach(hit -> narratives.add(ruleNarrative(hit)));
+        decision.getHitRules().forEach(hit -> {
+            narratives.add(ruleNarrative(hit));
+            addPredicateNarratives(decision.getResource(), hit, narratives);
+        });
         narratives.add(scopeNarrative(decision));
         if (!decision.getColumnScope().isEmpty()) {
             narratives.add(columnNarrative(decision.getColumnScope()));
@@ -330,6 +459,40 @@ public class DataPermEvaluator {
         return sb.toString();
     }
 
+    /** 每条件一句（契约 §2.5，谓词轮 D36）：命中条件：{列label} {操作符中文} {值}——IN 顿号连接、BETWEEN v0~v1 */
+    private void addPredicateNarratives(String resource, DataPermDecision.HitRule hit, List<String> narratives) {
+        if (hit.getPredicates() == null) {
+            return;
+        }
+        for (PredicateItem item : hit.getPredicates()) {
+            String sentence = predicateNarrative(resource, item);
+            if (sentence != null) {
+                narratives.add(sentence);
+            }
+        }
+    }
+
+    /** 单条件叙述句：列声明/操作符/值形态缺失（越界配置）不叙述——explain 的 HitRuleVo.predicates 仍原样回显 */
+    private String predicateNarrative(String resource, PredicateItem item) {
+        FilterColumn declared = DataPermResources.findFilterColumn(resource, item.getField());
+        PredicateOperatorEnum operator;
+        try {
+            operator = PredicateOperatorEnum.of(item.getOperator());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+        if (declared == null || item.getValues() == null || item.getValues().isEmpty()
+                || (operator == PredicateOperatorEnum.BETWEEN && item.getValues().size() < 2)) {
+            return null;
+        }
+        String valueText = switch (operator) {
+            case IN -> String.join("、", item.getValues());
+            case BETWEEN -> item.getValues().get(0) + "~" + item.getValues().get(1);
+            default -> item.getValues().get(0);
+        };
+        return "命中条件：" + declared.label() + " " + operator.getLabel() + " " + valueText;
+    }
+
     private String scopeNarrative(DataPermDecision decision) {
         if (decision.getDataScope().isAll()) {
             return "行范围收敛：全部（行过滤豁免）";
@@ -337,10 +500,31 @@ public class DataPermEvaluator {
         if (decision.getHitRules().isEmpty()) {
             return "无规则命中，默认仅自己";
         }
-        if (decision.getDataScope().isEmptyScope()) {
+        int conditional = countConditionalRules(decision);
+        if (rowScopeEmpty(decision)) {
             return "行范围收敛：空集（无可见数据）";
         }
+        if (conditional > 0) {
+            // 谓词轮 D36：含条件时账号数不再是行集语义——改述规则构成
+            return "行范围收敛：并集含条件过滤（" + decision.getHitRules().size() + " 条规则，"
+                    + conditional + " 条含条件）";
+        }
         return "行范围收敛：并集共 " + decision.getDataScope().getAccounts().size() + " 个账号";
+    }
+
+    /** 含条件命中规则数（label/摘要/结论句增量判据，D36） */
+    private int countConditionalRules(DataPermDecision decision) {
+        return (int) decision.getHitRules().stream()
+                .filter(hit -> hit.getPredicates() != null && !hit.getPredicates().isEmpty())
+                .count();
+    }
+
+    /** 空集判据 v2（D31）：rowFilter 优先（ALL+条件用户 dataScope 空但行集非空）；rowFilter 缺席回退 dataScope */
+    private boolean rowScopeEmpty(DataPermDecision decision) {
+        if (decision.getRowFilter() != null) {
+            return decision.getRowFilter().isEmptyScope();
+        }
+        return decision.getDataScope().isEmptyScope();
     }
 
     private String columnNarrative(ColumnScope columnScope) {
@@ -370,15 +554,15 @@ public class DataPermEvaluator {
         }
     }
 
-    /** 决策摘要（设计 §5.2 格式示例）：role:主管(id=2)本部门及以下展开8人|user:zhang3(id=5)自定义集合2人 */
+    /** 决策摘要（设计 §5.2 + 谓词轮 D36）：无条件形态逐字不变；条件规则尾缀 ∧{条件摘要} */
     private String digestRules(DataPermDecision decision) {
         String digest = decision.getHitRules().stream()
-                .map(this::digestRule)
+                .map(hit -> digestRule(decision.getResource(), hit))
                 .collect(Collectors.joining("|"));
         return digest.length() > DIGEST_MAX ? digest.substring(0, DIGEST_MAX) : digest;
     }
 
-    private String digestRule(DataPermDecision.HitRule hit) {
+    private String digestRule(String resource, DataPermDecision.HitRule hit) {
         String kind = Integer.valueOf(SysDataPermRule.SubjectTypeEnum.ROLE.getCode()).equals(hit.getSubjectType())
                 ? "role:" : "user:";
         StringBuilder sb = new StringBuilder(kind).append(hit.getSubjectName())
@@ -387,15 +571,61 @@ public class DataPermEvaluator {
         if (hit.getExpandedCount() > 0) {
             sb.append("展开").append(hit.getExpandedCount()).append("人");
         }
+        String predDigest = predicateDigest(resource, hit.getPredicates());
+        if (!predDigest.isEmpty()) {
+            sb.append("∧").append(predDigest);
+        }
         return sb.toString();
     }
 
-    /** 范围结论：all=过滤豁免 / accounts=N / empty=空集（无规则默认 SELF 命中 accounts≥1） */
+    /**
+     * 条件摘要（契约 §1.6 ASCII 紧凑型）：EQ {column}={v} / GTE {column}&gt;={v} / LTE {column}&lt;={v} /
+     * BETWEEN {column}:{v0}~{v1} / IN {column}:{v1,v2}（IN 形态契约未示例，本轮外推定义——分号连接）。
+     * 越界条件/非法操作符跳过（求值 enrichment 已拒其授权；explain 出参仍有原样回显可排查）。
+     */
+    private String predicateDigest(String resource, List<PredicateItem> predicates) {
+        if (predicates == null || predicates.isEmpty()) {
+            return "";
+        }
+        List<String> parts = new ArrayList<>();
+        for (PredicateItem item : predicates) {
+            FilterColumn declared = DataPermResources.findFilterColumn(resource, item.getField());
+            PredicateOperatorEnum operator;
+            try {
+                operator = PredicateOperatorEnum.of(item.getOperator());
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+            if (declared == null || item.getValues() == null || item.getValues().isEmpty()
+                    || (operator == PredicateOperatorEnum.BETWEEN && item.getValues().size() < 2)) {
+                continue;
+            }
+            parts.add(digestPredicate(declared.column(), operator, item.getValues()));
+        }
+        return String.join(";", parts);
+    }
+
+    private String digestPredicate(String column, PredicateOperatorEnum operator, List<String> values) {
+        return switch (operator) {
+            case EQ -> column + "=" + values.get(0);
+            case GTE -> column + ">=" + values.get(0);
+            case LTE -> column + "<=" + values.get(0);
+            case IN -> column + ":" + String.join(",", values);
+            case BETWEEN -> column + ":" + values.get(0) + "~" + values.get(1);
+        };
+    }
+
+    /** 范围结论：all=过滤豁免 / empty=空集 / accounts=N（无条件，逐字不变）/ accounts=N;cond=K（含条件，D36） */
     private String summarizeScope(DataPermDecision decision) {
         if (decision.getDataScope().isAll()) {
             return "all";
         }
-        return decision.getDataScope().isEmptyScope() ? "empty"
+        if (rowScopeEmpty(decision)) {
+            return "empty";
+        }
+        int conditional = countConditionalRules(decision);
+        return conditional > 0
+                ? "accounts=" + decision.getDataScope().getAccounts().size() + ";cond=" + conditional
                 : "accounts=" + decision.getDataScope().getAccounts().size();
     }
 }

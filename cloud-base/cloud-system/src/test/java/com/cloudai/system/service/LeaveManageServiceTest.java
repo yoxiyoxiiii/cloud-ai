@@ -12,6 +12,10 @@ import com.cloudai.system.api.dataperm.ColumnScope;
 import com.cloudai.system.service.dataperm.DataPermDecision;
 import com.cloudai.system.service.dataperm.DataPermEvaluator;
 import com.cloudai.system.api.dataperm.DataScope;
+import com.cloudai.system.api.dataperm.PredicateOperatorEnum;
+import com.cloudai.system.api.dataperm.RowFilter;
+import com.cloudai.system.api.dataperm.RowGroup;
+import com.cloudai.system.api.dataperm.RowPredicate;
 import com.cloudai.system.vo.SysLeaveDetailVo;
 import com.cloudai.system.vo.SysLeaveVo;
 import com.cloudai.system.vo.UserOptionVo;
@@ -22,6 +26,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,10 +42,11 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * 请假读路径单测（数据权限轮契约 2026-10-10-data-permission-api §4 取代版）：
- * 分页按求值范围（all 豁免/空集短路/白名单 IN）+ 姓名恒返 + 列级动作；详情行级判定 +
- * 3026 IDOR 收口（deny 留痕）；投影派生 status 语义随上轮不变（mapper mock，SQL 正确性靠
- * B8 EXPLAIN+联调）。
+ * 请假读路径单测（数据权限轮契约 §4 + 谓词轮 2026-10-11 增量）：
+ * 分页按求值范围（rowAll 豁免/空集短路/组间 OR——条件组透传）+ 姓名恒返 + 列级动作；
+ * 详情行级判定升级 allowsDetail（D34 行属性：ALL+条件 owner 无关拒绝/VO String 形态归一）+
+ * 3026 IDOR 收口（deny 留痕）；无条件用例经 toRowFilter 脚手架保持 v1 断言语义
+ * （mapper mock，SQL 正确性靠 B5 EXPLAIN+联调）。
  */
 @ExtendWith(MockitoExtension.class)
 class LeaveManageServiceTest {
@@ -63,7 +69,7 @@ class LeaveManageServiceTest {
         SysLeaveVo row = vo(5L, "1", 12L);
         when(dataPermEvaluator.evaluate("leave", "list", null))
                 .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of(), Set.of())));
-        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(DataScope.class)))
+        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(RowFilter.class)))
                 .thenReturn(pageOf(List.of(row)));
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
@@ -92,16 +98,17 @@ class LeaveManageServiceTest {
         when(dataPermEvaluator.evaluate("leave", "list", null))
                 .thenReturn(decision(DataScope.of(Set.of("userA", "zhang3")),
                         ColumnScope.of(Set.of(), Set.of())));
-        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(DataScope.class)))
+        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(RowFilter.class)))
                 .thenReturn(pageOf(List.of()));
 
         service.pageList(query(1, 10));
 
-        // 白名单档：mapper 收到的 scope 即求值终态（XML 展开为 apply_user IN）
-        ArgumentCaptor<DataScope> scopeCaptor = ArgumentCaptor.forClass(DataScope.class);
-        verify(leaveMapper).pageList(any(Page.class), eq("leave"), scopeCaptor.capture());
-        assertThat(scopeCaptor.getValue().isAll()).isFalse();
-        assertThat(scopeCaptor.getValue().getAccounts()).containsExactlyInAnyOrder("userA", "zhang3");
+        // 白名单档：mapper 收到的 filter 即求值终态（XML 展开为组骨架 apply_user IN——机械切换，断言语义不变）
+        ArgumentCaptor<RowFilter> filterCaptor = ArgumentCaptor.forClass(RowFilter.class);
+        verify(leaveMapper).pageList(any(Page.class), eq("leave"), filterCaptor.capture());
+        assertThat(filterCaptor.getValue().isRowAll()).isFalse();
+        assertThat(filterCaptor.getValue().getGroups().get(0).getAccounts())
+                .containsExactlyInAnyOrder("userA", "zhang3");
     }
 
     @Test
@@ -111,7 +118,7 @@ class LeaveManageServiceTest {
         row.setReason("e2ecurldp-reason");
         when(dataPermEvaluator.evaluate("leave", "list", null))
                 .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of("title"), Set.of("reason"))));
-        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(DataScope.class)))
+        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(RowFilter.class)))
                 .thenReturn(pageOf(List.of(row)));
         when(translationCache.findUserNames(anySet()))
                 .thenReturn(Map.of("userA", "UserA Name", "admin", "Admin"));
@@ -131,7 +138,7 @@ class LeaveManageServiceTest {
         SysLeaveVo row = vo(5L, "0", null);
         when(dataPermEvaluator.evaluate("leave", "list", null))
                 .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of(), Set.of())));
-        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(DataScope.class)))
+        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(RowFilter.class)))
                 .thenReturn(pageOf(List.of(row)));
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
@@ -139,6 +146,29 @@ class LeaveManageServiceTest {
 
         assertThat(result.getRows().get(0).getStatus()).isEqualTo("0");
         assertThat(result.getRows().get(0).getApprovalId()).isNull();
+    }
+
+    // ---- 谓词轮（D33/D34）：条件组透传 + detail 行属性判定 ----
+
+    @Test
+    void pageList_conditionalFilter_groupsWithPredicatesPassedToMapper() {
+        RowFilter filter = RowFilter.of(List.of(
+                RowGroup.of(false, Set.of("userA"), List.of()),
+                RowGroup.of(true, Set.of(), List.of(idBetween(1, 100)))));
+        when(dataPermEvaluator.evaluate("leave", "list", null))
+                .thenReturn(decisionOf(filter, ColumnScope.of(Set.of(), Set.of())));
+        when(leaveMapper.pageList(any(Page.class), eq("leave"), any(RowFilter.class)))
+                .thenReturn(pageOf(List.of()));
+
+        service.pageList(query(1, 10));
+
+        // 条件组透传：无条件并组在首 + ALL 条件组（含谓词）原样达 mapper（XML 组间 OR 渲染输入）
+        ArgumentCaptor<RowFilter> filterCaptor = ArgumentCaptor.forClass(RowFilter.class);
+        verify(leaveMapper).pageList(any(Page.class), eq("leave"), filterCaptor.capture());
+        assertThat(filterCaptor.getValue().getGroups()).hasSize(2);
+        assertThat(filterCaptor.getValue().getGroups().get(0).getPredicates()).isEmpty();
+        assertThat(filterCaptor.getValue().getGroups().get(1).isAllAccounts()).isTrue();
+        assertThat(filterCaptor.getValue().getGroups().get(1).getPredicates()).hasSize(1);
     }
 
     // ---- 详情：行级判定 + IDOR 收口 + 翻译回填 ----
@@ -178,6 +208,42 @@ class LeaveManageServiceTest {
         SysLeaveDetailVo detail = service.findById(5L);
 
         assertThat(detail.getLeave().getStatus()).isEqualTo("2");
+        verify(dataPermEvaluator, org.mockito.Mockito.never()).logDeny(any(), anyString(), anyString());
+    }
+
+    @Test
+    void findById_allPlusIdPredicate_rowOutOfCondition_rejected3026() {
+        SysLeaveVo row = vo(150L, "1", 12L);
+        when(leaveMapper.findById("leave", 150L)).thenReturn(row);
+        RowFilter filter = RowFilter.of(List.of(
+                RowGroup.of(true, Set.of(), List.of(idBetween(1, 100)))));
+        when(dataPermEvaluator.evaluate("leave", "detail", "150"))
+                .thenReturn(decisionOf(filter, ColumnScope.of(Set.of(), Set.of())));
+
+        BusinessException ex = catchThrowableOfType(() -> service.findById(150L), BusinessException.class);
+
+        // ALL+条件 owner 无关：本人单 id=150 ∉ [1,100] → 谓词不满足 → 组失败 → 3026 + deny 留痕（D34）
+        assertThat(ex.getCode()).isEqualTo(3026);
+        verify(dataPermEvaluator).logDeny(null, "leave", "150");
+    }
+
+    @Test
+    void findById_predicateOnVoStringField_coercedAndVisible() {
+        SysLeaveVo row = vo(5L, "1", 12L);
+        row.setLeaveType("1");
+        when(leaveMapper.findById("leave", 5L)).thenReturn(row);
+        RowFilter filter = RowFilter.of(List.of(RowGroup.of(true, Set.of(), List.of(
+                RowPredicate.of("leaveType", "leave_type", PredicateOperatorEnum.EQ,
+                        List.of(new BigDecimal("1")))))));
+        when(dataPermEvaluator.evaluate("leave", "detail", "5"))
+                .thenReturn(decisionOf(filter, ColumnScope.of(Set.of(), Set.of())));
+        when(translationCache.findDictLabels(anyString(), anySet())).thenReturn(Map.of());
+        when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
+
+        SysLeaveDetailVo detail = service.findById(5L);
+
+        // D34 双形态：VO leaveType "1"（投影 CAST 直出 String）与类型化 BigDecimal("1") 归一相等 → 可见
+        assertThat(detail.getLeave().getId()).isEqualTo(5L);
         verify(dataPermEvaluator, org.mockito.Mockito.never()).logDeny(any(), anyString(), anyString());
     }
 
@@ -262,13 +328,37 @@ class LeaveManageServiceTest {
     // ---- 脚手架 ----
 
     private DataPermDecision decision(DataScope scope, ColumnScope columnScope) {
+        // 无条件 v1 形态经 toRowFilter 等价构造（与求值器 mergeGroups 无条件路径同构）——既有断言语义不变
+        DataPermDecision decision = decisionOf(toRowFilter(scope), columnScope);
+        decision.setDataScope(scope);
+        return decision;
+    }
+
+    /** 谓词轮脚手架：rowFilter 显式构造（dataScope 不设——Service 行集判定不再读它） */
+    private DataPermDecision decisionOf(RowFilter filter, ColumnScope columnScope) {
         DataPermDecision decision = new DataPermDecision();
         decision.setResource("leave");
         decision.setAccount("userA");
         decision.setOperation("list");
-        decision.setDataScope(scope);
+        decision.setRowFilter(filter);
         decision.setColumnScope(columnScope);
         return decision;
+    }
+
+    private RowFilter toRowFilter(DataScope scope) {
+        if (scope.isAll()) {
+            return RowFilter.rowAll();
+        }
+        if (scope.getAccounts().isEmpty()) {
+            return RowFilter.of(List.of());
+        }
+        return RowFilter.of(List.of(RowGroup.of(false, scope.getAccounts(), List.of())));
+    }
+
+    /** id BETWEEN 谓词（NUMBER 类型化值，求值器 enrichment 同形态） */
+    private RowPredicate idBetween(long low, long high) {
+        return RowPredicate.of("id", "id", PredicateOperatorEnum.BETWEEN,
+                List.of(new BigDecimal(low), new BigDecimal(high)));
     }
 
     private PageQuery query(int pageNum, int pageSize) {

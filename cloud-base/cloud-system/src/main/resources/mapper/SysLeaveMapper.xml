@@ -23,18 +23,140 @@
     </select>
 
     <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT；
-         数据权限轮（契约 §4.1）：行集=求值范围——all=true 过滤豁免，否则账号白名单 IN；
-         IN 命中 idx_apply_user(apply_user, deleted)；空集范围 Service 短路不达此处（防 IN ()） -->
+         谓词轮（设计 D33/契约 §4.1）：行集 = RowFilter 组间 OR——rowAll=true 过滤豁免；
+         组 = (allAccounts || l.apply_user IN accounts) AND 组谓词全过（值类型化绑定，D33）。
+         列名硬编码 choose 分支是字符串占位禁令（守护测试禁 dollar 占位）的必然对价
+         （每列×合法操作符，设计 §5.4b）；
+         otherwise 1 = 0 fail-closed：未匹配分支按恒假处理（不放大授权，求值器 enrichment
+         已过滤越界字段——本层是纵深防御）。IN 命中 idx_apply_user(apply_user, deleted)；
+         空集范围 Service 短路不达此处（防 IN ()） -->
     <select id="pageList" resultType="com.cloudai.system.vo.SysLeaveVo">
         SELECT <include refid="listColumns"/>
           FROM sys_leave l
           LEFT JOIN approval_projection p
             ON p.business_type = #{businessType} AND p.business_key = CAST(l.id AS CHAR)
          WHERE l.deleted = 0
-         <if test="scope.all == false">
-             AND l.apply_user IN
-             <foreach collection="scope.accounts" item="account" open="(" separator="," close=")">
-                 #{account}
+         <if test="filter.rowAll == false">
+             AND
+             <foreach collection="filter.groups" item="grp" open="(" separator=" OR " close=")">
+                 <choose>
+                     <when test="grp.allAccounts">
+                         1 = 1
+                     </when>
+                     <otherwise>
+                         l.apply_user IN
+                         <foreach collection="grp.accounts" item="account" open="(" separator="," close=")">
+                             #{account}
+                         </foreach>
+                     </otherwise>
+                 </choose>
+                 <foreach collection="grp.predicates" item="p">
+                     <choose>
+                         <when test="p.field == 'id'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND l.id = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND l.id IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <when test="p.operator == 'BETWEEN'">
+                                     AND l.id BETWEEN #{p.values[0]} AND #{p.values[1]}
+                                 </when>
+                                 <when test="p.operator == 'GTE'">
+                                     AND l.id &gt;= #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LTE'">
+                                     AND l.id &lt;= #{p.values[0]}
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+                         <when test="p.field == 'leaveType'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND l.leave_type = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND l.leave_type IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <when test="p.operator == 'BETWEEN'">
+                                     AND l.leave_type BETWEEN #{p.values[0]} AND #{p.values[1]}
+                                 </when>
+                                 <when test="p.operator == 'GTE'">
+                                     AND l.leave_type &gt;= #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LTE'">
+                                     AND l.leave_type &lt;= #{p.values[0]}
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+                         <when test="p.field == 'startDate'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND l.start_date = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND l.start_date IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <when test="p.operator == 'BETWEEN'">
+                                     AND l.start_date BETWEEN #{p.values[0]} AND #{p.values[1]}
+                                 </when>
+                                 <when test="p.operator == 'GTE'">
+                                     AND l.start_date &gt;= #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LTE'">
+                                     AND l.start_date &lt;= #{p.values[0]}
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+                         <when test="p.field == 'endDate'">
+                             <choose>
+                                 <when test="p.operator == 'EQ'">
+                                     AND l.end_date = #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'IN'">
+                                     AND l.end_date IN
+                                     <foreach collection="p.values" item="v" open="(" separator="," close=")">
+                                         #{v}
+                                     </foreach>
+                                 </when>
+                                 <when test="p.operator == 'BETWEEN'">
+                                     AND l.end_date BETWEEN #{p.values[0]} AND #{p.values[1]}
+                                 </when>
+                                 <when test="p.operator == 'GTE'">
+                                     AND l.end_date &gt;= #{p.values[0]}
+                                 </when>
+                                 <when test="p.operator == 'LTE'">
+                                     AND l.end_date &lt;= #{p.values[0]}
+                                 </when>
+                                 <otherwise>
+                                     AND 1 = 0
+                                 </otherwise>
+                             </choose>
+                         </when>
+                         <otherwise>
+                             AND 1 = 0
+                         </otherwise>
+                     </choose>
+                 </foreach>
              </foreach>
          </if>
          ORDER BY l.id DESC
