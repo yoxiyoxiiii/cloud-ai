@@ -31,6 +31,9 @@ java -jar cloud-base/cloud-system/target/cloud-system-1.0.0-SNAPSHOT.jar  # 9202
 java -jar cloud-base/cloud-bpmn/target/cloud-bpmn-1.0.0-SNAPSHOT.jar  # 9203
 java -jar cloud-base/cloud-gateway/target/cloud-gateway-1.0.0-SNAPSHOT.jar  # 18080，最后启动
 
+# AI 基座（Python/FastAPI，仓库根 cloud-base-ai/，:8010——uv 不在 Git Bash PATH 用绝对路径）
+C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-ai uvicorn cloud_base_ai.main:app --host 127.0.0.1 --port 8010
+
 # 阶段验收冒烟（经网关）
 curl http://localhost:18080/system/demo/ping
 ```
@@ -39,8 +42,8 @@ curl http://localhost:18080/system/demo/ping
 
 - **停服**：Git Bash 的 `$!` 是 MSYS 包装进程 PID，不是真实 java PID。用 `netstat -ano | grep LISTENING | grep :<port>` 找 PID 再 `taskkill //F //PID <pid>`。
 - **Nacos 注册 IP**：多网卡机器上 Nacos 客户端可能注册到虚拟网卡 IP（本机是 192.168.152.1），本机可达不影响；若网关 503，用环境级配置 `spring.cloud.inetutils.preferred-networks` 修（不进仓库）。
-- **端口**：网关 18080（8080 被本机 RocketMQ Dashboard 容器占用，勿改回）；9201-9203 为服务端口；xxl-job-admin 18081（容器，常驻）；xxl-job executor 19202（system）/19203（bpmn）。
-- **Nacos** 已在 127.0.0.1:8848 运行（Docker）；Redis 6379（Docker）；MySQL 127.0.0.1:3306 为**原生服务**（root/空密码，实测 5.7.24，无 mysql 客户端——查库用 java 单文件源码 + mysql-connector-j，jshell 后台运行会挂起，见末条）。
+- **端口**：网关 18080（8080 被本机 RocketMQ Dashboard 容器占用，勿改回）；9201-9203 为服务端口；AI 基座 cloud-base-ai 8010（Python/FastAPI 仓库根独立工程，Nacos 注册+网关 /ai/** 路由 2026-10-12 接入）；xxl-job-admin 18081（容器，常驻）；xxl-job executor 19202（system）/19203（bpmn）。
+- **Nacos** 已在 127.0.0.1:8848 运行（**原生 Windows 进程** v2.4.3 standalone，gRPC 9848/9849 同机监听；2026-10-12 修正——曾误记 Docker）；Redis 6379（Docker）；MySQL 127.0.0.1:3306 为**原生服务**（root/空密码，实测 5.7.24，无 mysql 客户端——查库用 java 单文件源码 + mysql-connector-j，jshell 后台运行会挂起，见末条）。
 - 控制台中文乱码（GBK）不影响判断；Maven 输出 javac 报错为乱码时看行号即可。
 - **Git Bash curl 发中文 JSON 是 GBK**：会 500（Invalid UTF-8）——中文入参用 ASCII 或转码；jshell 后台查库会挂起，用 java 单文件源码 + mysql-connector-j。
 - **host.docker.internal（本机容器→宿主原生服务通路，xxl-job-admin 首例 2026-10-09）**：Docker Desktop for Windows 容器内该别名解析宿主——xxl-job-admin 容器即经它连宿主原生 MySQL 3306（M2 实证通）；docker run 命令与参数记档于 `docs/superpowers/specs/2026-10-09-xxl-job-integration-design.md` D3（PARAMS 注入数据源，root 空密码尾等号传空）。

@@ -49,6 +49,12 @@ spring:
             - Path=/bpmn/**
           filters:
             - StripPrefix=1
+        - id: cloud-base-ai
+          uri: lb://cloud-base-ai
+          predicates:
+            - Path=/ai/**
+          filters:
+            - StripPrefix=1
       globalcors:
         cors-configurations:
           '[/**]':
