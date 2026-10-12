@@ -3,7 +3,7 @@
  * 计划 2026-10-11-mq-dlq-governance E1；harness 复用 lib/harness.mjs——沿 dataperm 家族骨架）
  *
  * 运行前提：gateway 18080 / sso 9201 / system 9202（死信治理版）/ bpmn 9203 已启动；前端 dev 5173 已启动；
- *   数据前提 = B7 联调预置行（mq_dlq_log 内 msgKey 含 e2e-dlq 子串锚的行 ≥2，含同 msgKey 代际链两行；KEYS 实际形态 leave:e2e-dlq-<ts>）——
+ *   数据前提 = B7 联调预置行（mq_dlq_log 内 msgKey 含 e2e-dlq 子串锚的行 ≥2，含同 msgKey 代际链 ≥2 行且须留一行待处理——MDQ3/5/6 依赖；KEYS 实际形态 leave:e2e-dlq-<ts>；代际链计数以台账实际为准，重投/再死信会自然增长）——
  *   前置探测缺失即 SKIP（防环境漂移假红），绝不自造死信（黑盒纪律外，设计 D12 记档）。
  * 运行：cd cloud-e2e && npm run e2e:mqdlq（有头 + slowMo 300；--headless 无头）
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码；preflight 直连网关 raw fetch。
@@ -170,7 +170,10 @@ try {
     const chainN = await chainRows.count()
     assert(chainN >= 2, `代际链标记应 ≥2 行（同 msgKey 两行各带），实际 ${chainN}`)
     const chainText = (await chainRows.first().innerText()).replace(/\n/g, ' | ')
-    assert(chainText.includes('代际链 2 行') && chainText.includes(chainKey), `代际链徽标应含「代际链 2 行」与 ${chainKey}，实际 "${chainText.slice(0, 120)}"`)
+    // 期望值动态化（2026-10-12 修正）：徽标计数 == preflight 实测同 msgKey 行数——聚合语义才是本断言
+    // 要验的点；硬编码「2 行」被台账自然增长打穿过一次（R9 晚间长尾死信 id=5 使链=3，headless 复跑实证）
+    const chainExpect = keyCount[chainKey] || 1
+    assert(chainText.includes(`代际链 ${chainExpect} 行`) && chainText.includes(chainKey), `代际链徽标应含「代际链 ${chainExpect} 行」与 ${chainKey}，实际 "${chainText.slice(0, 120)}"`)
     const allRows = page.locator('.el-table__row')
     const n = await allRows.count()
     const labels = []

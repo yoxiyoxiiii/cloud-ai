@@ -16,6 +16,7 @@ import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.client.DataPermClient;
+import com.cloudai.system.api.dataperm.DataPermColumnContext;
 import com.cloudai.system.api.dataperm.FilterColumnTypeEnum;
 import com.cloudai.system.api.dataperm.RowFilter;
 import com.cloudai.system.api.domain.DataPermDenyRequest;
@@ -30,6 +31,7 @@ import org.flowable.engine.history.HistoricActivityInstance;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.runtime.ProcessInstanceQuery;
 import org.flowable.engine.task.Comment;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -63,7 +65,8 @@ import static org.mockito.Mockito.when;
  * title 列级经真 DataPermColumnApplier + 真 DataPermScopeVo.toColumnScope() 端到端
  * （D14 教训：不 mock 到底）；谓词轮（D33/D34）：条件组 toRowFilter 透传 + detail 行属性判定
  * （entity typed 形态 / ALL+条件 owner 无关 4018）——v1 四参构造 ScopeVo 经 toRowFilter
- * 回退分支保持既有断言语义（机械切换）。
+ * 回退分支保持既有断言语义（机械切换）。注解化轮（2026-10-12 D51-D58）适配：列级改断言
+ * DataPermColumnContext 接线声明（resource/hidden/masked，VO 不再 mutate），diagram 零上下文锚。
  */
 @ExtendWith(MockitoExtension.class)
 class ApprovalQueryServiceTest {
@@ -84,6 +87,12 @@ class ApprovalQueryServiceTest {
     private TranslationCacheService translationCacheService;
     @InjectMocks
     private ApprovalQueryService service;
+
+    @AfterEach
+    void clearColumnContext() {
+        // 求值后即 set：list/detail 用例都可能留上下文——防跨用例污染（真 ThreadLocal）
+        DataPermColumnContext.clear();
+    }
 
     // ---- pageListMy：既有行为面（全部档 = 旧「恒按申请人」无过滤语义） ----
 
@@ -128,8 +137,8 @@ class ApprovalQueryServiceTest {
     // ---- pageListMy：数据权限三态（契约 dataperm-component §3.1） ----
 
     @Test
-    void pageListMy_whitelistScope_passesAccountFilterAndAppliesTitleMasking() {
-        // 白名单 {userA} + title 脱敏：真 ScopeVo → 真 toColumnScope → 真 applier（D14）
+    void pageListMy_whitelistScope_passesAccountFilterAndDeclaresColumnScope() {
+        // 白名单 {userA} + title 脱敏：真 ScopeVo → 真 toColumnScope → 接线声明（D52——列改写归 advice）
         stubEval(new DataPermScopeVo(false, List.of("userA"), List.of(), List.of("title")), "userA", "list", null);
         Page<BpmnApproval> page = new Page<>(1, 5);
         page.setRecords(List.of(approval(StatusEnum.APPROVING.getCode())));
@@ -142,12 +151,18 @@ class ApprovalQueryServiceTest {
         PageResult<ApprovalVo> result = service.pageListMy(query(), "userA");
 
         assertThat(result.getRows()).hasSize(1);
-        assertThat(result.getRows().get(0).getTitle()).isEqualTo("***");
+        assertThat(DataPermColumnContext.get()).isNotNull();
+        assertThat(DataPermColumnContext.get().resource()).isEqualTo("bpmn_approval");
+        assertThat(DataPermColumnContext.get().columnScope().getHiddenColumns()).isEmpty();
+        assertThat(DataPermColumnContext.get().columnScope().getMaskedColumns()).containsExactly("title");
+        // VO 在 Service 返回时是原始值（不再 mutate——title 改写归 advice 序列化前统一应用）
+        assertThat(result.getRows().get(0).getTitle()).isEqualTo("annual leave");
     }
 
     @Test
     void pageListMy_emptyScope_shortCircuitsWithoutDbHit() {
-        // 空集范围（无规则账号收敛 SELF 后仍无行）：短路空页，mapper 零交互（防 IN ()）
+        // 空集范围（无规则账号收敛 SELF 后仍无行）：短路空页，mapper 零交互（防 IN ()）；
+        // 空集短路前已接线（set 位置红态锚，D52）
         stubEval(new DataPermScopeVo(false, List.of(), List.of(), List.of()), "userA", "list", null);
 
         PageResult<ApprovalVo> result = service.pageListMy(query(), "userA");
@@ -155,6 +170,9 @@ class ApprovalQueryServiceTest {
         assertThat(result.getTotal()).isEqualTo(0);
         assertThat(result.getRows()).isEmpty();
         verifyNoInteractions(approvalMapper);
+        assertThat(DataPermColumnContext.get()).isNotNull();
+        assertThat(DataPermColumnContext.get().resource()).isEqualTo("bpmn_approval");
+        assertThat(DataPermColumnContext.get().columnScope().isEmpty()).isTrue();
     }
 
     @Test
@@ -274,8 +292,8 @@ class ApprovalQueryServiceTest {
     // ---- findById：IDOR 收口 + 列级（契约 dataperm-component §3.2） ----
 
     @Test
-    void findById_visible_appliesTitleMaskingOnDetail() {
-        // 白名单含归属账号（可见）+ title 脱敏：详情 title 同列表列级（真 applier 端到端）
+    void findById_visible_declaresColumnScopeOnDetail() {
+        // 白名单含归属账号（可见）+ title 脱敏：详情接线声明同列表（嵌套 approval 原始值，advice 下钻改写）
         when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
         stubEval(new DataPermScopeVo(false, List.of("userA"), List.of(), List.of("title")),
                 "userA", "detail", "5");
@@ -286,7 +304,10 @@ class ApprovalQueryServiceTest {
 
         ApprovalDetailVo detail = service.findById(5L, "userA");
 
-        assertThat(detail.getApproval().getTitle()).isEqualTo("***");
+        assertThat(DataPermColumnContext.get()).isNotNull();
+        assertThat(DataPermColumnContext.get().resource()).isEqualTo("bpmn_approval");
+        assertThat(DataPermColumnContext.get().columnScope().getMaskedColumns()).containsExactly("title");
+        assertThat(detail.getApproval().getTitle()).isEqualTo("annual leave");
         verify(dataPermClient, never()).deny(any(DataPermDenyRequest.class));
     }
 
@@ -437,6 +458,8 @@ class ApprovalQueryServiceTest {
         assertThat(vo.getActiveActivityIds()).containsExactly("approval");
         assertThat(vo.getCompletedActivityIds()).containsExactly("start", "approval");
         assertThat(vo.getEndActivityId()).isNull();
+        // diagram 返回树无白名单类：求值后零接线零上下文（设计 §3.7 记档——不 set 不触发 advice）
+        assertThat((Object) DataPermColumnContext.get()).isNull();
     }
 
     @Test

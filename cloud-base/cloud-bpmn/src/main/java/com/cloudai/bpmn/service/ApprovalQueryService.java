@@ -19,8 +19,7 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.core.exception.ErrorCode;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.client.DataPermClient;
-import com.cloudai.system.api.dataperm.ColumnScope;
-import com.cloudai.system.api.dataperm.DataPermColumnApplier;
+import com.cloudai.system.api.dataperm.DataPermColumnContext;
 import com.cloudai.system.api.dataperm.DataPermOperation;
 import com.cloudai.system.api.dataperm.EntityFieldResolver;
 import com.cloudai.system.api.dataperm.RowFilter;
@@ -53,7 +52,9 @@ import java.util.Set;
  * 组件化轮（D18-D25）：列表按当前登录人规则求值行集（无规则=SELF 与旧版「恒按申请人」逐字等价），
  * title 列级应用；详情/图数据 IDOR 收口（4010 先行 → 行级判定不通过 4018 + deny 远程补痕）；
  * system 不可用 fail-closed（D21：拒绝访问，不降级无过滤/空集）。求值每读路径一次（list/detail），
- * 留痕集中落 system 库（D7/D23）。详情嵌套 VO 不在 TranslateAdvisor 容器下钻范围（候选①挂账）——
+ * 留痕集中落 system 库（D7/D23）。列应用迁移至 advice（2026-10-12 D51-D58）：求值后仅
+ * DataPermColumnContext.set 声明接线（空 scope 也 set），循环内逐行 mutate 退役；diagram
+ * 返回树无白名单类不 set 不触发（设计 §3.7 记档）。详情嵌套 VO 不在 TranslateAdvisor 容器下钻范围（候选①挂账）——
  * 译文字段经 TranslationCacheService 手动回填，未命中 null 同降级语义。
  * 图数据（§3.3）：实例定位精确 id 优先、businessKey=approvalId 回退（限定本类型流程 key 取最新，
  * 防旧时代/异类型同号历史实例多行——singleResult 撞两行抛 FlowableException，F9 实证修复）。
@@ -90,23 +91,23 @@ public class ApprovalQueryService {
 
     /**
      * 我的审批分页（契约 §3.1 + 谓词轮 §4.1/D33：行集=toRowFilter 组间 OR——rowAll 豁免全量、
-     * 空集短路空页不查库、组=(allAccounts || 账号 IN) ∧ 组谓词全过；title 列级隐藏/脱敏；
+     * 空集短路空页不查库、组=(allAccounts || 账号 IN) ∧ 组谓词全过；title 列级隐藏/脱敏由
+     * advice 统一应用（求值后 set 接线声明——空集短路/空 scope 均在 set 之后，D52）；
      * id 倒序含全部状态与业务类型）。
      */
     public PageResult<ApprovalVo> pageListMy(PageQuery query, String account) {
         DataPermScopeVo scopeVo = evalScope(account, DataPermOperation.LIST, null);
+        DataPermColumnContext.set(RESOURCE_APPROVAL, scopeVo.toColumnScope());
         RowFilter filter = scopeVo.toRowFilter();
         if (filter.isEmptyScope()) {
             return PageResult.of(0, List.of());
         }
         IPage<BpmnApproval> page = approvalMapper.pageList(
                 new Page<>(query.getPageNum(), query.getPageSize()), filter);
-        ColumnScope columnScope = scopeVo.toColumnScope();
         List<ApprovalVo> rows = new ArrayList<>();
         Map<String, BpmnBusinessType> configCache = new HashMap<>();
         for (BpmnApproval approval : page.getRecords()) {
             ApprovalVo vo = toEnrichedVo(approval, configCache);
-            DataPermColumnApplier.apply(vo, columnScope);
             rows.add(vo);
         }
         return PageResult.of(page.getTotal(), rows);
@@ -114,14 +115,16 @@ public class ApprovalQueryService {
 
     /**
      * 审批单详情（契约 dataperm-component §3.2 IDOR 收口）：4010 真不存在先行 → 行级判定
-     * （不通过 deny 远程补痕 + 4018）→ 可见则 title 列级同列表 + steps 时间线（时间升序）。
+     * （不通过 deny 远程补痕 + 4018）→ 可见则 title 列级由 advice 经 detail 包装下钻应用
+     * （求值后 set 接线声明，4018 抛出路径上下文由 filter finally 收尾，D52/D54）+
+     * steps 时间线（时间升序）。
      */
     public ApprovalDetailVo findById(Long id, String account) {
         BpmnApproval approval = requireApproval(id);
         DataPermScopeVo scopeVo = evalScope(account, DataPermOperation.DETAIL, String.valueOf(id));
+        DataPermColumnContext.set(RESOURCE_APPROVAL, scopeVo.toColumnScope());
         assertRowVisible(approval, account, scopeVo);
         ApprovalVo approvalVo = toEnrichedVo(approval, new HashMap<>());
-        DataPermColumnApplier.apply(approvalVo, scopeVo.toColumnScope());
         ApprovalDetailVo detail = new ApprovalDetailVo();
         detail.setApproval(approvalVo);
         detail.setSteps(assembleSteps(approval));

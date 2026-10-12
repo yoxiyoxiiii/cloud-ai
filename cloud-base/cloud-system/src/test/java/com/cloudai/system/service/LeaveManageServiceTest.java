@@ -9,6 +9,7 @@ import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
 import com.cloudai.system.api.dataperm.ColumnScope;
+import com.cloudai.system.api.dataperm.DataPermColumnContext;
 import com.cloudai.system.service.dataperm.DataPermDecision;
 import com.cloudai.system.service.dataperm.DataPermEvaluator;
 import com.cloudai.system.api.dataperm.DataScope;
@@ -19,6 +20,7 @@ import com.cloudai.system.api.dataperm.RowPredicate;
 import com.cloudai.system.vo.SysLeaveDetailVo;
 import com.cloudai.system.vo.SysLeaveVo;
 import com.cloudai.system.vo.UserOptionVo;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -42,11 +44,12 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * 请假读路径单测（数据权限轮契约 §4 + 谓词轮 2026-10-11 增量）：
- * 分页按求值范围（rowAll 豁免/空集短路/组间 OR——条件组透传）+ 姓名恒返 + 列级动作；
- * 详情行级判定升级 allowsDetail（D34 行属性：ALL+条件 owner 无关拒绝/VO String 形态归一）+
- * 3026 IDOR 收口（deny 留痕）；无条件用例经 toRowFilter 脚手架保持 v1 断言语义
- * （mapper mock，SQL 正确性靠 B5 EXPLAIN+联调）。
+ * 请假读路径单测（数据权限轮契约 §4 + 谓词轮 2026-10-11 增量 + 注解化轮 2026-10-12 适配）：
+ * 分页按求值范围（rowAll 豁免/空集短路/组间 OR——条件组透传）+ 姓名恒返 + 列级接线声明断言
+ * （D51-D58：Service 求值后仅 DataPermColumnContext.set——resource/columnScope 正确且 VO 不再
+ * mutate，列改写归 advice；空集短路前已 set 为红态锚）；详情行级判定升级 allowsDetail（D34 行属性：
+ * ALL+条件 owner 无关拒绝/VO String 形态归一）+ 3026 IDOR 收口（deny 留痕）；无条件用例经
+ * toRowFilter 脚手架保持 v1 断言语义（mapper mock，SQL 正确性靠 B5 EXPLAIN+联调）。
  */
 @ExtendWith(MockitoExtension.class)
 class LeaveManageServiceTest {
@@ -61,6 +64,12 @@ class LeaveManageServiceTest {
     private DataPermEvaluator dataPermEvaluator;
     @InjectMocks
     private LeaveManageService service;
+
+    @AfterEach
+    void clearColumnContext() {
+        // 求值后即 set：全用例都可能留上下文——防跨用例污染（真 ThreadLocal）
+        DataPermColumnContext.clear();
+    }
 
     // ---- 分页：求值范围三态 + 姓名回填 + 列级动作 ----
 
@@ -87,10 +96,14 @@ class LeaveManageServiceTest {
 
         PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
 
-        // 展开空集（如未挂部门用户仅本部门档规则）→ 空页不查库（契约 §4.1）
+        // 展开空集（如未挂部门用户仅本部门档规则）→ 空页不查库（契约 §4.1）；
+        // 空集短路前已接线（set 位置红态锚——空响应无白名单实例不触发 3042，但语义上已声明）
         assertThat(result.getTotal()).isZero();
         assertThat(result.getRows()).isEmpty();
         verifyNoInteractions(leaveMapper);
+        assertThat(DataPermColumnContext.get()).isNotNull();
+        assertThat(DataPermColumnContext.get().resource()).isEqualTo("leave");
+        assertThat(DataPermColumnContext.get().columnScope().isEmpty()).isTrue();
     }
 
     @Test
@@ -112,7 +125,7 @@ class LeaveManageServiceTest {
     }
 
     @Test
-    void pageList_backfillsNamesAndAppliesColumnActions() {
+    void pageList_backfillsNamesAndDeclaresColumnScope() {
         SysLeaveVo row = vo(5L, "1", 12L);
         row.setTitle("e2ecurldp-title");
         row.setReason("e2ecurldp-reason");
@@ -126,9 +139,14 @@ class LeaveManageServiceTest {
         PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
 
         SysLeaveVo out = result.getRows().get(0);
-        // 列级：title 隐藏置 null、reason 脱敏 ***；姓名列表恒返（契约 §4.1）
-        assertThat(out.getTitle()).isNull();
-        assertThat(out.getReason()).isEqualTo("***");
+        // 列级接线声明（D52）：上下文 resource/hidden/masked 正确；VO 在 Service 返回时是原始值
+        // （title/reason 不再被 mutate——列改写归 advice 序列化前统一应用）
+        assertThat(DataPermColumnContext.get()).isNotNull();
+        assertThat(DataPermColumnContext.get().resource()).isEqualTo("leave");
+        assertThat(DataPermColumnContext.get().columnScope().getHiddenColumns()).containsExactly("title");
+        assertThat(DataPermColumnContext.get().columnScope().getMaskedColumns()).containsExactly("reason");
+        assertThat(out.getTitle()).isEqualTo("e2ecurldp-title");
+        assertThat(out.getReason()).isEqualTo("e2ecurldp-reason");
         assertThat(out.getApplyUserName()).isEqualTo("UserA Name");
         assertThat(out.getApproverName()).isEqualTo("Admin");
     }
@@ -284,7 +302,7 @@ class LeaveManageServiceTest {
     }
 
     @Test
-    void findById_appliesColumnScopeOnVisibleRow() {
+    void findById_declaresColumnScopeOnVisibleRow() {
         SysLeaveVo row = vo(6L, "1", 12L);
         row.setTitle("t");
         row.setReason("r");
@@ -296,8 +314,12 @@ class LeaveManageServiceTest {
 
         SysLeaveDetailVo detail = service.findById(6L);
 
-        // 详情列级同列表应用（契约 §4.2）
-        assertThat(detail.getLeave().getReason()).isEqualTo("***");
+        // 详情列级接线声明同列表（契约 §4.2）：上下文 masked=reason；嵌套 leave 原始值（advice 下钻改写）
+        assertThat(DataPermColumnContext.get()).isNotNull();
+        assertThat(DataPermColumnContext.get().resource()).isEqualTo("leave");
+        assertThat(DataPermColumnContext.get().columnScope().getHiddenColumns()).isEmpty();
+        assertThat(DataPermColumnContext.get().columnScope().getMaskedColumns()).containsExactly("reason");
+        assertThat(detail.getLeave().getReason()).isEqualTo("r");
         assertThat(detail.getLeave().getTitle()).isEqualTo("t");
     }
 

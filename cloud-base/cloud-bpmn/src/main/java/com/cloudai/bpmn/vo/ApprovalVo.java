@@ -3,6 +3,7 @@ package com.cloudai.bpmn.vo;
 import com.cloudai.common.translate.annotation.DictTrans;
 import com.cloudai.common.translate.annotation.TranslateVO;
 import com.cloudai.common.translate.annotation.UserTrans;
+import com.cloudai.system.api.dataperm.DataPermVo;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -13,8 +14,11 @@ import java.time.LocalDateTime;
  * status 契约形态为字符串（对齐字典 value 与 Long→String 惯例；DB TINYINT，VO 出参 String 化）；
  * businessTypeName/detailPath 非字典（配置表渲染，详情嵌套结构由 Service 手动回填）；
  * 审计 createBy/updateBy 不出（applyUser/approver 已承载操作人语义）；译文字段未命中 null 走前端降级链。
+ * 列载体白名单标记（D56，注解化轮 2026-10-12）：本 VO 响应列动作由 advice 统一应用——
+ * ApprovalDetailVo/ApprovalStepVo 不标，树遍历经 com.cloudai 字段下钻到达（D55）。
  */
 @TranslateVO
+@DataPermVo
 @Data
 public class ApprovalVo implements Serializable {
 

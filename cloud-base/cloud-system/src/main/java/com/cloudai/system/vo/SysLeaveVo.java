@@ -3,6 +3,7 @@ package com.cloudai.system.vo;
 import com.cloudai.common.translate.annotation.DictTrans;
 import com.cloudai.common.translate.annotation.TranslateVO;
 import com.cloudai.common.translate.annotation.UserTrans;
+import com.cloudai.system.api.dataperm.DataPermVo;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -15,8 +16,11 @@ import java.time.LocalDateTime;
  * status/approvalId 派生读（事件秒级收敛，发起后秒级窗口 null/0 属正常时序）；不含时间线/图
  * （前端另调平台 §3.2/§3.4）；审计 createBy/updateBy 不出（applyUser/approver 已承载操作人语义）；
  * 译文字段未命中 null 走前端降级链。mapper resultMap 直出（派生列无实体承载，设计 D6 记档）。
+ * 列载体白名单标记（D56，注解化轮 2026-10-12）：本 VO 响应列动作由 advice 统一应用——
+ * detail 包装类不标，树遍历经 com.cloudai 字段下钻到达（D55）。
  */
 @TranslateVO
+@DataPermVo
 @Data
 public class SysLeaveVo implements Serializable {
 

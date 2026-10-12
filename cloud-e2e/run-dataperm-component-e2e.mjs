@@ -220,7 +220,15 @@ async function waitForApprovalId(leaveId, timeoutMs = 15000) {
 
 /** 本人撤销请假归终态并轮询投影派生 status='3'（TERMINAL 事件回写——清扫纪律：留档不物理删） */
 async function cancelOwnLeave(leaveId, title) {
-  const canceled = await pageFetch('PUT', `/api/system/leave/cancel/${leaveId}`)
+  // 3022（审批服务不可用）有界重试（2026-10-12 加固）：system→bpmn Feign read 5s 不敌负载抖动的
+  // 已知瞬态（R7 移交记档；本轮 headless 三跑两中实证）；非 3022 错误码不重试直接断言
+  let canceled = null
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    canceled = await pageFetch('PUT', `/api/system/leave/cancel/${leaveId}`)
+    if (canceled.code !== 3022) break
+    log(`  撤销 ${title} 第 ${attempt} 次遇 3022 瞬态（msg="${canceled.msg}"）——3s 退避重试`)
+    await sleep(3000)
+  }
   assertEq(canceled.code, 200, `撤销 ${title} 应 200，实际 ${canceled.code} msg="${canceled.msg}"`)
   for (let i = 0; i < 30; i++) {
     const detail = await pageFetch('GET', `/api/system/leave/${leaveId}`)
@@ -440,11 +448,16 @@ try {
     const ruleCells = await rowCells(ruleRow)
     log(`  规则①行（配置前）: ${JSON.stringify(ruleCells)}`)
     assert(ruleCells.join('|').includes('bpmn_approval'), '规则行资源列应为 bpmn_approval')
+    // 回显锚定（2026-10-12 修正）：配置弹窗 watch 打开才发 rule/config——固定 sleep(800) 在负载抖动下
+    // 不敌慢响应（headless 复跑实证），且失败后弹窗滞留会级联遮挡后续步骤的 navbar hover（DC6-8 连坐）：
+    // 锚定 config 响应落定 + 轮询等 is-checked 类应用后再断言
+    const cfgP = page.waitForResponse((r2) => apiPath(r2.url(), '/api/system/data-perm/rule/config'), { timeout: 15000 })
     await ruleRow.getByRole('button', { name: '配置' }).click()
     const dlg = dialogByTitle('配置规则')
     await dlg.waitFor({ state: 'visible', timeout: 8000 })
-    await sleep(800) // getRuleConfig 权威回显（三项锁定 + 行档位回填）
+    await cfgP
     const scopeChecked = dlg.locator('.el-radio.is-checked', { hasText: '本部门及以下' })
+    await scopeChecked.waitFor({ state: 'visible', timeout: 8000 })
     assert((await scopeChecked.count()) > 0, '配置弹窗应回显行档位「本部门及以下」（getRuleConfig 权威回显）')
     // 列·title → 脱敏（保存时 upsert 全量覆盖：rowScope 保持 + columns 追加）
     await dlg.locator('.el-form-item', { hasText: '列·title' }).locator('.el-select').click()

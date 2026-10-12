@@ -675,7 +675,15 @@ try {
   await step('DPP10', '清扫：U1/U2 各自撤销本人单归终态（bpmn 域留档先例）→ 删用户 x3 → 角色三枚 → 子部门 → 父部门 → 残留断言零 e2edpp + 种子基线复核（id=1/id=13 完好）', async () => {
     // —— 请假撤销（本人视角——SELF 基线下本人单可见可撤；撤销后投影 status='3' 收敛）——
     const cancelOwn = async (owner, leaveId, title) => {
-      const canceled = await apiAs(owner, 'PUT', `/system/leave/cancel/${leaveId}`)
+      // 3022（审批服务不可用）有界重试（2026-10-12 加固）：system→bpmn Feign read 5s 不敌负载抖动的
+      // 已知瞬态（R7 移交记档；component 脚本 cancelOwnLeave 同款已加固，本轮 DPP10 首张即中实证）
+      let canceled = null
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        canceled = await apiAs(owner, 'PUT', `/system/leave/cancel/${leaveId}`)
+        if (canceled.code !== 3022) break
+        log(`  撤销 ${title} 第 ${attempt} 次遇 3022 瞬态（msg="${canceled.msg}"）——3s 退避重试`)
+        await sleep(3000)
+      }
       assertEq(canceled.code, 200, `撤销 ${title} 应 200，实际 ${canceled.code} msg="${canceled.msg}"`)
       for (let i = 0; i < 30; i++) {
         const detail = await apiAs(owner, 'GET', `/system/leave/${leaveId}`)

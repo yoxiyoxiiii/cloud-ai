@@ -23,6 +23,20 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
+        <!-- 列 advisor 组件（D51）：ResponseBodyAdvice/@RestControllerAdvice/OncePerRequestFilter 编译所需，
+             由引本 jar 的 web 服务自带——translate-starter provided 先例，不传染宿主 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- filter 签名编译（D51）：provided 参与 test classpath——advice/filter 单测的
+             MockHttpServletRequest 脚手架同源可用（沿 translate-starter 先例） -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

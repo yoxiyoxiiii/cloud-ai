@@ -1,1 +1,2 @@
 com.cloudai.system.api.SystemApiAutoConfiguration
+com.cloudai.system.api.config.DataPermColumnAdvisorAutoConfiguration

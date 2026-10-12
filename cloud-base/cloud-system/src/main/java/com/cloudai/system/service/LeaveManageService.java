@@ -6,7 +6,7 @@ import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
-import com.cloudai.system.api.dataperm.DataPermColumnApplier;
+import com.cloudai.system.api.dataperm.DataPermColumnContext;
 import com.cloudai.system.api.dataperm.DataPermOperation;
 import com.cloudai.system.api.dataperm.EntityFieldResolver;
 import com.cloudai.system.api.dataperm.RowFilter;
@@ -36,9 +36,10 @@ import java.util.Set;
  * 谓词轮 D33 起 DataScope 参数退役，行集判定唯一权威 = rowFilter；detail 行属性判定 D34）——
  * 列表恒回填 applyUserName/approverName（管理员视角辨识申请人），title/reason 可能 null 或 ***
  * （列级隐藏/脱敏）；详情行级判定 + IDOR 收口（3026 + deny 留痕，D13）。
- * 列应用经通用反射工具 DataPermColumnApplier（重构轮 D16），行为与手写版逐字段等价。
  * 组件化轮（2026-10-10 D26）：求值保持本地注入（提供方不自我 Feign），仅类型 import 切换
  * 至 api 包 + logDeny 账号显式传参——行为零变化。
+ * 列应用迁移至 advice（2026-10-12 D51-D58）：Service 求值后仅 DataPermColumnContext.set 声明
+ * 接线（空 scope 也 set），逐行 mutate 退役——漏接由 advice fail-closed 3042 显性拒绝。
  */
 @Slf4j
 @Service
@@ -62,12 +63,14 @@ public class LeaveManageService {
 
     /**
      * 请假分页（契约 §4.1，谓词轮 D33 改型）：按当前登录人数据权限求值——rowAll 豁免全量、
-     * 空集档短路空页（不查库）、否则组间 OR（账号 IN ∧ 组谓词）；行内姓名批量回填 +
-     * 列级动作应用（title/reason）。DataScope 参数退役，行集判定唯一权威 = rowFilter（D31）。
+     * 空集档短路空页（不查库）、否则组间 OR（账号 IN ∧ 组谓词）；行内姓名批量回填；
+     * 列级动作由 advice 统一应用（求值后 set 接线声明——空集短路/空 scope 均在 set 之后，D52）。
+     * DataScope 参数退役，行集判定唯一权威 = rowFilter（D31）。
      */
     public PageResult<SysLeaveVo> pageList(PageQuery query) {
         DataPermDecision decision = dataPermEvaluator.evaluate(
                 DataPermResources.LEAVE, DataPermOperation.LIST, null);
+        DataPermColumnContext.set(DataPermResources.LEAVE, decision.getColumnScope());
         RowFilter filter = decision.getRowFilter();
         if (filter.isEmptyScope()) {
             return PageResult.of(0, List.of());
@@ -76,13 +79,13 @@ public class LeaveManageService {
                 new Page<>(query.getPageNum(), query.getPageSize()), BUSINESS_TYPE_LEAVE, filter);
         List<SysLeaveVo> rows = page.getRecords();
         fillListNames(rows);
-        rows.forEach(row -> DataPermColumnApplier.apply(row, decision.getColumnScope()));
         return PageResult.of(page.getTotal(), rows);
     }
 
     /**
      * 请假单详情（契约 §4.2）：行不存在 3018 → 行级判定（求值 DETAIL，留痕 businessKey=单据 id）——
-     * 归属账号不在范围 3026 + deny 留痕（IDOR 收口）；可见则列级同列表应用 + 译文回填。
+     * 归属账号不在范围 3026 + deny 留痕（IDOR 收口）；可见则译文回填 + 列级由 advice 经 detail
+     * 包装下钻应用（求值后 set 接线声明，3026 抛出路径上下文由 filter finally 收尾，D52/D54）。
      */
     public SysLeaveDetailVo findById(Long id) {
         SysLeaveVo vo = leaveMapper.findById(BUSINESS_TYPE_LEAVE, id);
@@ -91,12 +94,12 @@ public class LeaveManageService {
         }
         DataPermDecision decision = dataPermEvaluator.evaluate(
                 DataPermResources.LEAVE, DataPermOperation.DETAIL, String.valueOf(id));
+        DataPermColumnContext.set(DataPermResources.LEAVE, decision.getColumnScope());
         if (!decision.getRowFilter().allowsDetail(vo.getApplyUser(), EntityFieldResolver.of(vo))) {
             dataPermEvaluator.logDeny(SecurityUtils.currentAccount(), DataPermResources.LEAVE, String.valueOf(id));
             throw new BusinessException(ERR_LEAVE_NO_ACCESS, "无权访问该数据");
         }
         fillDetailLabels(vo);
-        DataPermColumnApplier.apply(vo, decision.getColumnScope());
         SysLeaveDetailVo detail = new SysLeaveDetailVo();
         detail.setLeave(vo);
         return detail;

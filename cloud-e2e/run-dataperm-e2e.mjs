@@ -523,7 +523,13 @@ try {
     await page.locator('.el-tabs__item', { hasText: '决策留痕' }).click()
     const pane = visiblePane()
     await pane.locator('input[placeholder="账号（精确）"]').fill(USER_A)
+    // tab 切换 watch 即自动发一次无过滤 log/page（id 倒序→最新是 admin 行）——headless 无 slowMo 缓冲时
+    // 该旧行先渲染，waitFor 被其满足后读到 admin 记录（2026-10-12 headless 首跑实证）：锚定带
+    // account 参数的过滤响应落定 + 渲染节拍后再读表
+    const aLogP = page.waitForResponse((r2) => apiPath(r2.url(), '/api/system/data-perm/log/page') && r2.request().url().includes('account='), { timeout: 15000 })
     await pane.getByRole('button', { name: '查询' }).click()
+    await aLogP
+    await sleep(300)
     await pane.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })
     let rows = pane.locator('.el-table__row')
     let count = await rows.count()
@@ -552,12 +558,17 @@ try {
   await step('DP6', '清扫：UI 删规则（确认框含主体名）→ API 删用户 A/B → 角色 → 子部门 → 父部门 → 残留断言零 e2e', async () => {
     // UI 删规则（数据权限页规则 tab 行「删除」——契约 §3.4 连带物理删列规则）
     await page.locator('.el-tabs__item', { hasText: '规则配置' }).click()
-    await page.locator('.el-table__row', { hasText: ROLE_M_NAME }).first().waitFor({ state: 'visible', timeout: 10000 })
-    await page.locator('.el-table__row', { hasText: ROLE_M_NAME }).first().getByRole('button', { name: '删除' }).click()
+    // 行定位/计数收窄到可见 pane：隐藏的留痕 pane 里 USER_A 留痕行「规则摘要」含角色名，
+    // 全局 .el-table__row hasText 会误配（display:none 不影响文本匹配——2026-10-12 headless 首跑实证）
+    const rulePane = page.locator('.el-tab-pane:visible')
+    await rulePane.locator('.el-table__row', { hasText: ROLE_M_NAME }).first().waitFor({ state: 'visible', timeout: 10000 })
+    const ruleReloadP = page.waitForResponse((r2) => apiPath(r2.url(), '/api/system/data-perm/rule/page'), { timeout: 15000 })
+    await rulePane.locator('.el-table__row', { hasText: ROLE_M_NAME }).first().getByRole('button', { name: '删除' }).click()
     await confirmBox(ROLE_M_NAME)
     await waitToast(page, '删除成功')
-    await sleep(500)
-    const ruleGone = (await page.locator('.el-table__row', { hasText: ROLE_M_NAME }).count()) === 0
+    await ruleReloadP
+    await sleep(300)
+    const ruleGone = (await rulePane.locator('.el-table__row', { hasText: ROLE_M_NAME }).count()) === 0
     assert(ruleGone, '删规则后行应消失')
 
     // API 清扫（顺序：用户 → 角色 → 子部门 → 父部门——3030 前置：部门下须无在职用户/子部门）
