@@ -35,6 +35,15 @@ class LLMSettings(BaseModel):
     max_retries: int = 1  # SDK 内建重试次数（D11：过重放大流式挂起，取 1）
     history_limit: int = 20  # 服务层历史截断（条，D10：防 context 爆量与费用滥用）
 
+class EmbeddingModelSettings(BaseModel):
+    """
+    embedding model 配置信息
+    """
+    api_key: str = ""  # 默认空 = 未配置态（调用时报 5002，不阻断启动——同注册降级哲学）
+    base_url: str = "http://127.0.0.1:11434"  # OpenAI 兼容端点，非 secret 可入库
+    model: str = "qllama/bge-large-zh-v1.5:latest"
+    embedding_dimension: int = 1024  # 向量维度
+    type: str = "ollama"
 
 class Settings(BaseSettings):
     """应用配置根（env 前缀 CLOUD_BASE_AI_，嵌套分隔符 "__"——单 "_" 与内层字段名
@@ -43,6 +52,7 @@ class Settings(BaseSettings):
 
     nacos: NacosSettings = NacosSettings()
     llm: LLMSettings = LLMSettings()
+    embedding_llm: EmbeddingModelSettings = EmbeddingModelSettings()
     app_port: int = 8010  # uvicorn 监听与注册实例端口同源
 
     model_config = SettingsConfigDict(

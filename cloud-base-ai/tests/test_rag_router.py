@@ -144,11 +144,12 @@ def test_stream_real_5002_no_key_frame(client: TestClient,
     # 不 mock service：走真实 service → generation 工厂。钉 generation 侧 Settings 为空 key
     # （防验收期真实 .env/env 使本用例变真网络调用），工厂 5002 → service 透传 → msg 帧。
     from cloud_base_ai.config import LLMSettings, Settings
-    from cloud_base_ai.rag import generation, service
-    from cloud_base_ai.rag.generation import get_chat_model
+    from cloud_base_ai.models import model_factory
+    from cloud_base_ai.rag import service
+    from cloud_base_ai.models.model_factory import get_chat_model
     monkeypatch.setattr(service, "get_settings",
                         lambda: Settings(_env_file=None, llm=LLMSettings()))
-    monkeypatch.setattr(generation, "get_settings",
+    monkeypatch.setattr(model_factory, "get_settings",
                         lambda: Settings(_env_file=None, llm=LLMSettings()))
     get_chat_model.cache_clear()
     resp = client.post("/rag/chat/stream", json=BODY, headers=PERMS)

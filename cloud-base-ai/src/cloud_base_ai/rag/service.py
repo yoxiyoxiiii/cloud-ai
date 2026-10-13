@@ -11,7 +11,8 @@ from collections.abc import AsyncIterator
 
 from cloud_base_ai.config import get_settings
 from cloud_base_ai.exceptions import BusinessException
-from cloud_base_ai.rag.generation import get_chat_model, to_lc_messages
+from cloud_base_ai.models.model_factory import get_chat_model
+from cloud_base_ai.rag.generation import to_lc_messages
 from cloud_base_ai.rag.schemas import RagChatAnswerVo, RagChatDto
 
 logger = logging.getLogger(__name__)
