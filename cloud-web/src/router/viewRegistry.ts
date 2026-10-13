@@ -19,6 +19,7 @@ import TaskManageView from '../views/bpmn/task/index.vue'
 import ApprovalManageView from '../views/bpmn/approval/index.vue'
 import DefinitionManageView from '../views/bpmn/definition/index.vue'
 import NotFoundView from '../views/error/NotFound.vue'
+import ChatView from '../views/rag/chat/index.vue'
 
 /** path → 组件注册表（静态 import，键 = sys_menu.path 约定值） */
 export const VIEW_REGISTRY: Record<string, Component> = {
@@ -37,6 +38,8 @@ export const VIEW_REGISTRY: Record<string, Component> = {
   '/bpmn/task': TaskManageView,
   '/bpmn/approval': ApprovalManageView,
   '/bpmn/definition': DefinitionManageView,
+  // 知识库对话
+  '/rag/chat': ChatView,
 }
 
 /** 按 path 解析视图组件：未注册 → NotFound 兜底（不报错，设计 D5） */

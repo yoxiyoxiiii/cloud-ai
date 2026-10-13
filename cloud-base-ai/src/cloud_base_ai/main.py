@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request
 from cloud_base_ai.config import get_settings
 from cloud_base_ai.exception_handler import register_exception_handlers
 from cloud_base_ai.nacos_registration import NacosRegistration
+from cloud_base_ai.rag.router import router as rag_router
 from cloud_base_ai.response import R
 
 
@@ -30,6 +31,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 register_exception_handlers(app)
+app.include_router(rag_router)  # RAG 域首个业务端点轮（2026-10-13），R12 D6 零触碰解除
 
 
 @app.get("/")

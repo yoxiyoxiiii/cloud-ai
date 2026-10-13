@@ -7,7 +7,7 @@
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码。
  *
  * 五段场景（任务 E2 口径）：
- * ① DP0-DP1 admin 登录 + 侧边 12 项（E1 双锚：+部门管理/数据权限；死信治理轮 +死信治理）+ 内置根部门删除双防线
+ * ① DP0-DP1 admin 登录 + 侧边 13 项（E1 双锚：+部门管理/数据权限；死信治理轮 +死信治理；AI 对话轮 +对话）+ 内置根部门删除双防线
  *    （UI 禁用面 + 直连 3029）+ 部门两级 UI 闭环 + 测试角色两枚（均挂「请假申请」菜单——
  *    动态路由按菜单生成，无菜单权限的账号进不了 /system/leave）+ 用户 A（子部门/主管角色）/ 用户 B（无部门/员工角色）
  * ② DP2 数据权限页配规则（入口走角色页「数据权限」按钮 = F5 预筛选联动）：主管角色 DEPT_AND_CHILD
@@ -206,8 +206,8 @@ async function createRoleViaUi(name, roleKey) {
 }
 
 try {
-  // ================= ① DP0 admin 登录 + 导航 12 项 + 内置根部门删除双防线 =================
-  await step('DP0', 'admin 登录 → 侧边 12 项（+部门管理/数据权限/死信治理）→ 部门页树含内置总公司 + 删除双防线（UI 禁用 + 直连 3029）', async () => {
+  // ================= ① DP0 admin 登录 + 导航 13 项 + 内置根部门删除双防线 =================
+  await step('DP0', 'admin 登录 → 侧边 13 项（+部门管理/数据权限/死信治理/对话）→ 部门页树含内置总公司 + 删除双防线（UI 禁用 + 直连 3029）', async () => {
     const r = await login(page, 'admin', 'admin123')
     assert(r.ok, `admin 登录应成功: ${r.msg || ''}`)
     await page.locator('.sidebar-menu').waitFor({ state: 'visible', timeout: 10000 })
@@ -216,7 +216,7 @@ try {
     const labels = []
     for (let i = 0; i < n; i++) labels.push(((await items.nth(i).innerText()) || '').trim())
     log(`  侧边菜单: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,工作台', '侧边菜单顺序（死信治理轮 12 项形态——R9 菜单 17 sort=7 入序）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,工作台', '侧边菜单顺序（AI 对话轮 13 项形态——R13 菜单 18/181 段「对话」入序）')
 
     // 部门页树表（契约 §2.1：全量含停用、sort 序、内置徽标）
     const treeP = page.waitForResponse((r2) => apiPath(r2.url(), '/api/system/dept/tree'), { timeout: 15000 })

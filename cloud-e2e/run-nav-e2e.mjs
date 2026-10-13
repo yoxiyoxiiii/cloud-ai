@@ -9,9 +9,10 @@
  * - 角色/用户/角色标识全部 e2e 前缀+时间戳；绝不改 admin/种子账号；种子菜单（10/11/12/13/111…20/21/211 与 30 段 30/31/32/33/311/312/321/331/34/341）零触碰
  * - 结束删除测试用户与测试角色并断言删净（含 N5 意外落库兜底删除）
  * 核心断言（设计 D10 / 契约 §2 §3 + perms-api §4 §6）：
- * - N1 admin user-nav 形状逐字段（Round I 迁移后根级仍恰 2：M 系统管理 icon Setting 4 C + M 流程管理 icon Tickets 4 C
+ * - N1 admin user-nav 形状逐字段（Round I 迁移后根级仍恰 2；AI 对话轮 2026-10-13 根级恰 3：M 系统管理 icon Setting 4 C + M 流程管理 icon Tickets 4 C
  *   （sort 序 请假申请31/我的审批34/待办任务32/流程定义33——契约 2026-10-08-approval-platform-api §8：31 改造更名+path
- *   /system/leave、34 新增 path /bpmn/approval；无 F；20/21 被剪）+ me 形状与恰 1 次
+ *   /system/leave、34 新增 path /bpmn/approval；无 F；20/21 被剪）+ M AI 助手 icon ChatDotRound 子级恰 1 C「对话」path /rag/chat
+ *   （契约 2026-10-13-ai-rag-chat-api §6.1，种子 18/181）+ me 形状与恰 1 次
  * - N2 RBAC 闭环：角色仅绑"角色管理"分支 → 新用户侧边恰 '角色管理,工作台' 且角色页可加载
  * - N2f 按钮粒度：受限用户（快照 list+edit）表头新增/行内分配权限·删除隐藏、编辑可见
  * - N4 F5 刷新：路由/菜单/高亮保持 + user-nav 与 me 各恰 +1 + 按钮隐藏保持
@@ -167,12 +168,13 @@ try {
     assert(meBody.data.permissions.includes('sso:online:list'), 'admin 快照应含 sso:online:list')
     const nav = body.data
     assert(Array.isArray(nav), `data 应为数组，实际 ${typeof nav}`)
-    // 根级恰 2 节点（Round I 迁移后形状不变：根级无新增 M——34/341 挂 30 流程管理下）：
-    // M 系统管理（icon Setting）+ M 流程管理（icon Tickets）
-    assertEq(nav.length, 2, `admin 根级应恰 2 节点（系统管理+流程管理），实际 ${nav.length}`)
+    // 根级恰 3 节点（AI 对话轮 2026-10-13 新增第三个 M——种子 18「AI 助手」sort 4）：
+    // M 系统管理（icon Setting）+ M 流程管理（icon Tickets）+ M AI 助手（icon ChatDotRound）
+    assertEq(nav.length, 3, `admin 根级应恰 3 节点（系统管理+流程管理+AI 助手），实际 ${nav.length}`)
     const sysRoot = nav.find((n) => n.name === '系统管理')
     const bpmnRoot = nav.find((n) => n.name === '流程管理')
-    assert(sysRoot && bpmnRoot, `根级应为 系统管理+流程管理，实际 ${JSON.stringify(nav.map((n) => n.name))}`)
+    const aiRoot = nav.find((n) => n.name === 'AI 助手')
+    assert(sysRoot && bpmnRoot && aiRoot, `根级应为 系统管理+流程管理+AI 助手，实际 ${JSON.stringify(nav.map((n) => n.name))}`)
     // —— M 系统管理：icon Setting，子级 7 C 逐字段（数据权限轮 2026-10-10 +部门管理/数据权限，种子 15/16；死信治理轮 2026-10-11 +死信治理，种子 17）——
     assertEq(sysRoot.type, 'M', `系统管理 type 应为 M，实际 "${sysRoot.type}"`)
     assertEq(sysRoot.name, '系统管理', `根节点名称应为 系统管理，实际 "${sysRoot.name}"`)
@@ -201,7 +203,17 @@ try {
     log(`  流程管理 C 子级: ${JSON.stringify(bpmnRoot.children.map((c) => ({ name: c.name, type: c.type, path: c.path, icon: c.icon })))}`)
     assertEq(bPaths.join(','), '/system/leave,/bpmn/approval,/bpmn/task,/bpmn/definition', `流程管理 C 子级 path 应依次四页（31 改造迁 /system/leave + 34 新增 /bpmn/approval），实际 ${JSON.stringify(bPaths)}`)
     assertEq(bNames.join(','), '请假申请,我的审批,待办任务,流程定义', `流程管理 C 子级名称应依次（sort 序 31/34/32/33），实际 ${JSON.stringify(bNames)}`)
-    for (const c of [...sysRoot.children, ...bpmnRoot.children]) {
+    // —— M AI 助手（AI 对话轮新增，种子 18/181，契约 2026-10-13-ai-rag-chat-api §6.1）：icon ChatDotRound，子级恰 1 C「对话」——
+    assertEq(aiRoot.type, 'M', `AI 助手 type 应为 M，实际 "${aiRoot.type}"`)
+    assertEq(aiRoot.name, 'AI 助手', `根节点名称应为 AI 助手，实际 "${aiRoot.name}"`)
+    assertEq(aiRoot.icon, 'ChatDotRound', `AI 助手 icon 应为 ChatDotRound，实际 "${aiRoot.icon}"`)
+    assertEq(aiRoot.parentId, '0', 'AI 助手 parentId 应为 "0"')
+    assert(typeof aiRoot.sort === 'number', 'sort 字段应为数值')
+    assertEq(aiRoot.children.length, 1, `AI 助手子级应恰 1 个（对话），实际 ${aiRoot.children.length}`)
+    log(`  AI 助手 C 子级: ${JSON.stringify(aiRoot.children.map((c) => ({ name: c.name, type: c.type, path: c.path, icon: c.icon })))}`)
+    assertEq(aiRoot.children[0].path, '/rag/chat', `AI 助手子级 path 应为 /rag/chat，实际 "${aiRoot.children[0].path}"`)
+    assertEq(aiRoot.children[0].name, '对话', `AI 助手子级名称应为 对话，实际 "${aiRoot.children[0].name}"`)
+    for (const c of [...sysRoot.children, ...bpmnRoot.children, ...aiRoot.children]) {
       assertEq(c.type, 'C', `子级 type 应为 C，实际 "${c.type}"`)
       assert(typeof c.icon === 'string' && c.icon.length > 0, `C 节点 icon 应非空，实际 "${c.icon}"`)
       assert(Array.isArray(c.children) && c.children.length === 0, 'C 叶子节点 children 应为空数组（契约 §2）')
@@ -221,10 +233,11 @@ try {
     assert(!allNames.includes('认证管理') && !allNames.includes('在线用户'), `无 path 的 C 与剪空 M 不应出现（20/21），实际 ${JSON.stringify(allNames)}`)
     // 侧边精确串（M1 同款断言复核动态源：sub-menu 子项 + 工作台尾挂 + default-openeds 展开；
     // Round I 迁移：流程管理 4 子项（31 改造 + 34 新增）——两目录子项 + 工作台；
-    // 数据权限轮 2026-10-10：系统管理 +部门管理/数据权限（种子 15/16）；死信治理轮 2026-10-11：+死信治理（种子 17），共 12 项）
+    // 数据权限轮 2026-10-10：系统管理 +部门管理/数据权限（种子 15/16）；死信治理轮 2026-10-11：+死信治理（种子 17）；
+    // AI 对话轮 2026-10-13：+对话（种子 18/181，AI 助手 M sort 4 目录在流程管理后），共 13 项）
     const labels = await menuLabels()
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→请假申请→我的审批→待办任务→流程定义→工作台')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→请假申请→我的审批→待办任务→流程定义→对话→工作台')
     // 嵌套结构证据：根 M 渲染为 el-sub-menu（侧边栏嵌套布局）
     assert((await page.locator('.el-menu .el-sub-menu').count()) >= 1, '根目录 M 应渲染为 el-sub-menu')
     await sleep(800) // 落定窗口内不应有额外 me（守卫并行门只拉一次，无重复请求）
@@ -427,7 +440,7 @@ try {
     assert(r.ok, `admin 重新登录应成功: ${r.msg || ''}`)
     const labels = await menuLabels()
     log(`  admin 恢复菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,工作台', 'admin 重登应恢复全量导航（系统管理 7 项 + 流程管理 4 项 + 工作台——死信治理轮新形态；登录页 reset 清态 + 守卫按新账号重建）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,工作台', 'admin 重登应恢复全量导航（系统管理 7 项 + 流程管理 4 项 + AI 助手 1 项 + 工作台——AI 对话轮 13 项新形态；登录页 reset 清态 + 守卫按新账号重建）')
     // 按钮级权限回归（perms-api §4：admin 全量快照 → 全显；受限快照零残留——三件套 reset 生效证据）
     await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
     await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })

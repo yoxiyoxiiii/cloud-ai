@@ -988,3 +988,15 @@ export interface MqDlqPageQuery {
  * 来源组过滤下拉数据源；新增 watch 组时随契约同步增项
  */
 export const MQ_DLQ_BORN_GROUP_OPTIONS: string[] = ['g_bpmn_approval_create', 'g_system_approval_event']
+
+
+/** ===== AI 对话（契约 2026-10-13-ai-rag-chat-api）===== */
+export interface RagChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface RagChatAnswerVo {
+  answer: string
+  model: string
+}
