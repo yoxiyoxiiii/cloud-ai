@@ -30,6 +30,23 @@ RAG 域首个功能（2026-10-13，纯 LLM 流式对话，零检索）：设计�
 
 - ORM：SQLAlchemy 2.x typed Declarative（async engine + aiomysql）；实体/DAO 落 `rag/`，基建落 `db/`（Base/Mixin/审计 contextvar/engine）。
 - 配置：`Settings.db` 段（默认本机 127.0.0.1:3306 root 空密码 cloud_ai，零配置即连）；env 覆盖 `CLOUD_BASE_AI_DB__*`（键见 .env.example）。
-- 事务边界：DAO 不 commit（flush 收尾），编排层 `async with session.begin():` 一个事务块（多表写原子性）。
+- 事务边界：DAO 不 commit（flush 收尾），service 层 `@transactional` 声明式（见下节）。
 - 软删/审计：读路径显式 `deleted == 0` 过滤；save 四值/update 两值走 `db/base.py` 公共填充（account 来源 contextvar，端点轮接 security）。
 - 表结构真相源：`cloud-base/scripts/sql/cloud_ai.sql`（手写 SQL，alembic 闲置）。
+
+## 事务管理
+
+service 层业务方法统一用声明式事务（`cloud_base_ai.db.tx`）：
+
+```python
+from cloud_base_ai.db.tx import current_session, transactional
+
+@transactional
+async def create_kb(req: CreateKBReq) -> int:
+    session = current_session()  # 装饰器已开会话，取用传给 dao
+    ...
+```
+
+- 正常返回提交、抛任何异常回滚；嵌套调用自动合并进外层事务
+- dao 保持显式收 session 参数（不读全局），事务边界只在 service 层
+- 内层事务抛异常后，外层不要吞掉继续用同一会话（会话已失效，要么传播要么转业务异常上抛）

@@ -14,6 +14,7 @@ from langchain.messages import HumanMessage
 from sqlalchemy.exc import IntegrityError
 
 from cloud_base_ai.config import Settings
+from cloud_base_ai.db import tx
 from cloud_base_ai.db.base import set_current_account
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.rag import service
@@ -150,7 +151,7 @@ def _reset_account():
 async def test_create_kb_returns_id_and_audits(monkeypatch: pytest.MonkeyPatch) -> None:
     set_current_account("e2e_admin")
     async with make_service_session_factory() as factory:
-        monkeypatch.setattr(service, "get_session_factory", lambda: factory)
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
         kb_id = await service.create_kb(CreateKBReq(name="e2e_kb_1", description="e2e_desc"))
         assert isinstance(kb_id, int) and kb_id > 0
         found = await find_kb_by_name(factory(), "e2e_kb_1")
@@ -159,7 +160,7 @@ async def test_create_kb_returns_id_and_audits(monkeypatch: pytest.MonkeyPatch) 
 
 async def test_create_kb_duplicate_active_name_5003(monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_service_session_factory() as factory:
-        monkeypatch.setattr(service, "get_session_factory", lambda: factory)
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
         await service.create_kb(CreateKBReq(name="e2e_dup", description="e2e_desc"))
         with pytest.raises(BusinessException) as ei:
             await service.create_kb(CreateKBReq(name="e2e_dup", description="e2e_desc"))
@@ -170,7 +171,7 @@ async def test_create_kb_duplicate_active_name_5003(monkeypatch: pytest.MonkeyPa
 async def test_create_kb_tombstone_integrity_error_5003(monkeypatch: pytest.MonkeyPatch) -> None:
     """墓碑占键：find 查重看不到（软删不可见）→ save 撞 uk_name → IntegrityError 兜底 5003。"""
     async with make_service_session_factory() as factory:
-        monkeypatch.setattr(service, "get_session_factory", lambda: factory)
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
         kb_id = await service.create_kb(CreateKBReq(name="e2e_tomb", description="e2e_desc"))
         async with factory() as s:
             async with s.begin():

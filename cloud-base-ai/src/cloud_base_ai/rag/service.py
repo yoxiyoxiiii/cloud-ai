@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from sqlalchemy.exc import IntegrityError
 
 from cloud_base_ai.config import get_settings
-from cloud_base_ai.db import get_session_factory
+from cloud_base_ai.db.tx import current_session, transactional
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.models.model_factory import get_chat_model
 from cloud_base_ai.rag import dao
@@ -65,23 +65,23 @@ async def stream_chat_answer(dto: RagChatDto) -> AsyncIterator[str]:
         raise BusinessException(MSG_LLM_CALL_FAILED, CODE_LLM_CALL_FAILED) from e
 
 
+@transactional
 async def create_kb(req: CreateKBReq) -> int:
-    """创建知识库：查重（活记录视角）→ save（审计四值走 contextvar）→ 返回 id。
+    """创建知识库：查重（只看未删除的记录）→ 新增 → 返回 id。
 
-    撞重双防：find_kb_by_name 前置 + IntegrityError 兜底（并发 TOCTOU 与墓碑占键，
-    对齐 Java DuplicateKeyException 兜底口径）；兜底必 log.error 根因后转 5003。
-    事务块 = 查重与 save 同块（async with session.begin()，块退出 commit）。
+    事务边界在 @transactional：正常返回提交，任何异常（含业务异常 5003）回滚。
+    撞重双防：先查重挡住常规重名；并发窗口或"已软删记录仍占用唯一键"的情况
+    由 IntegrityError 兜底——先 log.error 记根因，再转业务码 5003。
     """
-    async with get_session_factory()() as session:
-        async with session.begin():
-            exists = await dao.find_kb_by_name(session, req.name)
-            if exists is not None:
-                raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS)
-            try:
-                kb = await dao.save_kb(
-                    session, AiKnowledgeBase(name=req.name, description=req.description)
-                )
-            except IntegrityError as e:
-                logger.error("create_kb duplicate name (uk_name): %s: %s", type(e).__name__, e)
-                raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS) from e
-            return kb.id
+    session = current_session()
+    exists = await dao.find_kb_by_name(session, req.name)
+    if exists is not None:
+        raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS)
+    try:
+        kb = await dao.save_kb(
+            session, AiKnowledgeBase(name=req.name, description=req.description)
+        )
+    except IntegrityError as e:
+        logger.error("create_kb duplicate name (uk_name): %s: %s", type(e).__name__, e)
+        raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS) from e
+    return kb.id
