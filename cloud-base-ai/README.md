@@ -25,3 +25,11 @@ RAG 域首个功能（2026-10-13，纯 LLM 流式对话，零检索）：设计�
 - 配置：复制 `.env.example` 为 `.env` 后填写（`.env` 已被 .gitignore 忽略；key 真值不提交不入档）。优先级：真实环境变量 > `.env` > 代码默认值。键名（嵌套分隔符为双下划线 `__`）：`CLOUD_BASE_AI_LLM__API_KEY`（DeepSeek API key，空 = 端点报 5002）/ `CLOUD_BASE_AI_LLM__BASE_URL`（默认 `https://api.deepseek.com`）/ `CLOUD_BASE_AI_LLM__MODEL`（默认 `deepseek-flash`）/ `CLOUD_BASE_AI_LLM__TIMEOUT`（默认 60 秒）/ `CLOUD_BASE_AI_LLM__MAX_RETRIES`（默认 1）/ `CLOUD_BASE_AI_LLM__HISTORY_LIMIT`（默认 20 条，服务层历史截断）。
 - 鉴权：权限标识 `ai:chat:list`（两端点共用）——AI 侧读网关注入的 `X-User-Perms` 校验。**本地直连调试（绕网关 :8010）须手工带 header `X-User-Perms: ai:chat:list`**，否则 HTTP 200 + `R{code:403}`。
 - 错误码：403 无操作权限 / 1001 参数校验 / 5001 LLM 调用失败 / 5002 LLM 未配置（AI 段 5xxx，后续从 5003 接续）。
+
+## Database (MySQL)
+
+- ORM：SQLAlchemy 2.x typed Declarative（async engine + aiomysql）；实体/DAO 落 `rag/`，基建落 `db/`（Base/Mixin/审计 contextvar/engine）。
+- 配置：`Settings.db` 段（默认本机 127.0.0.1:3306 root 空密码 cloud_ai，零配置即连）；env 覆盖 `CLOUD_BASE_AI_DB__*`（键见 .env.example）。
+- 事务边界：DAO 不 commit（flush 收尾），编排层 `async with session.begin():` 一个事务块（多表写原子性）。
+- 软删/审计：读路径显式 `deleted == 0` 过滤；save 四值/update 两值走 `db/base.py` 公共填充（account 来源 contextvar，端点轮接 security）。
+- 表结构真相源：`cloud-base/scripts/sql/cloud_ai.sql`（手写 SQL，alembic 闲置）。

@@ -88,3 +88,26 @@ def test_real_env_beats_env_file(tmp_path: Path,
 
 def test_get_settings_cached() -> None:
     assert get_settings() is get_settings()
+
+
+def test_db_defaults():
+    """db 段默认本机事实值（对齐 Nacos 段默认先例，零配置即连——spec D6）。"""
+    s = Settings(_env_file=None)
+    assert s.db.host == "127.0.0.1"
+    assert s.db.port == 3306
+    assert s.db.user == "root"
+    assert s.db.password == ""
+    assert s.db.database == "cloud_ai"
+    assert s.db.pool_size == 5
+    assert s.db.max_overflow == 10
+    assert s.db.pool_recycle == 3600
+    assert s.db.echo is False
+
+
+def test_db_env_override(monkeypatch):
+    """db 段 env 覆盖（嵌套分隔 "__"）。"""
+    monkeypatch.setenv("CLOUD_BASE_AI_DB__HOST", "10.0.0.5")
+    monkeypatch.setenv("CLOUD_BASE_AI_DB__PORT", "3307")
+    monkeypatch.setenv("CLOUD_BASE_AI_DB__PASSWORD", "secret")
+    s = Settings(_env_file=None)
+    assert (s.db.host, s.db.port, s.db.password) == ("10.0.0.5", 3307, "secret")

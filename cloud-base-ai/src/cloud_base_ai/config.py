@@ -1,4 +1,4 @@
-"""配置模块：pydantic-settings，Nacos 注册（R11 D5）+ LLM 段（2026-10-13 AI 对话轮 D1）。"""
+"""配置模块：pydantic-settings，Nacos 注册（R11 D5）+ LLM 段（2026-10-13 AI 对话轮 D1）+ DB 段（2026-10-13 ORM/DAO 轮 D6）。"""
 
 from functools import lru_cache
 from pathlib import Path
@@ -45,6 +45,25 @@ class EmbeddingModelSettings(BaseModel):
     embedding_dimension: int = 1024  # 向量维度
     type: str = "ollama"
 
+class DatabaseSettings(BaseModel):
+    """MySQL 连接参数（spec D6）：默认本机事实值——DB 是本机基础设施（与 LLM 外部
+    付费依赖的「默认空=未配置态」哲学不同源，对齐 Nacos 段默认 127.0.0.1 先例）。
+
+    env 覆盖形态：CLOUD_BASE_AI_DB__HOST / __PORT / __USER / __PASSWORD / __DATABASE /
+    __POOL_SIZE / __MAX_OVERFLOW / __POOL_RECYCLE / __ECHO。
+    """
+
+    host: str = "127.0.0.1"
+    port: int = 3306
+    user: str = "root"
+    password: str = ""  # 本机 root 空密码事实默认；跨环境走 .env，真值不入库
+    database: str = "cloud_ai"
+    pool_size: int = 5
+    max_overflow: int = 10
+    pool_recycle: int = 3600  # 防 MySQL wait_timeout（5.7 默认 8h）stale 连接
+    echo: bool = False
+
+
 class Settings(BaseSettings):
     """应用配置根（env 前缀 CLOUD_BASE_AI_，嵌套分隔符 "__"——单 "_" 与内层字段名
     自身含下划线歧义，含下划线内层字段覆盖会静默失效，2026-10-12 实测后主控拍板 "__"）。
@@ -53,6 +72,7 @@ class Settings(BaseSettings):
     nacos: NacosSettings = NacosSettings()
     llm: LLMSettings = LLMSettings()
     embedding_llm: EmbeddingModelSettings = EmbeddingModelSettings()
+    db: DatabaseSettings = DatabaseSettings()
     app_port: int = 8010  # uvicorn 监听与注册实例端口同源
 
     model_config = SettingsConfigDict(

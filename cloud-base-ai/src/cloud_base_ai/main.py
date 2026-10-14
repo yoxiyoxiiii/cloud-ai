@@ -13,6 +13,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 
 from cloud_base_ai.config import get_settings
+from cloud_base_ai.db import dispose_engine
 from cloud_base_ai.exception_handler import register_exception_handlers
 from cloud_base_ai.nacos_registration import NacosRegistration
 from cloud_base_ai.rag.router import router as rag_router
@@ -21,12 +22,13 @@ from cloud_base_ai.response import R
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """startup 注册 Nacos（失败降级不阻断，D7）→ yield → shutdown 先注销再关连接（D8）。"""
+    """startup 注册 Nacos（失败降级不阻断，D7）→ yield → shutdown 先注销再关 DB 连接池（幂等）。"""
     registration = NacosRegistration(get_settings())
     await registration.start()
     app.state.nacos = registration
     yield
     await registration.stop()
+    await dispose_engine()  # DB 连接池优雅关停（2026-10-13 ORM/DAO 轮）
 
 
 app = FastAPI(lifespan=lifespan)
