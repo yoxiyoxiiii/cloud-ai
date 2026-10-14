@@ -71,7 +71,7 @@ export function createXxx(payload: CreateXxxPayload): Promise<string> {
 }
 ```
 
-规则：URL 带网关服务前缀（`/system` `/sso` `/bpmn`——proxy rewrite 后直达网关）；函数名动词开头（pageXxx/createXxx/updateXxx/deleteXxx/listXxxRoles…）；入参出参全部 interface；每个函数 JSDoc 注契约节号；契约没有的参数不私自加（如分页无搜索参数就先不写，注明"契约现状"）。
+规则：URL 带网关服务前缀（`/system` `/sso` `/bpmn`——proxy rewrite 后直达网关）；函数名动词开头（pageXxx/createXxx/updateXxx/deleteXxx/listXxxRoles…）；入参出参全部 interface；每个函数 JSDoc 注契约节号；契约没有的参数不私自加（如分页无搜索参数就先不写，注明"契约现状"）。注释与报告写作另遵循 SOP「文档与注释可读性标准」：JSDoc 写「做什么/注意什么」，契约引用可定位（文件头注明契约文档名）。
 
 ## 请求封装铁律（utils/request.ts 已建，勿绕过）
 

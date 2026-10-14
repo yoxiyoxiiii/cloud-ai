@@ -141,6 +141,7 @@ cloud-base/
 7. **方法命名**（Service/Mapper 层）：`findXxx` 单查 / `saveXxx` 新增 / `updateXxx` 修改 / `pageListXxx` 分页 / `listXxx` 列表 / `deleteXxx` 删除 / `countXxx` 计数（Controller URL 路径不受影响）
 8. **实体状态枚举**：状态类字段（status/deleted 等）在**实体类内部**建嵌套枚举，**枚举名以 Enum 为后缀**（如 `SysUser.StatusEnum{NORMAL(0),DISABLED(1)}`，含 code 与 of(code)），**字段类型保持 Integer 映射**；Java 代码引用枚举常量禁魔法数（SQL 字面量除外）
 9. **VO 隔离**：Controller 返回一律 VO 对象（禁 DB 实体直出）；**Service 层统一转换**（多处时集中 `convert` 包静态方法），转换用原生 setter 逐字段设置，**禁三方拷贝工具**（BeanUtils/mapstruct 等）
+10. **注释与文档可读性**（2026-10-14 追加，含 Python/前端工程）：注释只写「做什么 + 为什么」，决策过程与轮次历史不进代码；决策代号（D1/T5/方案B/spec §n 等）禁止裸引用——展开成一句话或补文档路径；一行注释一件事，术语首现给解释。文档/报告结构化、结论先行、一段一主题。完整标准与正反例：`docs/multi-agent-dev-sop.md`「文档与注释可读性标准」
 
 **后端开发规范基准**：`/backend-spec` 技能（DDL 与索引设计→Controller 全套模板 + 事务口径 + 检查清单；**不止新增 CRUD**，迭代功能涉及 SQL 亦适用）；机械规则由 `cloud-system` 的 `ArchitectureGuardTest` 强制（内联 R.ok/隐式 @PathVariable/Wrapper/BaseMapper/controller 依赖 mapper/XML `${}`/单行 `<if>`/Map 接参/实体内嵌枚举无 Enum 后缀等，写错构建即红）。
 

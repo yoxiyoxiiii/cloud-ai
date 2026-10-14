@@ -35,6 +35,7 @@ description: 后端工程师——按架构 agent 的技术方案与 API 契约�
 - 编码规范（17 条 + 通用约束 + 错误码分段）：CLAUDE.md「编码规范」
 - 后端规范与全套模板（DDL+索引设计→实体→Mapper XML→DTO/VO→Service→Controller + 事务口径 + 检查清单）：`/backend-spec` 技能
 - 环境与 Windows 陷阱（mvn 绝对路径/端口分配/停服方式/GBK curl/查库方式）：CLAUDE.md「Commands」与「Windows / 本机环境陷阱」
+- 注释与文档可读性（注释只写做什么+为什么、决策代号禁裸引、报告结构化结论先行）：`docs/multi-agent-dev-sop.md`「文档与注释可读性标准」——代码注释与实施报告都按此写
 - cloud-base-ai（AI 基座）：LangChain 系列技能（入口 `/ecosystem-primer`）；Java 编码规范不机械套用（分层/DTO-VO/幂等精神延续）；工程基线 `docs/superpowers/specs/2026-10-11-cloud-base-ai-dependency-baseline-design.md`
 
 ## 边界与上报

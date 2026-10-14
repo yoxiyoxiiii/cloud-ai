@@ -640,6 +640,7 @@ public class XxxJobHandler {
 - [ ] 唯一键查重 + DuplicateKey 兜底（catch 内先 log.error）？错误码按服务分段接续分配？
 - [ ] `mvn -f cloud-base/pom.xml clean install -pl cloud-<service> -am` 全绿（含 ArchitectureGuardTest/MapperXmlBindingTest；新 DB 服务复制这两个守护测试）？
 - [ ] 起服务按契约 curl 新端点（经网关带 admin token）+ DB 抽查审计字段？
+- [ ] **注释与文档可读性**：注释只写做什么+为什么，无裸决策代号（D1/T5/方案B 等），一行注释一件事；报告结构化结论先行（SOP「文档与注释可读性标准」）？
 - [ ] 服务模块 `@FeignClient` 零命中（守护测试）？
 - [ ] api 模块 `@FeignClient` 均带 `fallbackFactory`（守护测试）？
 - [ ] **MQ（涉事务消息/消费时）**：生产 executor 形态（编排化+executeInTx 内 setBusinessRef，实现内无 @Transactional）/ 消费 L1L2 二选一（DedupRocketMQListener 或 @UkIdempotentListener，守护测试检查）/ 失败三分类归位 / topic·group·KEYS·消息体与消息契约逐字一致？

@@ -33,6 +33,7 @@ description: 前端工程师——按架构 agent 的方案与 API 契约实现�
 - 前端工程规范（技术栈定版/目录分层/api 与弹窗模板/请求封装铁律/登录态与路由/测试规范/已知取舍）：`/frontend-page` 技能
 - API 契约：`docs/superpowers/contracts/`（唯一对齐物）
 - 后端返回约定（R<T>/HTTP 恒 200/Long→String/401 行为）：契约 §1 与 CLAUDE.md「关键约定」
+- 注释与文档可读性（注释只写做什么+为什么、决策代号禁裸引、报告结构化结论先行）：`docs/multi-agent-dev-sop.md`「文档与注释可读性标准」——代码注释与实施报告都按此写
 
 ## 边界与上报
 
