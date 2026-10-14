@@ -73,7 +73,9 @@ async def create_kb(req: CreateKBReq) -> int:
     撞重双防：先查重挡住常规重名；并发窗口或"已软删记录仍占用唯一键"的情况
     由 IntegrityError 兜底——先 log.error 记根因，再转业务码 5003。
     """
+    # 获取当前事务
     session = current_session()
+    # 查询当前知识库是否已经存在
     exists = await dao.find_kb_by_name(session, req.name)
     if exists is not None:
         raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS)
