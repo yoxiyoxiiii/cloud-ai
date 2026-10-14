@@ -9,16 +9,23 @@ LLM 异常 catch 必须 log.error 记根因后转 5001（规范第 3 条；msg �
 import logging
 from collections.abc import AsyncIterator
 
+from sqlalchemy.exc import IntegrityError
+
 from cloud_base_ai.config import get_settings
+from cloud_base_ai.db import get_session_factory
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.models.model_factory import get_chat_model
+from cloud_base_ai.rag import dao
+from cloud_base_ai.rag.entities import AiKnowledgeBase
 from cloud_base_ai.rag.generation import to_lc_messages
-from cloud_base_ai.rag.schemas import RagChatAnswerVo, RagChatDto
+from cloud_base_ai.rag.schemas import RagChatAnswerVo, RagChatDto, CreateKBReq
 
 logger = logging.getLogger(__name__)
 
 CODE_LLM_CALL_FAILED: int = 5001
 MSG_LLM_CALL_FAILED: str = "LLM 调用失败，请稍后重试"
+CODE_KB_NAME_EXISTS: int = 5003
+MSG_KB_NAME_EXISTS: str = "知识库名称已存在"
 
 
 async def chat_answer(dto: RagChatDto) -> RagChatAnswerVo:
@@ -56,3 +63,25 @@ async def stream_chat_answer(dto: RagChatDto) -> AsyncIterator[str]:
     except Exception as e:
         logger.error("LLM astream failed: %s: %s", type(e).__name__, e)
         raise BusinessException(MSG_LLM_CALL_FAILED, CODE_LLM_CALL_FAILED) from e
+
+
+async def create_kb(req: CreateKBReq) -> int:
+    """创建知识库：查重（活记录视角）→ save（审计四值走 contextvar）→ 返回 id。
+
+    撞重双防：find_kb_by_name 前置 + IntegrityError 兜底（并发 TOCTOU 与墓碑占键，
+    对齐 Java DuplicateKeyException 兜底口径）；兜底必 log.error 根因后转 5003。
+    事务块 = 查重与 save 同块（async with session.begin()，块退出 commit）。
+    """
+    async with get_session_factory()() as session:
+        async with session.begin():
+            exists = await dao.find_kb_by_name(session, req.name)
+            if exists is not None:
+                raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS)
+            try:
+                kb = await dao.save_kb(
+                    session, AiKnowledgeBase(name=req.name, description=req.description)
+                )
+            except IntegrityError as e:
+                logger.error("create_kb duplicate name (uk_name): %s: %s", type(e).__name__, e)
+                raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS) from e
+            return kb.id

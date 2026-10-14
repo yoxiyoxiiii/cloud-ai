@@ -11,12 +11,16 @@ from typing import Any
 
 import pytest
 from langchain.messages import HumanMessage
+from sqlalchemy.exc import IntegrityError
 
 from cloud_base_ai.config import Settings
+from cloud_base_ai.db.base import set_current_account
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.rag import service
-from cloud_base_ai.rag.schemas import RagChatDto, RagChatMessage
+from cloud_base_ai.rag.dao import delete_kb_by_id, find_kb_by_name
+from cloud_base_ai.rag.schemas import CreateKBReq, RagChatDto, RagChatMessage
 from cloud_base_ai.rag.service import chat_answer, stream_chat_answer
+from tests.db_testing import make_service_session_factory
 
 
 def dto_of(n: int) -> RagChatDto:
@@ -129,3 +133,48 @@ def test_stream_llm_failure_translates_5001(monkeypatch: pytest.MonkeyPatch) -> 
             out.append(f"<{e.code}:{e.msg}>")
         return out
     assert asyncio.run(collect()) == ["partial", "<5001:LLM 调用失败，请稍后重试>"]
+
+
+# ---------- create_kb 编排（2026-10-14 create_kb 轮：SQLite 内存替身，查重/审计/事务块/5003 转译） ----------
+
+pytestmark = pytest.mark.anyio
+
+
+@pytest.fixture(autouse=True)
+def _reset_account():
+    set_current_account(None)
+    yield
+    set_current_account(None)
+
+
+async def test_create_kb_returns_id_and_audits(monkeypatch: pytest.MonkeyPatch) -> None:
+    set_current_account("e2e_admin")
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(service, "get_session_factory", lambda: factory)
+        kb_id = await service.create_kb(CreateKBReq(name="e2e_kb_1", description="e2e_desc"))
+        assert isinstance(kb_id, int) and kb_id > 0
+        found = await find_kb_by_name(factory(), "e2e_kb_1")
+        assert found is not None and found.create_by == "e2e_admin"  # contextvar → 审计
+
+
+async def test_create_kb_duplicate_active_name_5003(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(service, "get_session_factory", lambda: factory)
+        await service.create_kb(CreateKBReq(name="e2e_dup", description="e2e_desc"))
+        with pytest.raises(BusinessException) as ei:
+            await service.create_kb(CreateKBReq(name="e2e_dup", description="e2e_desc"))
+        assert ei.value.code == 5003
+        assert "已存在" in ei.value.msg
+
+
+async def test_create_kb_tombstone_integrity_error_5003(monkeypatch: pytest.MonkeyPatch) -> None:
+    """墓碑占键：find 查重看不到（软删不可见）→ save 撞 uk_name → IntegrityError 兜底 5003。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(service, "get_session_factory", lambda: factory)
+        kb_id = await service.create_kb(CreateKBReq(name="e2e_tomb", description="e2e_desc"))
+        async with factory() as s:
+            async with s.begin():
+                assert await delete_kb_by_id(s, kb_id) == 1
+        with pytest.raises(BusinessException) as ei:
+            await service.create_kb(CreateKBReq(name="e2e_tomb", description="e2e_desc"))
+        assert ei.value.code == 5003

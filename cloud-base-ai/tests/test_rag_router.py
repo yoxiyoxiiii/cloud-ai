@@ -12,6 +12,8 @@ from fastapi.testclient import TestClient
 from cloud_base_ai.exception_handler import register_exception_handlers
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.rag import router as router_module
+from cloud_base_ai.rag import service as service_module
+from cloud_base_ai.rag.router import kb_router
 from cloud_base_ai.rag.router import router as rag_router
 from cloud_base_ai.rag.schemas import RagChatAnswerVo
 
@@ -25,6 +27,7 @@ def client() -> TestClient:
     app = FastAPI()  # 无 lifespan（不触发 Nacos 注册）
     register_exception_handlers(app)
     app.include_router(rag_router)
+    app.include_router(kb_router)  # 知识库管理面（2026-10-14 create_kb 轮）
     return TestClient(app)
 
 
@@ -155,3 +158,45 @@ def test_stream_real_5002_no_key_frame(client: TestClient,
     resp = client.post("/rag/chat/stream", json=BODY, headers=PERMS)
     assert resp.text == 'data: {"msg": "LLM 未配置（CLOUD_BASE_AI_LLM__API_KEY）"}\n\n' + DONE
     get_chat_model.cache_clear()
+
+
+# ---------- 知识库创建端点（2026-10-14，契约 2026-10-14-ai-kb-api.md） ----------
+
+KB_PERMS: dict[str, str] = {"X-User-Perms": "ai:kb:add"}
+
+
+def test_kb_create_no_perms_403(client: TestClient) -> None:
+    resp = client.post("/rag/kb", json={"name": "e2e_x", "description": "d"})
+    assert resp.json()["code"] == 403
+
+
+def test_kb_create_wrong_perms_403(client: TestClient) -> None:
+    resp = client.post("/rag/kb", json={"name": "e2e_x", "description": "d"}, headers={"X-User-Perms": "ai:chat:list"})
+    assert resp.json()["code"] == 403
+
+
+def test_kb_create_invalid_name_1001(client: TestClient) -> None:
+    resp = client.post("/rag/kb", json={"name": "", "description": "d"}, headers=KB_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_create_missing_description_1001(client: TestClient) -> None:
+    resp = client.post("/rag/kb", json={"name": "e2e_x"}, headers=KB_PERMS)  # 缺 description
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_create_ok_returns_id(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_create(req: object) -> int:
+        return 42
+    monkeypatch.setattr(service_module, "create_kb", fake_create)
+    resp = client.post("/rag/kb", json={"name": "e2e_ok", "description": "e2e_desc"}, headers=KB_PERMS)
+    body = resp.json()
+    assert body["code"] == 200 and body["data"] == 42
+
+
+def test_kb_create_duplicate_5003(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_create(req: object) -> int:
+        raise BusinessException("知识库名称已存在", 5003)
+    monkeypatch.setattr(service_module, "create_kb", fake_create)
+    resp = client.post("/rag/kb", json={"name": "e2e_dup", "description": "e2e_desc"}, headers=KB_PERMS)
+    assert resp.json()["code"] == 5003

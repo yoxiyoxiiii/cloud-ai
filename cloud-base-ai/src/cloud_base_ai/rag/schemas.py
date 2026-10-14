@@ -35,4 +35,5 @@ class CreateKBReq(BaseModel):
     知识库创建请求对象
     """
     name: str = Field(description="知识库名称", min_length=1, max_length=50)
+    description: str = Field(description="描述信息", max_length=500)
 

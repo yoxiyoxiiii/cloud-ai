@@ -5,15 +5,21 @@ SecurityConstants.PERMS_SEPARATOR=","），Java HeaderAuthFilter split 构建 au
 @PreAuthorize 拒绝 = ErrorCode.FORBIDDEN(403, "无操作权限")——本组件逐项对齐
 （header 名 / 分隔符 / 拒绝文案）。信任边界同 Java 服务层：信任网关注入（网关已剥离
 外部伪造 X-User-*），AI 侧不二次验签；本地直连调试（绕网关）须手工带 header。
+
+2026-10-14 create_kb 轮：依赖同时 set_current_account（X-User-Account → db.base
+contextvar，对齐 Java HeaderAuthFilter 单 filter 双职责——account+perms 一次透出；
+无 header = None 可空列存 NULL）。
 """
 
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request
 
+from cloud_base_ai.db.base import set_current_account
 from cloud_base_ai.exceptions import BusinessException
 
 PERMS_HEADER: str = "X-User-Perms"
+ACCOUNT_HEADER: str = "X-User-Account"
 PERMS_SEPARATOR: str = ","
 MSG_FORBIDDEN: str = "无操作权限"
 CODE_FORBIDDEN: int = 403
@@ -28,6 +34,7 @@ def require_perms(required: str) -> Callable[[Request], Awaitable[None]]:
     """
 
     async def check_perms(request: Request) -> None:
+        set_current_account(request.headers.get(ACCOUNT_HEADER) or None)
         raw: str | None = request.headers.get(PERMS_HEADER)
         perms: list[str] = [p.strip() for p in raw.split(PERMS_SEPARATOR)] if raw else []
         if required not in perms:

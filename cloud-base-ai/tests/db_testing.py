@@ -25,3 +25,16 @@ async def make_db_session() -> AsyncIterator[AsyncSession]:
             yield session
     finally:
         await engine.dispose()
+
+
+@asynccontextmanager
+async def make_service_session_factory() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """yield 一个全新内存库上的 session factory（service 层测试替身：monkeypatch
+    service.get_session_factory 指向它——service 内部自取 session 的编排可测）。"""
+    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        yield async_sessionmaker(engine, expire_on_commit=False)
+    finally:
+        await engine.dispose()

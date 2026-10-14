@@ -16,7 +16,8 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 
 from cloud_base_ai.exceptions import BusinessException
-from cloud_base_ai.rag.schemas import RagChatAnswerVo, RagChatDto
+from cloud_base_ai.rag import service
+from cloud_base_ai.rag.schemas import RagChatAnswerVo, RagChatDto, CreateKBReq
 from cloud_base_ai.rag.service import chat_answer, stream_chat_answer
 from cloud_base_ai.response import R
 from cloud_base_ai.security import require_perms
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 DONE_FRAME: str = "data: [DONE]\n\n"
 
 router = APIRouter(prefix="/rag/chat", dependencies=[Depends(require_perms("ai:chat:list"))])
+kb_router = APIRouter(prefix="/rag/kb", dependencies=[Depends(require_perms("ai:kb:add"))])
 
 
 def _sse(payload: dict[str, str]) -> str:
@@ -59,3 +61,14 @@ async def chat_stream(dto: RagChatDto) -> StreamingResponse:
 
     return StreamingResponse(event_gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache"})
+
+
+@kb_router.post("")
+async def create_kb(req: CreateKBReq) -> R[int]:
+    """
+    创建一个知识库
+    :param req: 请求对象
+    :return: 返回ID
+    """
+    kb_id: int = await service.create_kb(req)
+    return R.ok(kb_id)

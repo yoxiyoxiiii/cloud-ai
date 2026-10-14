@@ -384,11 +384,12 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (172, 17, '忽略',     'system:mqDlq:ignore', 'F', '', '', 2, 1, NOW()),
 (173, 17, '重置',     'system:mqDlq:reset',  'F', '', '', 3, 1, NOW());
 
--- AI 对话菜单（18 段 2 行；与增量脚本 2026-10-13-ai-rag-chat.sql 语义等价，
+-- AI 菜单（18 段 3 行；与增量脚本 2026-10-13-ai-rag-chat.sql、2026-10-14-ai-kb-create.sql 语义等价，
 -- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定）
 INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_builtin, create_time) VALUES
 (18,  0, 'AI 助手', '',             'M', '',          'ChatDotRound', 4, 1, NOW()),
-(181, 18, '对话',   'ai:chat:list', 'C', '/rag/chat', 'ChatLineRound', 1, 1, NOW());
+(181, 18, '对话',   'ai:chat:list', 'C', '/rag/chat', 'ChatLineRound', 1, 1, NOW()),
+(182, 18, '知识库', 'ai:kb:add',    'C', '/rag/kb',   'Collection',    2, 1, NOW());
 
 -- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价）
 INSERT INTO sys_user (id, account, nickname, dept_id, password, is_builtin, create_time) VALUES
