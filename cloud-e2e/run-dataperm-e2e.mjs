@@ -216,7 +216,7 @@ try {
     const labels = []
     for (let i = 0; i < n; i++) labels.push(((await items.nth(i).innerText()) || '').trim())
     log(`  侧边菜单: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,工作台', '侧边菜单顺序（AI 对话轮 13 项形态——R13 菜单 18/181 段「对话」入序）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,知识库,工作台', '侧边菜单顺序（知识库管理轮 14 项形态——R13 菜单 18/181 段「对话」+ 2026-10-15 182 段「知识库」入序）')
 
     // 部门页树表（契约 §2.1：全量含停用、sort 序、内置徽标）
     const treeP = page.waitForResponse((r2) => apiPath(r2.url(), '/api/system/dept/tree'), { timeout: 15000 })
