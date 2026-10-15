@@ -19,6 +19,8 @@ from cloud_base_ai.nacos_registration import NacosRegistration
 from cloud_base_ai.rag.router import router as rag_router
 from cloud_base_ai.rag.router import kb_router as rag_kb_router
 from cloud_base_ai.rag.router import kb_read_router as rag_kb_read_router
+from cloud_base_ai.rag.router import kb_update_router as rag_kb_update_router
+from cloud_base_ai.rag.router import kb_delete_router as rag_kb_delete_router
 from cloud_base_ai.response import R
 
 
@@ -38,6 +40,8 @@ register_exception_handlers(app)
 app.include_router(rag_router)  # RAG 域首个业务端点轮（2026-10-13），R12 D6 零触碰解除
 app.include_router(rag_kb_router)  # 知识库管理面（2026-10-14 create_kb 轮）
 app.include_router(rag_kb_read_router)  # 知识库管理面读端点（2026-10-15 管理轮）
+app.include_router(rag_kb_update_router)  # 知识库编辑端点（2026-10-15 列表管理轮）
+app.include_router(rag_kb_delete_router)  # 知识库删除端点（2026-10-15 列表管理轮）
 
 
 @app.get("/")

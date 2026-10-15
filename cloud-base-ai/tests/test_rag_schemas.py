@@ -53,13 +53,44 @@ def test_answer_vo_fields() -> None:
 import json
 from datetime import datetime
 
-from cloud_base_ai.rag.schemas import AiPageResult, KbFileVo, KbVo
+from cloud_base_ai.rag.schemas import AiPageResult, KbFileVo, KbVo, UpdateKBReq
 
 
 def test_kbvo_description_nullable() -> None:
-    vo = KbVo(id=1, name="e2e_kb", description=None)
+    vo = KbVo(id=1, name="e2e_kb", description=None, create_time=None)
     assert vo.description is None
     assert json.loads(vo.model_dump_json())["description"] is None
+
+
+# ---------- 列表管理轮增量（契约 2026-10-14-ai-kb-api.md §4/§5） ----------
+
+
+def test_kbvo_time_formatted() -> None:
+    """KbVo 补 create_time 列：继承 VoTimeMixin 序列化为 'yyyy-MM-dd HH:mm:ss'。"""
+    vo = KbVo(id=1, name="e2e_kb", description="d",
+              create_time=datetime(2026, 10, 15, 9, 0, 0))
+    data = json.loads(vo.model_dump_json())
+    assert data["create_time"] == "2026-10-15 09:00:00"
+    assert data["id"] == 1
+
+
+def test_kbvo_time_none_to_null() -> None:
+    vo = KbVo(id=1, name="e2e_kb", description=None, create_time=None)
+    assert json.loads(vo.model_dump_json())["create_time"] is None
+
+
+def test_updatekbreq_bounds() -> None:
+    """编辑入参边界：name 1..50；description 必填（缺失拒）且 ≤500——与 CreateKBReq 同口径。"""
+    assert UpdateKBReq(name="e2e_kb", description="d")  # 合法最小形态
+    assert UpdateKBReq(name="a" * 50, description="d" * 500)  # 双上限含边界
+    with pytest.raises(ValidationError):
+        UpdateKBReq(name="", description="d")  # 空 name 拒
+    with pytest.raises(ValidationError):
+        UpdateKBReq(name="a" * 51, description="d")  # 51 字拒
+    with pytest.raises(ValidationError):
+        UpdateKBReq(name="e2e_kb")  # 缺 description 拒
+    with pytest.raises(ValidationError):
+        UpdateKBReq(name="e2e_kb", description="d" * 501)  # 超长拒
 
 
 def test_kbfilevo_time_formatted() -> None:

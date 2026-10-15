@@ -180,6 +180,25 @@ async def delete_kb_file_by_id(session: AsyncSession, file_id: int) -> int:
     return result.rowcount
 
 
+async def delete_kb_files_by_kb(session: AsyncSession, kb_id: int) -> int:
+    """软删某知识库的全部活文件行（知识库删除级联的文件段；命中 idx_kb_id(kb_id, deleted)）。"""
+    stmt = (
+        update(AiKnowledgeBaseFiles)
+        .where(
+            AiKnowledgeBaseFiles.kb_id == kb_id,
+            AiKnowledgeBaseFiles.deleted == SoftDeleteMixin.DeletedEnum.NORMAL,
+        )
+        .values(
+            deleted=SoftDeleteMixin.DeletedEnum.DELETED,
+            update_by=current_account(),
+            update_time=datetime.now(),
+        )
+        .execution_options(synchronize_session=False)
+    )
+    result = await session.execute(stmt)
+    return result.rowcount
+
+
 async def page_list_kb_files(
     session: AsyncSession, kb_id: int, page: int, size: int, file_name: str | None = None
 ) -> tuple[Sequence[AiKnowledgeBaseFiles], int]:

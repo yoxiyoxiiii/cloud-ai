@@ -10,9 +10,11 @@ import type {
   AiPageResult,
   CreateKbPayload,
   KbFileVo,
+  KbPageQuery,
   KbVo,
   RagChatAnswerVo,
   RagChatMessage,
+  UpdateKbPayload,
 } from '../types/api'
 
 /** AI 对话·非流式（契约 2026-10-13-ai-rag-chat-api §1，perms ai:chat:list）：LLM 耗时远超默认 15s，单请求放大超时 */
@@ -25,9 +27,26 @@ export function chatRag(messages: RagChatMessage[]): Promise<RagChatAnswerVo> {
   })
 }
 
-/** 知识库全量列表（kb 契约 §4，perms ai:kb:list）：全量活记录 id 升序，不分页（管理面左栏，MVP 库量小——契约现状） */
-export function listKbs(): Promise<KbVo[]> {
-  return request<KbVo[]>({ url: '/ai/rag/kb/list', method: 'get' })
+/**
+ * 知识库分页列表（kb 契约 §4，perms ai:kb:list）：query 参数 page/size/name（AI 域参数名）；
+ * id 倒序（新建库居首）；name 仅非空时携带（空串与不传同为不过滤，契约 §4）
+ */
+export function pageKbs(query: KbPageQuery): Promise<AiPageResult<KbVo>> {
+  return request<AiPageResult<KbVo>>({
+    url: '/ai/rag/kb/list',
+    method: 'get',
+    params: { page: query.page, size: query.size, name: query.name || undefined },
+  })
+}
+
+/** 编辑知识库（kb 契约 §5，perms ai:kb:update）：name+description 全量覆盖（双必填）；改名为他库现有名得 5003、目标不存在得 5004；data 恒 null */
+export function updateKb(kbId: number, payload: UpdateKbPayload): Promise<null> {
+  return request<null>({ url: `/ai/rag/kb/${kbId}`, method: 'put', data: payload })
+}
+
+/** 删除知识库（kb 契约 §6，perms ai:kb:delete）：三表级联软删（KB/文件/chunk 同一事务）；目标不存在（含二次删）得 5004；data 恒 null */
+export function deleteKb(kbId: number): Promise<null> {
+  return request<null>({ url: `/ai/rag/kb/${kbId}`, method: 'delete' })
 }
 
 /** 新建知识库（kb 契约 §2，perms ai:kb:add）：返回新知识库 id（JSON number）；活记录重名或墓碑占键得 5003 */
@@ -53,7 +72,7 @@ export function uploadKbFile(kbId: number, file: File): Promise<number> {
   })
 }
 
-/** 知识库文件分页入参（kb 契约 §5）：AI 域参数名 page/size（非 Java 域 pageNum/pageSize）；越界后端钳制不报错 */
+/** 知识库文件分页入参（kb 契约 §7）：AI 域参数名 page/size（非 Java 域 pageNum/pageSize）；越界后端钳制不报错 */
 export interface KbFilePageQuery {
   /** 页码（1 起） */
   page: number
@@ -61,7 +80,7 @@ export interface KbFilePageQuery {
   size: number
 }
 
-/** 知识库文件分页（kb 契约 §5，perms ai:kb:list）：先校验库存在（5004）再分页，文件 id 倒序 */
+/** 知识库文件分页（kb 契约 §7，perms ai:kb:list）：先校验库存在（5004）再分页，文件 id 倒序 */
 export function pageKbFiles(kbId: number, query: KbFilePageQuery): Promise<AiPageResult<KbFileVo>> {
   return request<AiPageResult<KbFileVo>>({
     url: `/ai/rag/kb/${kbId}/files`,

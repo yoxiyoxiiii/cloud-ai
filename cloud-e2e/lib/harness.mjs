@@ -79,7 +79,13 @@ export function createHarness({ base, artDir }) {
       const msgs = page.locator('.el-message')
       const n = await msgs.count()
       for (let i = 0; i < n; i++) {
-        const t = (await msgs.nth(i).innerText()).trim()
+        // toast 淡出动画中元素瞬时 not visible，innerText 默认等 30s 必卡——短超时失败即跳过该条
+        let t = ''
+        try {
+          t = (await msgs.nth(i).innerText({ timeout: 1000 })).trim()
+        } catch {
+          continue
+        }
         if (t.includes(text) && (await msgs.nth(i).getAttribute('class')).includes(`el-message--${type}`)) {
           return t
         }

@@ -13,8 +13,10 @@ from cloud_base_ai.exception_handler import register_exception_handlers
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.rag import router as router_module
 from cloud_base_ai.rag import service as service_module
+from cloud_base_ai.rag.router import kb_delete_router
 from cloud_base_ai.rag.router import kb_read_router
 from cloud_base_ai.rag.router import kb_router
+from cloud_base_ai.rag.router import kb_update_router
 from cloud_base_ai.rag.router import router as rag_router
 from cloud_base_ai.rag.schemas import AiPageResult, KbFileVo, KbVo, RagChatAnswerVo
 
@@ -30,6 +32,8 @@ def client() -> TestClient:
     app.include_router(rag_router)
     app.include_router(kb_router)  # 知识库管理面写端点（2026-10-14 create_kb 轮）
     app.include_router(kb_read_router)  # 知识库管理面读端点（2026-10-15 管理轮）
+    app.include_router(kb_update_router)  # 知识库编辑端点（2026-10-15 列表管理轮）
+    app.include_router(kb_delete_router)  # 知识库删除端点（2026-10-15 列表管理轮）
     return TestClient(app)
 
 
@@ -212,8 +216,10 @@ KB_READ_PERMS: dict[str, str] = {"X-User-Perms": "ai:kb:list"}
 
 
 def fake_kbs() -> list[KbVo]:
-    return [KbVo(id=1, name="e2e_kb_1", description="e2e_desc"),
-            KbVo(id=2, name="e2e_kb_2", description=None)]
+    return [KbVo(id=1, name="e2e_kb_1", description="e2e_desc",
+                 create_time=datetime(2026, 10, 15, 9, 0, 0)),
+            KbVo(id=2, name="e2e_kb_2", description=None,
+                 create_time=datetime(2026, 10, 14, 18, 0, 0))]
 
 
 def fake_files_page() -> AiPageResult[KbFileVo]:
@@ -235,17 +241,47 @@ def test_kb_list_wrong_perms_403(client: TestClient) -> None:
     assert resp.json()["code"] == 403
 
 
-def test_kb_list_ok_ids_are_numbers(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_list() -> list[KbVo]:
-        return fake_kbs()
-    monkeypatch.setattr(service_module, "list_kbs", fake_list)
-    resp = client.get("/rag/kb/list", headers=KB_READ_PERMS)
+def test_kb_list_ok_total_number_and_query_passthrough(client: TestClient,
+                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_page(page: int, size: int, name: str | None = None) -> AiPageResult[KbVo]:
+        captured.update(page=page, size=size, name=name)
+        return AiPageResult(total=2, rows=fake_kbs())
+    monkeypatch.setattr(service_module, "page_list_kbs", fake_page)
+    resp = client.get("/rag/kb/list", params={"page": 2, "size": 5, "name": "e2e"},
+                      headers=KB_READ_PERMS)
     body = resp.json()
     assert body["code"] == 200 and body["msg"] == "操作成功"
-    assert len(body["data"]) == 2
-    assert isinstance(body["data"][0]["id"], int)  # JSON number（非 string）
-    assert body["data"][0]["name"] == "e2e_kb_1"
-    assert body["data"][1]["description"] is None
+    assert captured == {"page": 2, "size": 5, "name": "e2e"}  # query 透传 service
+    assert isinstance(body["data"]["total"], int)  # total 为 JSON number（非 string）
+    assert isinstance(body["data"]["rows"][0]["id"], int)
+    assert body["data"]["rows"][0]["name"] == "e2e_kb_1"
+    assert body["data"]["rows"][0]["create_time"] == "2026-10-15 09:00:00"
+    assert body["data"]["rows"][1]["description"] is None
+
+
+def test_kb_list_defaults_page1_size10_name_omitted(client: TestClient,
+                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_page(page: int, size: int, name: str | None = None) -> AiPageResult[KbVo]:
+        captured.update(page=page, size=size, name=name)
+        return AiPageResult(total=0, rows=[])
+    monkeypatch.setattr(service_module, "page_list_kbs", fake_page)
+    resp = client.get("/rag/kb/list", headers=KB_READ_PERMS)
+    assert resp.json()["code"] == 200
+    assert captured == {"page": 1, "size": 10, "name": None}  # 缺省 page=1 size=10，name 不携带
+
+
+def test_kb_list_page_not_int_1001(client: TestClient) -> None:
+    resp = client.get("/rag/kb/list", params={"page": "abc"}, headers=KB_READ_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_list_name_too_long_1001(client: TestClient) -> None:
+    resp = client.get("/rag/kb/list", params={"name": "a" * 51}, headers=KB_READ_PERMS)
+    assert resp.json()["code"] == 1001
 
 
 def test_kb_files_no_perms_403(client: TestClient) -> None:
@@ -304,3 +340,96 @@ def test_kb_files_defaults_page1_size10(client: TestClient,
     resp = client.get("/rag/kb/1/files", headers=KB_READ_PERMS)
     assert resp.json()["code"] == 200
     assert captured == {"kb_id": 1, "page": 1, "size": 10}  # 缺省 page=1 size=10
+
+
+# ---------- 知识库编辑/删除端点（2026-10-15 列表管理轮，契约 §5/§6） ----------
+
+KB_UPDATE_PERMS: dict[str, str] = {"X-User-Perms": "ai:kb:update"}
+KB_DELETE_PERMS: dict[str, str] = {"X-User-Perms": "ai:kb:delete"}
+UPDATE_BODY: dict[str, str] = {"name": "e2e_kb_new", "description": "e2e_desc"}
+
+
+def test_kb_update_no_perms_403(client: TestClient) -> None:
+    resp = client.put("/rag/kb/1", json=UPDATE_BODY)
+    body = resp.json()
+    assert body["code"] == 403
+    assert body["msg"] == "无操作权限"
+
+
+def test_kb_update_add_perms_not_enough_403(client: TestClient) -> None:
+    # 权限按动作分立：持创建权限 ai:kb:add 也不能编辑
+    resp = client.put("/rag/kb/1", json=UPDATE_BODY, headers=KB_PERMS)
+    assert resp.json()["code"] == 403
+
+
+def test_kb_update_kb_id_not_int_1001(client: TestClient) -> None:
+    resp = client.put("/rag/kb/abc", json=UPDATE_BODY, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_update_invalid_name_1001(client: TestClient) -> None:
+    resp = client.put("/rag/kb/1", json={"name": "", "description": "d"}, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_update_kb_missing_5004(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_update(kb_id: int, req: object) -> None:
+        raise BusinessException("知识库不存在", 5004)
+    monkeypatch.setattr(service_module, "update_kb", fake_update)
+    resp = client.put("/rag/kb/9999", json=UPDATE_BODY, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 5004
+
+
+def test_kb_update_duplicate_name_5003(client: TestClient,
+                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_update(kb_id: int, req: object) -> None:
+        raise BusinessException("知识库名称已存在", 5003)
+    monkeypatch.setattr(service_module, "update_kb", fake_update)
+    resp = client.put("/rag/kb/1", json=UPDATE_BODY, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 5003
+
+
+def test_kb_update_ok_data_null(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_update(kb_id: int, req: object) -> None:
+        captured.update(kb_id=kb_id, name=req.name)
+    monkeypatch.setattr(service_module, "update_kb", fake_update)
+    resp = client.put("/rag/kb/1", json=UPDATE_BODY, headers=KB_UPDATE_PERMS)
+    body = resp.json()
+    assert body["code"] == 200 and body["msg"] == "操作成功"
+    assert body["data"] is None  # data 恒 null
+    assert captured == {"kb_id": 1, "name": "e2e_kb_new"}  # 路径参数与 body 透传 service
+
+
+def test_kb_delete_no_perms_403(client: TestClient) -> None:
+    resp = client.delete("/rag/kb/1")
+    body = resp.json()
+    assert body["code"] == 403
+    assert body["msg"] == "无操作权限"
+
+
+def test_kb_delete_kb_id_not_int_1001(client: TestClient) -> None:
+    resp = client.delete("/rag/kb/abc", headers=KB_DELETE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_delete_kb_missing_5004(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_delete(kb_id: int) -> None:
+        raise BusinessException("知识库不存在", 5004)
+    monkeypatch.setattr(service_module, "delete_kb", fake_delete)
+    resp = client.delete("/rag/kb/9999", headers=KB_DELETE_PERMS)
+    assert resp.json()["code"] == 5004
+
+
+def test_kb_delete_ok_data_null(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, int] = {}
+
+    async def fake_delete(kb_id: int) -> None:
+        captured["kb_id"] = kb_id
+    monkeypatch.setattr(service_module, "delete_kb", fake_delete)
+    resp = client.delete("/rag/kb/1", headers=KB_DELETE_PERMS)
+    body = resp.json()
+    assert body["code"] == 200 and body["msg"] == "操作成功"
+    assert body["data"] is None  # data 恒 null
+    assert captured == {"kb_id": 1}  # 路径参数透传 service

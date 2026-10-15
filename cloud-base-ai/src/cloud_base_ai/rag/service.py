@@ -30,6 +30,7 @@ from cloud_base_ai.rag.schemas import (
     KbVo,
     RagChatAnswerVo,
     RagChatDto,
+    UpdateKBReq,
 )
 
 logger = logging.getLogger(__name__)
@@ -104,13 +105,52 @@ async def create_kb(req: CreateKBReq) -> int:
 
 
 @transactional
-async def list_kbs() -> list[KbVo]:
-    """全量活知识库列表（id 升序；管理面左栏——MVP 库量小不分页）。
+async def page_list_kbs(page: int, size: int, name: str | None = None) -> AiPageResult[KbVo]:
+    """分页查活知识库（契约 §4）：id 倒序（新建居首），name 包含匹配可选过滤。
 
     VO 在 service 层逐字段构造（对齐 Java「Service 层统一转换、禁三方拷贝工具」口径）。
     """
-    rows = await dao.list_kbs(current_session())
-    return [KbVo(id=row.id, name=row.name, description=row.description) for row in rows]
+    rows, total = await dao.page_list_kbs(current_session(), page, size, name)
+    vos = [KbVo(id=row.id, name=row.name, description=row.description,
+                create_time=row.create_time) for row in rows]
+    return AiPageResult(total=total, rows=vos)
+
+
+@transactional
+async def update_kb(kb_id: int, req: UpdateKBReq) -> None:
+    """编辑知识库（契约 §5）：先校验存在（5004），再查重排除自身（5003），
+    最后 name+description 全量覆盖落库（并发窗口/墓碑占键由 uk_name 兜底同转 5003）。"""
+    session = current_session()
+    kb = await dao.find_kb_by_id(session, kb_id)
+    if kb is None:
+        raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
+    same_name = await dao.find_kb_by_name(session, req.name)
+    if same_name is not None and same_name.id != kb_id:
+        # 保持自身当前名放行（same_name 即本库），改名为他库现有名才拒绝
+        raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS)
+    try:
+        kb.name = req.name
+        kb.description = req.description
+        await dao.update_kb(session, kb)
+    except IntegrityError as e:
+        logger.error("update_kb duplicate name (uk_name): %s: %s", type(e).__name__, e)
+        raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS) from e
+
+
+@transactional
+async def delete_kb(kb_id: int) -> None:
+    """删除知识库（契约 §6）：chunk → 文件行 → KB 三表软删级联，同一事务，
+    无「库下有文件阻止删除」前置约束；物理向量不动（孤儿向量治理记账
+    docs/handoff/ai.md，检索轮做 collection 隔离时统一清理）。"""
+    session = current_session()
+    if await dao.find_kb_by_id(session, kb_id) is None:
+        raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
+    await dao.delete_chunks_by_kb(session, kb_id)
+    await dao.delete_kb_files_by_kb(session, kb_id)
+    rowcount = await dao.delete_kb_by_id(session, kb_id)
+    if rowcount == 0:
+        # 并发窗口兜底：校验存在后被并发删除；raise 回滚本事务级联（对方事务已删，无害）
+        raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
 
 
 @transactional

@@ -20,6 +20,7 @@ from cloud_base_ai.rag.dao import (
     delete_chunks_by_kb,
     delete_kb_by_id,
     delete_kb_file_by_id,
+    delete_kb_files_by_kb,
     find_chunk_by_id,
     find_kb_by_id,
     find_kb_by_name,
@@ -287,6 +288,30 @@ async def test_list_count_delete_kb_file():
         assert len(await list_kb_files(s, kb.id)) == 1
         assert await count_kb_files(s, kb.id) == 1
         assert (await find_kb_file_by_id(s, f1.id)) is None
+
+
+async def test_delete_kb_files_by_kb_cascade():
+    """库维度级联软删文件行（删除知识库三表级联的文件段）：只动本库活行、审计落值、二次级联 0。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            kb1 = await save_kb(s, _kb("kb1"))
+            kb2 = await save_kb(s, _kb("kb2"))
+            f1 = await save_kb_file(s, _file(kb1.id, path="/p/1.md", name="1.md"))
+            await save_kb_file(s, _file(kb1.id, path="/p/2.md", name="2.md"))
+            await save_kb_file(s, _file(kb2.id, path="/p/3.md", name="3.md"))
+        set_current_account("ops")
+        async with s.begin():
+            assert await delete_kb_files_by_kb(s, kb1.id) == 2  # 本库两活行
+            assert await delete_kb_files_by_kb(s, kb1.id) == 0  # 二次级联：无活行
+        row = (await s.execute(
+            select(AiKnowledgeBaseFiles).where(AiKnowledgeBaseFiles.id == f1.id)
+            .execution_options(populate_existing=True)
+        )).scalar_one()
+        assert row.deleted == AiKnowledgeBaseFiles.DeletedEnum.DELETED  # 墓碑行带审计
+        assert row.update_by == "ops"
+        assert row.update_time is not None
+        assert await count_kb_files(s, kb1.id) == 0
+        assert await count_kb_files(s, kb2.id) == 1  # 他库文件不受影响
 
 
 # ---------- AiKbChunk 全套（父子两层同表） ----------

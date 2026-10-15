@@ -10,7 +10,7 @@
  *   Round I 31/311/312 改造（name=请假申请、perms 换 system:leave 域、path=/system/leave）+ 新增 34/341 我的审批，sort 序 31/34/32/33）；
  *   M5b 内置保护：种子"用户管理"行徽标/禁用面断言 + 直连 PUT/DELETE → 3014 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
  * - 结束按 F → C → M 自底向上删净并断言树中无 E2E 残留——
- *   role e2e R5a 直连断言 admin 绑定恰 48 个种子菜单 id 全量（Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182/183 段），任何残留 E2E 行都会让下一轮回归必红
+ *   role e2e R5a 直连断言 admin 绑定恰 50 个种子菜单 id 全量（Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段），任何残留 E2E 行都会让下一轮回归必红
  * - 不断言"权限改完立即可用"（权限快照时效，契约 §1：变更需重登/refresh 生效）
  * - 动态路由适配（2026-10-07 计划 E1）：M3/M4 C 型表单补填新必填"路由路径"（契约 §5.2 v2），
  *   M4 请求体键断言随 v2 更新为八字段+id；其余场景零改动
@@ -38,7 +38,7 @@ const TEST_PAGE_PATH = `/e2e/page${stamp}`
 const TEST_FUNC = `E2E按钮${stamp}`
 const TEST_PERMS = `system:e2e:test${stamp}`
 
-/** 内置种子菜单 id 全量清单（48 = 既有 23 + 30 段 bpmn 10 行 + 数据权限轮 15/16 段 7 行 + 死信治理轮 17 段 4 行 + AI 对话轮 18 段 2 行 + 知识库管理轮 182/183 段 2 行；契约 2026-10-07-bpmn-leave-api §9
+/** 内置种子菜单 id 全量清单（50 = 既有 23 + 30 段 bpmn 10 行 + 数据权限轮 15/16 段 7 行 + 死信治理轮 17 段 4 行 + AI 对话轮 18 段 2 行 + 知识库管理轮 182-185 段 4 行；契约 2026-10-07-bpmn-leave-api §9
  *  + 2026-10-08-bpmn-diagram-designer-api §5 + 2026-10-08-approval-platform-api §8）——331 为 F 节点「部署流程」
  *  （perms bpmn:definition:deploy，挂 33 流程定义下，is_builtin=1，Round H 设计器新增）；
  *  34/341 为 Round I 审批平台化新增（34 C「我的审批」perms bpmn:approval:list path /bpmn/approval + 341 F「撤销审批」
@@ -50,7 +50,9 @@ const TEST_PERMS = `system:e2e:test${stamp}`
  *  18/181 为 AI 对话轮新增（18 M「AI 助手」icon ChatDotRound sort 4 + 181 C「对话」perms ai:chat:list
  *  path /rag/chat——契约 2026-10-13-ai-rag-chat-api §6.1，全 is_builtin=1）；
  *  182/183 为知识库管理轮新增（182 C「知识库」perms ai:kb:list path /rag/kb icon Collection sort 2 +
- *  183 F「新增」perms ai:kb:add 挂 182 下——契约 2026-10-14-ai-kb-api §6，全 is_builtin=1）
+ *  183 F「新增」perms ai:kb:add 挂 182 下——契约 2026-10-14-ai-kb-api §8）；184/185 为 2026-10-15
+ *  列表管理轮新增（184 F「编辑」perms ai:kb:update sort 2 + 185 F「删除」perms ai:kb:delete sort 3
+ *  挂 182 下——同契约 §8，全 is_builtin=1）
  *  互指义务：与 run-role-e2e.mjs R5a 的 SEED_MENU_IDS 各自维护、改菜单种子段时 grep 两脚本同步改
  *  （有意不进 lib/harness.mjs——harness 保持业务零知识，计划 E1 共享常量决策） */
 const SEED_MENU_IDS = [
@@ -58,7 +60,7 @@ const SEED_MENU_IDS = [
   '121', '122', '123', '124', '131', '132', '133', '14', '141', '142', '143',
   '15', '151', '152', '153', '16', '161', '162',
   '17', '171', '172', '173',
-  '18', '181', '182', '183',
+  '18', '181', '182', '183', '184', '185',
   '20', '21', '211',
   '30', '31', '32', '33', '311', '312', '321', '331', '34', '341',
 ]
@@ -603,7 +605,7 @@ try {
     }
     const rowCount = await page.locator('.el-table__row').count()
     log(`  清理后总行数: ${rowCount}`)
-    // E1 迁移（宽松语义）：行数 ≥ SEED_MENU_IDS.length 且树 id ⊇ SEED_MENU_IDS（46 项全量，Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段；树表无 id 列，经树端点全量收集），
+    // E1 迁移（宽松语义）：行数 ≥ SEED_MENU_IDS.length 且树 id ⊇ SEED_MENU_IDS（50 项全量，Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段；树表无 id 列，经树端点全量收集），
     // 不再锁「恰 23 行」上限——后续加内置菜单种子只改 SEED_MENU_IDS 一处
     assert(rowCount >= SEED_MENU_IDS.length, `清理后菜单树应 ≥ ${SEED_MENU_IDS.length} 行（内置种子全量，M5b 保护后零变更），实际 ${rowCount}`)
     const treeIds = []

@@ -41,6 +41,12 @@ class CreateKBReq(BaseModel):
     description: str = Field(description="描述信息", max_length=500)
 
 
+class UpdateKBReq(BaseModel):
+    """知识库编辑请求对象（契约 §5）：name + description 全量覆盖语义（双必填、双上限与创建同口径）。"""
+    name: str = Field(description="知识库名称", min_length=1, max_length=50)
+    description: str = Field(description="描述信息", max_length=500)
+
+
 class VoTimeMixin(BaseModel):
     """出参时间统一 'yyyy-MM-dd HH:mm:ss'（对齐 Java Jackson 全局格式，前端展示口径一致）。
 
@@ -53,12 +59,13 @@ class VoTimeMixin(BaseModel):
         return v.strftime("%Y-%m-%d %H:%M:%S") if v else None
 
 
-class KbVo(BaseModel):
-    """知识库列表项（管理面左栏；最小出参面：不含 create_time 与库级计数）。"""
+class KbVo(VoTimeMixin):
+    """知识库列表项（管理页表格；分页 id 倒序，create_time 序列化为 'yyyy-MM-dd HH:mm:ss' 字符串）。"""
 
     id: int
     name: str
     description: str | None
+    create_time: datetime | None
 
 
 class KbFileVo(VoTimeMixin):

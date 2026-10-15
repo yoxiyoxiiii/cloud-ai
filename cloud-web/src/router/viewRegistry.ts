@@ -39,7 +39,7 @@ export const VIEW_REGISTRY: Record<string, Component> = {
   '/bpmn/task': TaskManageView,
   '/bpmn/approval': ApprovalManageView,
   '/bpmn/definition': DefinitionManageView,
-  // 知识库对话（菜单 181）/ 知识库管理（菜单 182，契约 2026-10-14-ai-kb-api §6 种子修订）
+  // 知识库对话（菜单 181）/ 知识库管理（菜单 182，契约 2026-10-14-ai-kb-api §8 种子）
   '/rag/chat': ChatView,
   '/rag/kb': KbManageView,
 }

@@ -1006,8 +1006,8 @@ export interface RagChatAnswerVo {
    （Python 域不做 Long→String）、时间 yyyy-MM-dd HH:mm:ss 字符串——勿按 Long→String 口径消费 ===== */
 
 /**
- * AI 域分页容器（契约 §1/§5）：total 为 number，不复用 Java 域 PageResult<T>
- * （其 total 为 string）——分页组件可直接消费，无需 Number() 转换
+ * AI 域分页容器（契约 §1，§4/§7 分页端点出参）：total 为 number，不复用 Java 域
+ * PageResult<T>（其 total 为 string）——分页组件可直接消费，无需 Number() 转换
  */
 export interface AiPageResult<T> {
   total: number
@@ -1015,19 +1015,21 @@ export interface AiPageResult<T> {
 }
 
 /**
- * 知识库 VO（契约 §4）：左栏列表项，全量活记录 id 升序不分页；
- * 不含库级计数（契约拍板：不显示文档数/分块数）
+ * 知识库 VO（契约 §4，2026-10-15 列表管理轮修订）：管理页表格行，
+ * 分页 id 倒序（新建库居首）、软删不可见；不含库级计数（契约拍板：不显示文档数/分块数）
  */
 export interface KbVo {
   /** 知识库 id（AI 域口径：JSON number，契约 §1） */
   id: number
   name: string
-  /** 描述信息；DDL 列可空故可为 null */
+  /** 描述信息；DDL 列可空故可为 null（表格降级显示「暂无描述」） */
   description: string | null
+  /** 创建时间 yyyy-MM-dd HH:mm:ss 字符串直显（列表管理轮 additive 补列） */
+  create_time: string
 }
 
 /**
- * 知识库文件 VO（契约 §5）：右栏表格行，文件 id 倒序；
+ * 知识库文件 VO（契约 §7）：文件抽屉表格行，文件 id 倒序；
  * file_split_type 值域 "parent-child"（父子分片），预留 "recursion"（递归分片）；
  * create_time 为 yyyy-MM-dd HH:mm:ss 字符串直显
  */
@@ -1044,6 +1046,28 @@ export interface KbFileVo {
  * description ≤500 必填（契约拍板口径：DDL 列可空、必填由入参层表达）
  */
 export interface CreateKbPayload {
+  name: string
+  description: string
+}
+
+/**
+ * 知识库分页入参（契约 §4）：AI 域参数名 page/size（非 Java 域 pageNum/pageSize）；
+ * name 可选——包含匹配语义，不传或空串 = 不过滤全量分页；越界后端钳制不报错
+ */
+export interface KbPageQuery {
+  /** 页码（1 起） */
+  page: number
+  /** 每页条数（1..200） */
+  size: number
+  /** 名称搜索（可选，包含匹配；超 50 字后端 1001） */
+  name?: string
+}
+
+/**
+ * 编辑知识库入参（契约 §5）：name + description 全量覆盖语义（双必填，无部分更新通道），
+ * 与创建 §2 同口径；改名为他库现有名得 5003（保持自身当前名放行）
+ */
+export interface UpdateKbPayload {
   name: string
   description: string
 }

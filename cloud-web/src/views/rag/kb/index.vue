@@ -1,279 +1,229 @@
-<template>
-  <div class="kb-manage">
-    <!-- 左：知识库列表（全量不分页，契约 §4 现状） -->
-    <aside class="kb-aside">
-      <div class="aside-head">
-        <span class="aside-title">知识库</span>
-        <el-button v-perms="'ai:kb:add'" type="primary" @click="createVisible = true">
-          新建知识库
-        </el-button>
-      </div>
-      <div v-loading="kbLoading" class="kb-list">
-        <div v-if="!kbLoading && kbs.length === 0" class="aside-empty">暂无知识库</div>
-        <div
-          v-for="kb in kbs"
-          :key="kb.id"
-          :class="['kb-item', { active: kb.id === activeKbId }]"
-          @click="selectKb(kb.id)"
-        >
-          <div class="kb-name">{{ kb.name }}</div>
-          <div class="kb-desc">{{ kb.description ?? '暂无描述' }}</div>
-        </div>
-      </div>
-    </aside>
-
-    <!-- 右：所选库文件表格 -->
-    <section class="kb-main">
-      <div v-if="!activeKb" class="empty">请选择左侧知识库</div>
-      <template v-else>
-        <div class="main-head">
-          <span class="main-title">{{ activeKb.name }}</span>
-          <!-- 上传与新建同权限门控（契约 §1：均 ai:kb:add）；未选库时整栏本就不渲染——
-               上传区仅存在于已选库分支；multipart 由自定义 http-request 发 axios -->
-          <el-upload
-            v-perms="'ai:kb:add'"
-            accept=".pdf,.docx"
-            :show-file-list="false"
-            :disabled="uploading"
-            :http-request="handleUpload"
-          >
-            <el-button type="primary" :loading="uploading">上传文件</el-button>
-          </el-upload>
-        </div>
-        <el-table v-loading="filesLoading" :data="fileRows" row-key="id">
-          <el-table-column label="文件名" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">{{ rowOf(row).file_name }}</template>
-          </el-table-column>
-          <el-table-column label="分片类型" width="140">
-            <template #default="{ row }">
-              <el-tag>{{ splitTypeLabel(rowOf(row).file_split_type) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="上传时间" min-width="170">
-            <template #default="{ row }">{{ rowOf(row).create_time }}</template>
-          </el-table-column>
-        </el-table>
-        <el-pagination
-          class="files-pagination"
-          v-model:current-page="query.page"
-          v-model:page-size="query.size"
-          :total="total"
-          :page-sizes="[10, 20, 50]"
-          layout="total, prev, pager, next, sizes"
-          @current-change="loadFiles"
-          @size-change="handleSizeChange"
-        />
-      </template>
-    </section>
-
-    <CreateKbDialog v-model="createVisible" @success="handleCreated" />
-  </div>
-</template>
-
 <script setup lang="ts">
 /**
- * 知识库管理页（/rag/kb，契约 2026-10-14-ai-kb-api）：左栏知识库全量列表（§4 不分页）+
- * 右栏所选库文件分页表格（§5）；新建/上传权限 ai:kb:add、查询 ai:kb:list（契约 §1 拆分）；
- * 错误分支（403/5003/5004/1001）由 request.ts 拦截器统一 toast，页面不重复处理
+ * 知识库管理页（/rag/kb，契约 2026-10-14-ai-kb-api 2026-10-15 列表管理轮修订版）：
+ * 标准表格管理页——搜索栏（§4 name 包含匹配）+ 操作条（§2 新增）+ 四列表格 + 分页（§4 id 倒序）；
+ * 编辑/删除按钮权限分立 ai:kb:update/ai:kb:delete（§5/§6，种子 184/185）；
+ * 文件管理平移进 FilesDrawer 抽屉（§7 文件分页 + §3 上传，能力面不增不减）；
+ * 错误分支（403/1001/5003/5004）由 request.ts 拦截器统一 toast，页面 catch 留空
  */
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
-import type { UploadRequestOptions } from 'element-plus'
-import { listKbs, pageKbFiles, uploadKbFile } from '../../../api/rag'
-import type { KbFileVo, KbVo } from '../../../types/api'
-import CreateKbDialog from './components/CreateKbDialog.vue'
+import { onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { deleteKb, pageKbs } from '../../../api/rag'
+import type { KbVo } from '../../../types/api'
+import KbFormDialog from './components/KbFormDialog.vue'
+import type { KbFormMode } from './components/KbFormDialog.vue'
+import FilesDrawer from './components/FilesDrawer.vue'
 
 /** = pathToRouteName('/rag/kb')，keep-alive include 依赖，不可省 */
 defineOptions({ name: 'RagKb' })
 
-/** 分片类型字面量→中文（契约 §5 值域）：parent-child 父子分片 / recursion 递归分片（预留）；未知值原样展示 */
-const SPLIT_TYPE_LABELS: Record<string, string> = {
-  'parent-child': '父子分片',
-  recursion: '递归分片',
-}
-
-function splitTypeLabel(value: string): string {
-  return SPLIT_TYPE_LABELS[value] ?? value
-}
-
 /** EP el-table-column 插槽 row 固定 DefaultRow，全页断言集中此一处，模板/处理函数禁止再散落裸 as */
-function rowOf(row: unknown): KbFileVo {
-  return row as KbFileVo
+function rowOf(row: unknown): KbVo {
+  return row as KbVo
 }
 
-// 左栏：知识库列表
-const kbs = ref<KbVo[]>([])
-const kbLoading = ref(false)
-const activeKbId = ref(0)
-const activeKb = computed(() => kbs.value.find((kb) => kb.id === activeKbId.value))
+/** 契约 §4 name 搜索长度上限 50（搜索框 maxlength 与后端校验同值） */
+const NAME_MAX = 50
 
-// 右栏：文件分页
-const filesLoading = ref(false)
-const fileRows = ref<KbFileVo[]>([])
-/** AI 域 total 为 number（契约 §1：Python 域不做 Long→String），无需 Number() 转换 */
+const loading = ref(false)
+const rows = ref<KbVo[]>([])
+/** AI 域 total 为 number（契约 §1：Python 域不做 Long→String），分页组件直取无需 Number() */
 const total = ref(0)
-const query = reactive({ page: 1, size: 10 })
+const filter = reactive({ page: 1, size: 10, name: '' })
 
-const createVisible = ref(false)
-const uploading = ref(false)
-
-/** 左栏加载（契约 §4）：全量活记录 id 升序 */
-async function loadKbs(): Promise<void> {
-  kbLoading.value = true
+/** 加载分页（契约 §4）：name 仅非空时携带（空串与不传同为不过滤） */
+async function load(page: number = filter.page): Promise<void> {
+  loading.value = true
   try {
-    kbs.value = await listKbs()
-  } catch {
-    // 拦截器已统一 toast，列表保持现状
-  } finally {
-    kbLoading.value = false
-  }
-}
-
-/** 右栏文件分页（契约 §5）：先校验库存在（5004 拦截器已 toast），表格保持现状 */
-async function loadFiles(page: number = query.page): Promise<void> {
-  if (!activeKbId.value) {
-    return
-  }
-  filesLoading.value = true
-  try {
-    query.page = page
-    const result = await pageKbFiles(activeKbId.value, { page: query.page, size: query.size })
-    fileRows.value = result.rows
+    filter.page = page
+    const result = await pageKbs({
+      page: filter.page,
+      size: filter.size,
+      name: filter.name.trim() || undefined,
+    })
+    rows.value = result.rows
     total.value = result.total
   } catch {
     // 拦截器已统一 toast，表格保持现状
   } finally {
-    filesLoading.value = false
+    loading.value = false
   }
 }
 
-/** 选中知识库：切换右栏数据源并回第一页 */
-function selectKb(kbId: number): void {
-  activeKbId.value = kbId
-  void loadFiles(1)
+/** 搜索：回第一页（新过滤条件的结果集从首页看起） */
+function search(): void {
+  void load(1)
+}
+
+/** 重置：清空名称回第一页全量 */
+function resetFilter(): void {
+  filter.name = ''
+  void load(1)
 }
 
 function handleSizeChange(size: number): void {
-  query.size = size
-  void loadFiles(1)
+  filter.size = size
+  void load(1)
 }
 
-/** el-upload 自定义请求（契约 §3）：multipart 交 axios，kb_id 走 query 参数；成功回第一页刷新（新文件 id 倒序居首） */
-async function handleUpload(options: UploadRequestOptions): Promise<unknown> {
-  const kbId = activeKbId.value
-  if (!kbId) {
-    return undefined // 未选库防御（上传区仅存在于已选库分支，双保险）
+/* ============ 新建/编辑弹窗（KbFormDialog add/edit 双模式） ============ */
+
+const formVisible = ref(false)
+const formMode = ref<KbFormMode>('add')
+const formKb = ref<KbVo>()
+
+function openAdd(): void {
+  formMode.value = 'add'
+  formKb.value = undefined
+  formVisible.value = true
+}
+
+function openEdit(kb: KbVo): void {
+  formMode.value = 'edit'
+  formKb.value = kb
+  formVisible.value = true
+}
+
+/** 弹窗成功：新建回第一页（id 倒序新库居首可见），编辑刷新当前页（行位不变） */
+function handleFormSuccess(): void {
+  if (formMode.value === 'add') {
+    void load(1)
+  } else {
+    void load()
   }
-  uploading.value = true
+}
+
+/* ============ 删除（契约 §6 三表级联软删，确认框前置——契约无 dry-run 端点） ============ */
+
+async function handleDelete(kb: KbVo): Promise<void> {
+  const confirmed = await ElMessageBox.confirm(
+    `确定删除知识库 "${kb.name}" 吗？其下全部文件将一并删除。`,
+    '删除确认',
+    { type: 'warning' },
+  ).catch(() => false)
+  if (!confirmed) {
+    return
+  }
   try {
-    await uploadKbFile(kbId, options.file)
-    ElMessage.success('上传成功')
-    await loadFiles(1)
+    await deleteKb(kb.id)
+    ElMessage.success('删除成功')
+    // 删空回退：当前页仅剩此行且非首页 → 回上一页再查（防空页滞留）；否则刷新当前页
+    if (rows.value.length <= 1 && filter.page > 1) {
+      await load(filter.page - 1)
+    } else {
+      await load()
+    }
   } catch {
-    // 拦截器已统一 toast（如 500：不支持的文件类型）
-  } finally {
-    uploading.value = false
+    // 拦截器已统一 toast（如 5004 目标不存在）
   }
 }
 
-/** 新建成功（契约 §2 返回新库 id）：刷新左栏并按 id 自动选中新库 */
-async function handleCreated(kbId: number): Promise<void> {
-  await loadKbs()
-  selectKb(kbId)
+/* ============ 文件抽屉（§7 文件分页 + §3 上传，自旧右栏平移） ============ */
+
+const drawerVisible = ref(false)
+const drawerKb = ref<KbVo>()
+
+function openFiles(kb: KbVo): void {
+  drawerKb.value = kb
+  drawerVisible.value = true
 }
 
 onMounted(() => {
-  void loadKbs()
+  void load(1)
 })
 </script>
 
+<template>
+  <el-card shadow="never">
+    <template #header>
+      <div class="table-header">
+        <span>知识库管理</span>
+      </div>
+    </template>
+
+    <!-- 搜索栏 + 操作条同排：左 name 搜索（§4 包含匹配）右新增（§2 权限 ai:kb:add） -->
+    <div class="toolbar">
+      <div class="filter-bar">
+        <el-input
+          v-model="filter.name"
+          placeholder="名称（模糊）"
+          clearable
+          :maxlength="NAME_MAX"
+          class="filter-input"
+          @keyup.enter="search"
+        />
+        <el-button @click="search">查询</el-button>
+        <el-button @click="resetFilter">重置</el-button>
+      </div>
+      <el-button v-perms="'ai:kb:add'" type="primary" @click="openAdd">新增知识库</el-button>
+    </div>
+
+    <el-table v-loading="loading" :data="rows" row-key="id" empty-text="暂无知识库">
+      <el-table-column label="名称" min-width="180" show-overflow-tooltip>
+        <template #default="{ row }">{{ rowOf(row).name }}</template>
+      </el-table-column>
+      <el-table-column label="描述" min-width="220" show-overflow-tooltip>
+        <template #default="{ row }">{{ rowOf(row).description ?? '暂无描述' }}</template>
+      </el-table-column>
+      <el-table-column label="创建时间" min-width="170">
+        <template #default="{ row }">{{ rowOf(row).create_time }}</template>
+      </el-table-column>
+      <el-table-column label="操作" width="210" fixed="right">
+        <template #default="{ row }">
+          <el-button v-perms="'ai:kb:update'" link type="primary" @click="openEdit(rowOf(row))"
+            >编辑</el-button
+          >
+          <el-button v-perms="'ai:kb:delete'" link type="danger" @click="handleDelete(rowOf(row))"
+            >删除</el-button
+          >
+          <!-- 文件管理为查询类动作：页面可达即有菜单权限 ai:kb:list，不挂按钮级权限 -->
+          <el-button link type="primary" @click="openFiles(rowOf(row))">文件管理</el-button>
+        </template>
+      </el-table-column>
+    </el-table>
+
+    <el-pagination
+      class="table-pagination"
+      v-model:current-page="filter.page"
+      v-model:page-size="filter.size"
+      :total="total"
+      :page-sizes="[10, 20, 50]"
+      layout="total, prev, pager, next, sizes"
+      @current-change="load"
+      @size-change="handleSizeChange"
+    />
+
+    <KbFormDialog
+      v-model="formVisible"
+      :mode="formMode"
+      :kb="formKb"
+      @success="handleFormSuccess"
+    />
+    <FilesDrawer v-model="drawerVisible" :kb-id="drawerKb?.id ?? 0" :kb-name="drawerKb?.name ?? ''" />
+  </el-card>
+</template>
+
 <style scoped>
-/* 两栏布局沿 /rag/chat 页 aside+main 先例 */
-.kb-manage {
-  display: flex;
-  height: 100%;
-  gap: 12px;
-}
-.kb-aside {
-  width: 250px;
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-}
-.aside-head {
+.table-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
 }
-.aside-title {
-  font-weight: 600;
-}
-.kb-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.aside-empty {
-  padding: 16px 0;
-  text-align: center;
-  color: #909399;
-}
-.kb-item {
-  padding: 8px 12px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-.kb-item:hover {
-  background: #f5f7fa;
-}
-.kb-item.active {
-  background: #ecf5ff;
-  color: #409eff;
-}
-.kb-item .kb-name {
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.kb-item .kb-desc {
-  margin-top: 2px;
-  font-size: 12px;
-  color: #909399;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.kb-main {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-.main-head {
+.toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
 }
-.main-title {
-  font-size: 16px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.empty {
-  flex: 1;
+.filter-bar {
   display: flex;
   align-items: center;
-  justify-content: center;
-  color: #909399;
+  gap: 8px;
 }
-.files-pagination {
+.filter-input {
+  width: 220px;
+}
+.table-pagination {
   margin-top: 16px;
   justify-content: flex-end;
 }
