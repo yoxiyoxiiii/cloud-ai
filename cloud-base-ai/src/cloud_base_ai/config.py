@@ -45,6 +45,16 @@ class EmbeddingModelSettings(BaseModel):
     embedding_dimension: int = 1024  # 向量维度
     type: str = "ollama"
 
+class MilvusSettings(BaseModel):
+    """Milvus 向量库连接参数：地址走配置不写死（规范「接入外部系统」）。
+
+    env 覆盖形态：CLOUD_BASE_AI_MILVUS__URI。默认 127.0.0.1:19530 保持历史行为；
+    宿主端口映射变化时经 .env / 环境变量覆盖，不动代码。
+    """
+
+    uri: str = "http://127.0.0.1:19530"
+
+
 class DatabaseSettings(BaseModel):
     """MySQL 连接参数（spec D6）：默认本机事实值——DB 是本机基础设施（与 LLM 外部
     付费依赖的「默认空=未配置态」哲学不同源，对齐 Nacos 段默认 127.0.0.1 先例）。
@@ -72,6 +82,7 @@ class Settings(BaseSettings):
     nacos: NacosSettings = NacosSettings()
     llm: LLMSettings = LLMSettings()
     embedding_llm: EmbeddingModelSettings = EmbeddingModelSettings()
+    milvus: MilvusSettings = MilvusSettings()
     db: DatabaseSettings = DatabaseSettings()
     app_port: int = 8010  # uvicorn 监听与注册实例端口同源
 

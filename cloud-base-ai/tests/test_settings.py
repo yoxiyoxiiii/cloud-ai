@@ -111,3 +111,21 @@ def test_db_env_override(monkeypatch):
     monkeypatch.setenv("CLOUD_BASE_AI_DB__PASSWORD", "secret")
     s = Settings(_env_file=None)
     assert (s.db.host, s.db.port, s.db.password) == ("10.0.0.5", 3307, "secret")
+
+
+def test_milvus_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """milvus 段默认值：uri 指向本机 19530（历史行为兼容；宿主端口映射变化走 .env 覆盖）。
+
+    先 delenv 再断言：uv run 会把项目 .env 自动注入进程 env，真实 env 优先级高于
+    _env_file=None 的加载策略——不隔离则本用例随本地 .env 的 milvus 键翻转（不依赖 .env 状态）。
+    """
+    monkeypatch.delenv("CLOUD_BASE_AI_MILVUS__URI", raising=False)
+    s = Settings(_env_file=None)
+    assert s.milvus.uri == "http://127.0.0.1:19530"
+
+
+def test_milvus_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """milvus 段 env 覆盖（CLOUD_BASE_AI_MILVUS__URI，嵌套分隔 "__"）。"""
+    monkeypatch.setenv("CLOUD_BASE_AI_MILVUS__URI", "http://127.0.0.1:9092")
+    s = Settings(_env_file=None)
+    assert s.milvus.uri == "http://127.0.0.1:9092"

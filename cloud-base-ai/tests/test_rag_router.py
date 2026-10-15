@@ -13,9 +13,10 @@ from cloud_base_ai.exception_handler import register_exception_handlers
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.rag import router as router_module
 from cloud_base_ai.rag import service as service_module
+from cloud_base_ai.rag.router import kb_read_router
 from cloud_base_ai.rag.router import kb_router
 from cloud_base_ai.rag.router import router as rag_router
-from cloud_base_ai.rag.schemas import RagChatAnswerVo
+from cloud_base_ai.rag.schemas import AiPageResult, KbFileVo, KbVo, RagChatAnswerVo
 
 PERMS: dict[str, str] = {"X-User-Perms": "ai:chat:list"}
 BODY: dict[str, list[dict[str, str]]] = {"messages": [{"role": "user", "content": "hi"}]}
@@ -27,7 +28,8 @@ def client() -> TestClient:
     app = FastAPI()  # 无 lifespan（不触发 Nacos 注册）
     register_exception_handlers(app)
     app.include_router(rag_router)
-    app.include_router(kb_router)  # 知识库管理面（2026-10-14 create_kb 轮）
+    app.include_router(kb_router)  # 知识库管理面写端点（2026-10-14 create_kb 轮）
+    app.include_router(kb_read_router)  # 知识库管理面读端点（2026-10-15 管理轮）
     return TestClient(app)
 
 
@@ -200,3 +202,105 @@ def test_kb_create_duplicate_5003(client: TestClient, monkeypatch: pytest.Monkey
     monkeypatch.setattr(service_module, "create_kb", fake_create)
     resp = client.post("/rag/kb", json={"name": "e2e_dup", "description": "e2e_desc"}, headers=KB_PERMS)
     assert resp.json()["code"] == 5003
+
+
+# ---------- 知识库读端点（2026-10-15 管理轮，契约 2026-10-14-ai-kb-api.md §4/§5） ----------
+
+from datetime import datetime
+
+KB_READ_PERMS: dict[str, str] = {"X-User-Perms": "ai:kb:list"}
+
+
+def fake_kbs() -> list[KbVo]:
+    return [KbVo(id=1, name="e2e_kb_1", description="e2e_desc"),
+            KbVo(id=2, name="e2e_kb_2", description=None)]
+
+
+def fake_files_page() -> AiPageResult[KbFileVo]:
+    return AiPageResult(total=2, rows=[
+        KbFileVo(id=3, file_name="guide.pdf", file_split_type="parent-child",
+                 create_time=datetime(2026, 10, 15, 9, 30, 0))])
+
+
+def test_kb_list_no_perms_403(client: TestClient) -> None:
+    resp = client.get("/rag/kb/list")
+    body = resp.json()
+    assert resp.status_code == 200 and body["code"] == 403
+    assert body["msg"] == "无操作权限"
+
+
+def test_kb_list_wrong_perms_403(client: TestClient) -> None:
+    # ai:kb:add 是写端点权限：读端点必须不放行（权限拆分断言）
+    resp = client.get("/rag/kb/list", headers=KB_PERMS)
+    assert resp.json()["code"] == 403
+
+
+def test_kb_list_ok_ids_are_numbers(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_list() -> list[KbVo]:
+        return fake_kbs()
+    monkeypatch.setattr(service_module, "list_kbs", fake_list)
+    resp = client.get("/rag/kb/list", headers=KB_READ_PERMS)
+    body = resp.json()
+    assert body["code"] == 200 and body["msg"] == "操作成功"
+    assert len(body["data"]) == 2
+    assert isinstance(body["data"][0]["id"], int)  # JSON number（非 string）
+    assert body["data"][0]["name"] == "e2e_kb_1"
+    assert body["data"][1]["description"] is None
+
+
+def test_kb_files_no_perms_403(client: TestClient) -> None:
+    resp = client.get("/rag/kb/1/files")
+    assert resp.json()["code"] == 403
+
+
+def test_kb_files_wrong_perms_403(client: TestClient) -> None:
+    resp = client.get("/rag/kb/1/files", headers=KB_PERMS)
+    assert resp.json()["code"] == 403
+
+
+def test_kb_files_kb_id_not_int_1001(client: TestClient) -> None:
+    resp = client.get("/rag/kb/abc/files", headers=KB_READ_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_files_page_not_int_1001(client: TestClient) -> None:
+    resp = client.get("/rag/kb/1/files", params={"page": "abc"}, headers=KB_READ_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_files_kb_missing_5004(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_page(kb_id: int, page: int, size: int) -> AiPageResult[KbFileVo]:
+        raise BusinessException("知识库不存在", 5004)
+    monkeypatch.setattr(service_module, "page_list_kb_files", fake_page)
+    resp = client.get("/rag/kb/9999/files", headers=KB_READ_PERMS)
+    assert resp.json()["code"] == 5004
+
+
+def test_kb_files_ok_total_number_and_time(client: TestClient,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, int] = {}
+
+    async def fake_page(kb_id: int, page: int, size: int) -> AiPageResult[KbFileVo]:
+        captured.update(kb_id=kb_id, page=page, size=size)
+        return fake_files_page()
+    monkeypatch.setattr(service_module, "page_list_kb_files", fake_page)
+    resp = client.get("/rag/kb/1/files", params={"page": 2, "size": 5}, headers=KB_READ_PERMS)
+    body = resp.json()
+    assert body["code"] == 200
+    assert captured == {"kb_id": 1, "page": 2, "size": 5}  # query 透传 service
+    assert isinstance(body["data"]["total"], int)  # JSON number（非 string）
+    assert isinstance(body["data"]["rows"][0]["id"], int)
+    assert body["data"]["rows"][0]["create_time"] == "2026-10-15 09:30:00"
+
+
+def test_kb_files_defaults_page1_size10(client: TestClient,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, int] = {}
+
+    async def fake_page(kb_id: int, page: int, size: int) -> AiPageResult[KbFileVo]:
+        captured.update(kb_id=kb_id, page=page, size=size)
+        return fake_files_page()
+    monkeypatch.setattr(service_module, "page_list_kb_files", fake_page)
+    resp = client.get("/rag/kb/1/files", headers=KB_READ_PERMS)
+    assert resp.json()["code"] == 200
+    assert captured == {"kb_id": 1, "page": 1, "size": 10}  # 缺省 page=1 size=10

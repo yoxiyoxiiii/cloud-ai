@@ -1000,3 +1000,50 @@ export interface RagChatAnswerVo {
   answer: string
   model: string
 }
+
+/* ===== AI 知识库管理（契约 2026-10-14-ai-kb-api）
+   AI 域出参口径与 Java 域不同（契约 §1）：字段 snake_case、id/total 为 JSON number
+   （Python 域不做 Long→String）、时间 yyyy-MM-dd HH:mm:ss 字符串——勿按 Long→String 口径消费 ===== */
+
+/**
+ * AI 域分页容器（契约 §1/§5）：total 为 number，不复用 Java 域 PageResult<T>
+ * （其 total 为 string）——分页组件可直接消费，无需 Number() 转换
+ */
+export interface AiPageResult<T> {
+  total: number
+  rows: T[]
+}
+
+/**
+ * 知识库 VO（契约 §4）：左栏列表项，全量活记录 id 升序不分页；
+ * 不含库级计数（契约拍板：不显示文档数/分块数）
+ */
+export interface KbVo {
+  /** 知识库 id（AI 域口径：JSON number，契约 §1） */
+  id: number
+  name: string
+  /** 描述信息；DDL 列可空故可为 null */
+  description: string | null
+}
+
+/**
+ * 知识库文件 VO（契约 §5）：右栏表格行，文件 id 倒序；
+ * file_split_type 值域 "parent-child"（父子分片），预留 "recursion"（递归分片）；
+ * create_time 为 yyyy-MM-dd HH:mm:ss 字符串直显
+ */
+export interface KbFileVo {
+  /** 文件 id（AI 域口径：JSON number，契约 §1） */
+  id: number
+  file_name: string
+  file_split_type: string
+  create_time: string
+}
+
+/**
+ * 新建知识库入参（契约 §2）：name 1..50 必填唯一（活记录重名或墓碑占键得 5003）；
+ * description ≤500 必填（契约拍板口径：DDL 列可空、必填由入参层表达）
+ */
+export interface CreateKbPayload {
+  name: string
+  description: string
+}

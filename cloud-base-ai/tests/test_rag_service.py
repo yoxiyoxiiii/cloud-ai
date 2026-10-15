@@ -179,3 +179,114 @@ async def test_create_kb_tombstone_integrity_error_5003(monkeypatch: pytest.Monk
         with pytest.raises(BusinessException) as ei:
             await service.create_kb(CreateKBReq(name="e2e_tomb", description="e2e_desc"))
         assert ei.value.code == 5003
+
+
+# ---------- 知识库查询编排（2026-10-15 管理轮：list_kbs / page_list_kb_files） ----------
+
+import json
+
+from cloud_base_ai.rag.dao import delete_kb_file_by_id, save_kb, save_kb_file
+from cloud_base_ai.rag.entities import AiKnowledgeBase, AiKnowledgeBaseFiles
+from cloud_base_ai.rag.schemas import AiPageResult, KbFileVo, KbVo
+
+
+async def _seed_kb(factory, name: str, description: str | None) -> int:
+    """直接走 dao 造一条知识库（不经 service.create_kb，保持用例聚焦被测编排）。"""
+    async with factory() as s:
+        async with s.begin():
+            kb = await save_kb(s, AiKnowledgeBase(name=name, description=description))
+            return kb.id
+
+
+async def _seed_file(factory, kb_id: int, file_name: str) -> int:
+    async with factory() as s:
+        async with s.begin():
+            row = await save_kb_file(s, AiKnowledgeBaseFiles(
+                kb_id=kb_id, file_path=f"e2e-{kb_id}-{file_name}", file_name=file_name,
+                file_chunk_count=1, file_chunk_size=128, file_chunk_overlap=20,
+                file_split_type=AiKnowledgeBaseFiles.SplitTypeEnum.PARENT_CHILD.value))
+            return row.id
+
+
+async def test_list_kbs_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        assert await service.list_kbs() == []
+
+
+async def test_list_kbs_id_asc_field_mapping(monkeypatch: pytest.MonkeyPatch) -> None:
+    """多库 id 升序 + 字段逐项映射（description 为 None 的库直出 None）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        id_b = await _seed_kb(factory, "e2e_kb_b", "desc-b")
+        id_a = await _seed_kb(factory, "e2e_kb_a", None)
+        assert id_a > id_b  # 后插入 id 更大——升序断言的前提
+        vos = await service.list_kbs()
+        assert [v.id for v in vos] == [id_b, id_a]
+        assert all(isinstance(v, KbVo) for v in vos)
+        assert vos[0].name == "e2e_kb_b" and vos[0].description == "desc-b"
+        assert vos[1].description is None
+
+
+async def test_list_kbs_soft_deleted_invisible(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id = await _seed_kb(factory, "e2e_kb_gone", "d")
+        async with factory() as s:
+            async with s.begin():
+                assert await delete_kb_by_id(s, kb_id) == 1
+        assert await service.list_kbs() == []
+
+
+async def test_page_list_kb_files_kb_missing_5004(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        with pytest.raises(BusinessException) as ei:
+            await service.page_list_kb_files(kb_id=9999, page=1, size=10)
+        assert ei.value.code == 5004
+        assert "不存在" in ei.value.msg
+
+
+async def test_page_list_kb_files_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """total / rows 字段 / 时间格式（VO 序列化统一 'yyyy-MM-dd HH:mm:ss'）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id = await _seed_kb(factory, "e2e_kb_files", "d")
+        await _seed_file(factory, kb_id, "e2e_a.pdf")
+        await _seed_file(factory, kb_id, "e2e_b.pdf")
+        other_id = await _seed_kb(factory, "e2e_kb_other", "d")
+        await _seed_file(factory, other_id, "e2e_other.pdf")
+        result = await service.page_list_kb_files(kb_id=kb_id, page=1, size=10)
+        assert isinstance(result, AiPageResult)
+        assert result.total == 2  # 只数本库文件
+        names = [r.file_name for r in result.rows]
+        assert names == ["e2e_b.pdf", "e2e_a.pdf"]  # id 倒序（新文件在前）
+        assert result.rows[0].file_split_type == "parent-child"
+        data = json.loads(result.model_dump_json())
+        assert data["total"] == 2
+        assert data["rows"][0]["create_time"] == result.rows[0].create_time.strftime(
+            "%Y-%m-%d %H:%M:%S")
+
+
+async def test_page_list_kb_files_clamped_no_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """page=0 & size=0 越界由钳制兜底（page→1、size→1），不抛错。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id = await _seed_kb(factory, "e2e_kb_clamp", "d")
+        await _seed_file(factory, kb_id, "e2e_a.pdf")
+        await _seed_file(factory, kb_id, "e2e_b.pdf")
+        result = await service.page_list_kb_files(kb_id=kb_id, page=0, size=0)
+        assert result.total == 2
+        assert len(result.rows) == 1  # size 钳到 1
+
+
+async def test_page_list_kb_files_soft_deleted_invisible(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id = await _seed_kb(factory, "e2e_kb_fd", "d")
+        file_id = await _seed_file(factory, kb_id, "e2e_a.pdf")
+        async with factory() as s:
+            async with s.begin():
+                assert await delete_kb_file_by_id(s, file_id) == 1
+        result = await service.page_list_kb_files(kb_id=kb_id, page=1, size=10)
+        assert result.total == 0 and result.rows == []

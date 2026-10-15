@@ -17,7 +17,14 @@ from fastapi.responses import StreamingResponse
 
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.rag import service
-from cloud_base_ai.rag.schemas import RagChatAnswerVo, RagChatDto, CreateKBReq
+from cloud_base_ai.rag.schemas import (
+    AiPageResult,
+    CreateKBReq,
+    KbFileVo,
+    KbVo,
+    RagChatAnswerVo,
+    RagChatDto,
+)
 from cloud_base_ai.rag.service import chat_answer, stream_chat_answer
 from cloud_base_ai.response import R
 from cloud_base_ai.security import require_perms
@@ -28,6 +35,9 @@ DONE_FRAME: str = "data: [DONE]\n\n"
 
 router = APIRouter(prefix="/rag/chat", dependencies=[Depends(require_perms("ai:chat:list"))])
 kb_router = APIRouter(prefix="/rag/kb", dependencies=[Depends(require_perms("ai:kb:add"))])
+# 读端点独立 router：权限与写端点不同（查询 ai:kb:list / 创建+上传 ai:kb:add），
+# 路由级依赖保证今后挂进来的新端点自动受保护（漏写依赖即放行的防线）。
+kb_read_router = APIRouter(prefix="/rag/kb", dependencies=[Depends(require_perms("ai:kb:list"))])
 
 
 def _sse(payload: dict[str, str]) -> str:
@@ -91,3 +101,21 @@ async def upload_file_by_kb(
     """
     kb_id: int = await service.upload_file_by_kb(kb_id, file)
     return R.ok(kb_id)
+
+
+@kb_read_router.get("/list")
+async def list_kbs() -> R[list[KbVo]]:
+    """知识库全量列表（契约 §4）：id 升序，不分页（管理面左栏）。"""
+    kbs = await service.list_kbs()
+    return R.ok(kbs)
+
+
+@kb_read_router.get("/{kb_id}/files")
+async def page_list_kb_files(
+        kb_id: int,
+        page: int = Query(default=1, description="页码，从 1 起，越界钳制到 1"),
+        size: int = Query(default=10, description="每页条数，越界钳制到 1..200"),
+) -> R[AiPageResult[KbFileVo]]:
+    """知识库文件分页（契约 §5）：先校验库存在（5004），id 倒序，软删不可见。"""
+    result = await service.page_list_kb_files(kb_id, page, size)
+    return R.ok(result)

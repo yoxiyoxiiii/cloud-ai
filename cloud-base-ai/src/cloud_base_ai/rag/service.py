@@ -23,7 +23,14 @@ from cloud_base_ai.models.model_factory import get_chat_model
 from cloud_base_ai.rag import dao, chunking, vectorstore
 from cloud_base_ai.rag.entities import AiKnowledgeBase, AiKbChunk, AiKnowledgeBaseFiles
 from cloud_base_ai.rag.generation import to_lc_messages
-from cloud_base_ai.rag.schemas import RagChatAnswerVo, RagChatDto, CreateKBReq
+from cloud_base_ai.rag.schemas import (
+    AiPageResult,
+    CreateKBReq,
+    KbFileVo,
+    KbVo,
+    RagChatAnswerVo,
+    RagChatDto,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +104,29 @@ async def create_kb(req: CreateKBReq) -> int:
 
 
 @transactional
+async def list_kbs() -> list[KbVo]:
+    """全量活知识库列表（id 升序；管理面左栏——MVP 库量小不分页）。
+
+    VO 在 service 层逐字段构造（对齐 Java「Service 层统一转换、禁三方拷贝工具」口径）。
+    """
+    rows = await dao.list_kbs(current_session())
+    return [KbVo(id=row.id, name=row.name, description=row.description) for row in rows]
+
+
+@transactional
+async def page_list_kb_files(kb_id: int, page: int, size: int) -> AiPageResult[KbFileVo]:
+    """分页列某知识库文件：先校验库存在（5004，与上传端点同语义），再分页查文件。"""
+    session = current_session()
+    if await dao.find_kb_by_id(session, kb_id) is None:
+        raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
+    rows, total = await dao.page_list_kb_files(session, kb_id, page, size)
+    vos = [KbFileVo(id=row.id, file_name=row.file_name,
+                    file_split_type=row.file_split_type, create_time=row.create_time)
+           for row in rows]
+    return AiPageResult(total=total, rows=vos)
+
+
+@transactional
 async def upload_file_by_kb(kb_id: int, file: UploadFile) -> int:
     """
     上传文件到知识库
@@ -159,14 +189,13 @@ async def upload_file_by_kb(kb_id: int, file: UploadFile) -> int:
         ai_kb_chunk_list.append(ai_kb_chunk)
 
     # 存入mysql (子/父都存入)
-    save_list:Sequence[AiKbChunk] = await dao.save_chunks(session=session, chunks=ai_kb_chunk_list)
+    save_list: Sequence[AiKbChunk] = await dao.save_chunks(session=session, chunks=ai_kb_chunk_list)
 
-    # 子文档写入到向量数据库中
-    milvus: Milvus = vectorstore.get_milvus()
-    milvus.collection_name = "test123"
+    # 子文档写入到向量数据库中（collection 名随构造传入：构造后属性赋值不触发
+    # 字段表重载，对既有集合插入会剥掉 metadata，见 vectorstore.get_milvus 注释）
+    milvus: Milvus = vectorstore.get_milvus("test123")
     child_rows = [item for item in save_list
                   if item.chunk_type == AiKbChunk.ChunkTypeEnum.CHILD]
-
 
     milvus.add_documents(all_child_doc_list, ids=[str(item.id) for item in child_rows])
 
