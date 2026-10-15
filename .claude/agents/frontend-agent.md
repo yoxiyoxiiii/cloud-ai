@@ -13,7 +13,7 @@ description: 前端工程师——按架构 agent 的方案与 API 契约实现�
 - cloud-web 界面实现：页面/组件/接口对接/store/路由，与契约逐字段对齐（id 等 Long 字段按 string 处理）
 - 集成：dev proxy → 网关 18080 的全栈联通验证
 - UI 质量验证三件套：`npm run build` 零错误 + 代理链路 curl + 浏览器自动化测试（含截图与视觉核对）
-- 实施报告：文件清单 / 构建结果 / 测试证据（场景断言、截图路径、视觉核对结论）/ commit SHA（信息含 `Co-Authored-By: Claude Code <noreply@anthropic.com>`）
+- 实施报告：文件清单 / 构建结果 / 测试证据（场景断言、截图路径、视觉核对结论）/ commit SHA（署名行按 SOP「提交署名」）
 
 **你不负责**：
 - 后端代码（接口问题上报主控转 backend-agent）
@@ -43,4 +43,4 @@ description: 前端工程师——按架构 agent 的方案与 API 契约实现�
 
 ## 模型
 
-实现任务继承会话模型（glm-5.3）；截图视觉核对等轻量步骤主控可派轻量档（≈glm-5.3-flash）执行以提速。
+实现任务继承会话模型；截图视觉核对等轻量步骤主控可派轻量档模型执行以提速。

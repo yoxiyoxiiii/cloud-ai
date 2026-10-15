@@ -12,7 +12,7 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 
 from cloud_base_ai.exceptions import BusinessException
@@ -71,4 +71,23 @@ async def create_kb(req: CreateKBReq) -> R[int]:
     :return: 返回ID
     """
     kb_id: int = await service.create_kb(req)
+    return R.ok(kb_id)
+
+@kb_router.post("/upload")
+async def upload_file_by_kb(
+        kb_id: int = Query(..., description="目标知识库ID"),
+        file: UploadFile = File(..., description="待上传的文件，单文件")
+) -> R[int]:
+    """
+    知识库文件上传：
+    1. 查询当前知识库
+    2. 对上传的文件设置分片策略（递归分片/父子文档分片）
+    3. 对上传的文件进行分片
+       3.1.分片内容存储到数据库中
+    4. 保存文件到文件服务器
+    :param file: 上传的文件
+    :param kb_id: 目标知识库ID
+    :return: 返回ID
+    """
+    kb_id: int = await service.upload_file_by_kb(kb_id, file)
     return R.ok(kb_id)

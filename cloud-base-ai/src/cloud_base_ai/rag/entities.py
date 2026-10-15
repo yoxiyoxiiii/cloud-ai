@@ -1,12 +1,13 @@
 """RAG 域 ORM 实体（DDL 真相源：cloud-base/scripts/sql/cloud_ai.sql，spec D3）。
 
-知识库/知识库文件 = RAG 索引链的管理面元数据（向量本体在外部 vectorstore）。
+知识库/知识库文件 = RAG 索引链的管理面元数据；知识库分块 = 检索数据面
+（父子两层同表，向量本体在外部 vectorstore 按 id 关联，本表是块文本的真相源）。
 实体与 pydantic DTO 分离（规范第 2 条边界：实体不是 DTO），转换器随端点轮落。
 """
 
-from enum import Enum
+from enum import Enum, IntEnum
 
-from sqlalchemy import Index, Integer, String, UniqueConstraint, text
+from sqlalchemy import Index, Integer, SmallInteger, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from cloud_base_ai.db.base import AuditMixin, Base, SoftDeleteMixin
@@ -60,3 +61,40 @@ class AiKnowledgeBaseFiles(Base, AuditMixin, SoftDeleteMixin):
     file_chunk_overlap: Mapped[int] = mapped_column(Integer, nullable=False, comment="分片重叠大小")
     file_split_type: Mapped[str] = mapped_column(String(50), nullable=False, comment="分片类型：parent-child（父子分片）/ recursion（递归分片）")
     description: Mapped[str | None] = mapped_column(String(512), comment="描述信息")
+
+
+class AiKbChunk(Base, AuditMixin, SoftDeleteMixin):
+    """AI 知识库分块（父子两层同表：chunk_type 区分，子块 parent_id 指向父块行）。
+
+    入库路径：父块先行 save 拿 id，子块带 parent_id 批量写入；
+    回捞路径：向量命中子块 → 按子块 parent_id 查父块行（大块文本交给大模型）。
+    """
+
+    __tablename__ = "ai_kb_chunk"
+    __table_args__ = (
+        Index("idx_kb_parent", "kb_id", "chunk_id","parent_chunk_id"),
+        Index("idx_file", "file_id"),
+        {"comment": "知识库块（父子两层，向量在库外按 id 关联）"},
+    )
+
+    class ChunkTypeEnum(IntEnum):
+        """块类型（禁魔法数；字段类型保持 int，存取不经 Enum 实例）。"""
+
+        PARENT = 0
+        CHILD = 1
+
+        @classmethod
+        def of(cls, value: int) -> "AiKbChunk.ChunkTypeEnum | None":
+            try:
+                return cls(value)
+            except ValueError:
+                return None
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, comment="主键（子块进向量库时当 doc_id 用）")
+    kb_id: Mapped[int] = mapped_column(Integer, nullable=False, comment="所属知识库ID")
+    file_id: Mapped[int | None] = mapped_column(Integer, comment="来源文件ID")
+    chunk_id: Mapped[str | None] = mapped_column(String(50), comment="文档块uuid")
+    parent_chunk_id: Mapped[str | None] = mapped_column(String(50), comment="父文档块uuid")
+    chunk_type: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"), comment="块类型：0父块 1子块")
+    seq_no: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"), comment="块在原文中的顺序号")
+    content: Mapped[str] = mapped_column(Text, nullable=False, comment="块文本")

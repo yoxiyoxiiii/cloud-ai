@@ -7,16 +7,21 @@ LLM 异常 catch 必须 log.error 记根因后转 5001（规范第 3 条；msg �
 """
 
 import logging
-from collections.abc import AsyncIterator
+import uuid
+from collections.abc import AsyncIterator, Sequence
 
+import pdfmuse
+from fastapi import UploadFile
+from langchain_core.documents import Document
+from langchain_milvus import Milvus
 from sqlalchemy.exc import IntegrityError
 
 from cloud_base_ai.config import get_settings
 from cloud_base_ai.db.tx import current_session, transactional
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.models.model_factory import get_chat_model
-from cloud_base_ai.rag import dao
-from cloud_base_ai.rag.entities import AiKnowledgeBase
+from cloud_base_ai.rag import dao, chunking, vectorstore
+from cloud_base_ai.rag.entities import AiKnowledgeBase, AiKbChunk, AiKnowledgeBaseFiles
 from cloud_base_ai.rag.generation import to_lc_messages
 from cloud_base_ai.rag.schemas import RagChatAnswerVo, RagChatDto, CreateKBReq
 
@@ -26,6 +31,8 @@ CODE_LLM_CALL_FAILED: int = 5001
 MSG_LLM_CALL_FAILED: str = "LLM 调用失败，请稍后重试"
 CODE_KB_NAME_EXISTS: int = 5003
 MSG_KB_NAME_EXISTS: str = "知识库名称已存在"
+CODE_KB_NOT_EXISTS: int = 5004
+MSG_KB_NOT_EXISTS: str = "知识库不存在"
 
 
 async def chat_answer(dto: RagChatDto) -> RagChatAnswerVo:
@@ -87,3 +94,80 @@ async def create_kb(req: CreateKBReq) -> int:
         logger.error("create_kb duplicate name (uk_name): %s: %s", type(e).__name__, e)
         raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS) from e
     return kb.id
+
+
+@transactional
+async def upload_file_by_kb(kb_id: int, file: UploadFile) -> int:
+    """
+    上传文件到知识库
+    :param kb_id: 知识库ID
+    :param file: 文件
+    :return:
+    """
+    session = current_session()
+    kb = await dao.find_kb_by_id(session=session, kb_id=kb_id)
+    if kb is None:
+        # 知识库不存在
+        raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
+    # 知识库存在
+    # 切分文件
+    file_data: bytes = file.file.read()
+    file_content = pdfmuse.to_text(file_data)
+    parent_and_child_docs: tuple[list[Document], list[Document]] = chunking.parent_child_split_file(
+        file_content=file_content,
+        child_chunk_size=128,
+        child_chunk_overlap=20,
+        parent_chunk_size=500)
+
+    parent_doc_list = parent_and_child_docs[0]
+    all_child_doc_list = parent_and_child_docs[1]
+
+    # 上传文件到文档服务器（todo(暂时不做)）,存储文件信息到文件表
+    ai_knowledge_base_files = await dao.save_kb_file(session=session,
+                                                     kb_file=AiKnowledgeBaseFiles(kb_id=kb_id,
+                                                                                  file_path=uuid.uuid4().hex,
+                                                                                  file_name=file.filename,
+                                                                                  file_chunk_count=len(
+                                                                                      all_child_doc_list),
+                                                                                  file_chunk_size=128,
+                                                                                  file_chunk_overlap=20,
+                                                                                  file_split_type=AiKnowledgeBaseFiles.SplitTypeEnum.PARENT_CHILD.value
+
+                                                                                  )
+                                                     )
+
+    # 父文档进MYSQL;子文档进度向量数据库
+    ai_kb_chunk_list: list[AiKbChunk] = []
+    for doc in parent_doc_list:
+        ai_kb_chunk = AiKbChunk(kb_id=kb_id,
+                                file_id=ai_knowledge_base_files.id,
+                                chunk_id=doc.metadata["id"],
+                                parent_chunk_id=doc.metadata["parent_id"] or "",
+                                chunk_type=doc.metadata["type"],
+                                seq_no=0,
+                                content=doc.page_content)
+        ai_kb_chunk_list.append(ai_kb_chunk)
+
+    for doc in all_child_doc_list:
+        ai_kb_chunk = AiKbChunk(kb_id=kb_id,
+                                file_id=ai_knowledge_base_files.id,
+                                chunk_id=doc.metadata["id"],
+                                parent_chunk_id=doc.metadata["parent_id"] or "",
+                                chunk_type=doc.metadata["type"],
+                                seq_no=0,
+                                content=doc.page_content)
+        ai_kb_chunk_list.append(ai_kb_chunk)
+
+    # 存入mysql (子/父都存入)
+    save_list:Sequence[AiKbChunk] = await dao.save_chunks(session=session, chunks=ai_kb_chunk_list)
+
+    # 子文档写入到向量数据库中
+    milvus: Milvus = vectorstore.get_milvus()
+    milvus.collection_name = "test123"
+    child_rows = [item for item in save_list
+                  if item.chunk_type == AiKbChunk.ChunkTypeEnum.CHILD]
+
+
+    milvus.add_documents(all_child_doc_list, ids=[str(item.id) for item in child_rows])
+
+    return kb_id

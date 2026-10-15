@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 MVN=D:/software/apache-maven-3.8.4/bin/mvn
 
-# 全量构建 + 全部测试（60 个单测）
+# 全量构建 + 全部测试
 $MVN -f cloud-base/pom.xml clean install
 
 # 单模块测试
@@ -145,11 +145,17 @@ cloud-base/
 
 **后端开发规范基准**：`/backend-spec` 技能（DDL 与索引设计→Controller 全套模板 + 事务口径 + 检查清单；**不止新增 CRUD**，迭代功能涉及 SQL 亦适用）；机械规则由 `cloud-system` 的 `ArchitectureGuardTest` 强制（内联 R.ok/隐式 @PathVariable/Wrapper/BaseMapper/controller 依赖 mapper/XML `${}`/单行 `<if>`/Map 接参/实体内嵌枚举无 Enum 后缀等，写错构建即红）。
 
-### 分阶段路线（当前：阶段 1 已合并 main；阶段 2+3 已完成，待合并）
+**AI 基座（cloud-base-ai）开发规范基准**：`/ai-spec` 技能（Python 分层依赖→实体/DAO/Service/Router 模板 + `@transactional` 事务口径 + 错误码 + 外部系统接入清单）；机械规则由 `cloud-base-ai/tests/test_architecture_guard.py` 强制（router 不碰 dao/dao 不提交事务/service 的 except 必须记日志/用 current_session 必带 @transactional/实体列必带 comment 等，写错测试即红）。接入新外部系统须附真连接冒烟脚本（`cloud-base-ai/scripts/smoke/`）。当前欠账清单：`docs/handoff/ai.md`。
 
-1. ✅ 工程骨架（4 common + 4 服务 + 网关路由全链路）
-2. ✅ cloud-system RBAC（建表 SQL、用户/角色/菜单 CRUD 与角色分配、/inner 接口）
-3. ✅ 认证链路（sso 登录/双 token/在线强退、网关验签+透传 X-User-*、/inner 屏蔽 403、注销/强退立即失效）
-4. ⬜ cloud-bpmn Flowable 7.2（用 `flowable-spring-boot-starter-process`，勿用全量 starter）
+### 开工前必读
 
-**每个阶段开工前**：读上一阶段计划末尾的移交/取舍记录——`docs/superpowers/plans/2026-10-04-cloud-base-phase1-skeleton.md`（DDL 陷阱、Redis 序列化契约、网关加固、Flowable 数据源等）与 `docs/superpowers/plans/2026-10-05-cloud-base-phase23-rbac-login.md`（refresh 键模型、权限快照失效、Bean Validation 等已知取舍），并按 superpowers 流程先写 spec/plan 再动代码。
+项目已过了最初的 4 阶段骨架期，现在按「轮」迭代，没有阶段编号。开工前按顺序查三处：
+
+1. **同域最近的 plan**：`docs/superpowers/plans/` 按日期倒序，末尾「移交」章节是上一轮留下的未兑现事项。
+2. **契约**：`docs/superpowers/contracts/`，改动涉及接口时它是前后端唯一对齐物。
+3. **设计取舍**：`docs/superpowers/specs/`，翻案前先读当时为什么这么定。
+
+骨架期的两份历史计划仍有价值（DDL 陷阱、Redis 序列化契约、网关加固、refresh 键模型、权限快照失效等已知取舍）：
+`docs/superpowers/plans/2026-10-04-cloud-base-phase1-skeleton.md`、`docs/superpowers/plans/2026-10-05-cloud-base-phase23-rbac-login.md`。
+
+新功能一律按 superpowers 流程先写 spec/plan 再动代码。
