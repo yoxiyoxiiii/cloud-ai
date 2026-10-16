@@ -43,7 +43,11 @@ def test_env_override_app_port(monkeypatch: pytest.MonkeyPatch) -> None:
     assert Settings(_env_file=None).app_port == 8020
 
 
-def test_llm_defaults() -> None:
+def test_llm_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 先 delenv 再断言（同 milvus 段先例）：uv run 注入 .env 进程 env，本地真实 key
+    # 会让「默认空」断言翻车——隔离后不依赖本地 .env 状态
+    for key in ("API_KEY", "BASE_URL", "MODEL", "TIMEOUT", "MAX_RETRIES", "HISTORY_LIMIT"):
+        monkeypatch.delenv(f"CLOUD_BASE_AI_LLM__{key}", raising=False)
     s = Settings(_env_file=None)
     assert s.llm.api_key == ""  # 默认空 = 未配置态（端点报 5002，不阻断启动）
     assert s.llm.base_url == "https://api.deepseek.com"
@@ -69,7 +73,10 @@ def test_llm_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.llm.history_limit == 5
 
 
-def test_env_file_loading(tmp_path: Path) -> None:
+def test_env_file_loading(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # delenv 同上：进程 env 里若已有同名键（uv run 注入的本地 .env），会盖过
+    # 本用例显式传入的 _env_file 文件——隔离后才能专测「文件加载」这一个变量
+    monkeypatch.delenv("CLOUD_BASE_AI_LLM__API_KEY", raising=False)
     p = tmp_path / ".env"
     p.write_text("CLOUD_BASE_AI_LLM__API_KEY=key-from-file\n", encoding="utf-8")
     s = Settings(_env_file=str(p))
@@ -129,3 +136,26 @@ def test_milvus_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CLOUD_BASE_AI_MILVUS__URI", "http://127.0.0.1:9092")
     s = Settings(_env_file=None)
     assert s.milvus.uri == "http://127.0.0.1:9092"
+
+
+def test_minio_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """minio 段默认值：endpoint 指向本机容器映射 9100，bucket=cloud-ai，明文 http。
+
+    先 delenv 再断言（同 milvus 段先例）：uv run 会把项目 .env 注入进程 env，
+    真实 env 优先于 _env_file=None 的加载策略——不隔离则默认断言随本地 .env 翻转。
+    """
+    for key in ("ENDPOINT", "ACCESS_KEY", "SECRET_KEY", "BUCKET", "SECURE"):
+        monkeypatch.delenv(f"CLOUD_BASE_AI_MINIO__{key}", raising=False)
+    s = Settings(_env_file=None)
+    assert s.minio.endpoint == "127.0.0.1:9100"
+    assert s.minio.access_key == ""
+    assert s.minio.secret_key == ""
+    assert s.minio.bucket == "cloud-ai"
+    assert s.minio.secure is False
+
+
+def test_minio_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """minio 段 env 覆盖（CLOUD_BASE_AI_MINIO__BUCKET，嵌套分隔 "__"）。"""
+    monkeypatch.setenv("CLOUD_BASE_AI_MINIO__BUCKET", "other-bucket")
+    s = Settings(_env_file=None)
+    assert s.minio.bucket == "other-bucket"

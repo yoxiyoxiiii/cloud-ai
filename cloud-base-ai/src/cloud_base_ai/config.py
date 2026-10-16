@@ -55,6 +55,21 @@ class MilvusSettings(BaseModel):
     uri: str = "http://127.0.0.1:19530"
 
 
+class MinIOSettings(BaseModel):
+    """MinIO 对象存储连接参数：本机基础设施默认端口；凭证为部署期自设值，
+    真值仅本地 .env（同 LLM api_key 哲学，默认空）。本轮无启动期消费方，空凭证不阻断启动。
+
+    env 覆盖形态：CLOUD_BASE_AI_MINIO__ENDPOINT / __ACCESS_KEY / __SECRET_KEY /
+    __BUCKET / __SECURE。
+    """
+
+    endpoint: str = "127.0.0.1:9100"  # host:port 无协议（minio SDK 入参格式），容器映射 9100→9000
+    access_key: str = ""
+    secret_key: str = ""
+    bucket: str = "cloud-ai"
+    secure: bool = False  # 本机 http；TLS 部署置 True
+
+
 class DatabaseSettings(BaseModel):
     """MySQL 连接参数（spec D6）：默认本机事实值——DB 是本机基础设施（与 LLM 外部
     付费依赖的「默认空=未配置态」哲学不同源，对齐 Nacos 段默认 127.0.0.1 先例）。
@@ -83,6 +98,7 @@ class Settings(BaseSettings):
     llm: LLMSettings = LLMSettings()
     embedding_llm: EmbeddingModelSettings = EmbeddingModelSettings()
     milvus: MilvusSettings = MilvusSettings()
+    minio: MinIOSettings = MinIOSettings()
     db: DatabaseSettings = DatabaseSettings()
     app_port: int = 8010  # uvicorn 监听与注册实例端口同源
 
