@@ -9,9 +9,11 @@ LLM 异常 catch 必须 log.error 记根因后转 5001（规范第 3 条；msg �
 import logging
 import uuid
 from collections.abc import AsyncIterator, Sequence
+from pathlib import Path
 
 import pdfmuse
 from fastapi import UploadFile
+from fastapi.concurrency import run_in_threadpool
 from langchain_core.documents import Document
 from langchain_milvus import Milvus
 from sqlalchemy.exc import IntegrityError
@@ -32,6 +34,7 @@ from cloud_base_ai.rag.schemas import (
     RagChatDto,
     UpdateKBReq,
 )
+from cloud_base_ai.storage import get_storage
 
 logger = logging.getLogger(__name__)
 
@@ -192,10 +195,21 @@ async def upload_file_by_kb(kb_id: int, file: UploadFile) -> int:
     parent_doc_list = parent_and_child_docs[0]
     all_child_doc_list = parent_and_child_docs[1]
 
-    # 上传文件到文档服务器（todo(暂时不做)）,存储文件信息到文件表
+    # 文件原件入 MinIO：对象键=kb/{kb_id}/{uuid}{后缀}，即文件表 file_path 的新语义
+    # （旧 uuid 占位自此退役）。SDK 为同步客户端，run_in_threadpool 包装防阻塞事件循环；
+    # 失败语义与 Milvus 同源——异常上抛回滚本事务（此时零 DB 写），后置步骤失败留孤儿对象
+    # （handoff 一致性欠账统一治理）
+    storage = get_storage()
+    suffix = Path(file.filename or "").suffix
+    object_name = f"kb/{kb_id}/{uuid.uuid4().hex}{suffix}"
+    await run_in_threadpool(storage.ensure_bucket)
+    await run_in_threadpool(
+        storage.put_bytes, object_name, file_data, file.content_type or "application/octet-stream")
+
+    # 存储文件信息到文件表
     ai_knowledge_base_files = await dao.save_kb_file(session=session,
                                                      kb_file=AiKnowledgeBaseFiles(kb_id=kb_id,
-                                                                                  file_path=uuid.uuid4().hex,
+                                                                                  file_path=object_name,
                                                                                   file_name=file.filename,
                                                                                   file_chunk_count=len(
                                                                                       all_child_doc_list),

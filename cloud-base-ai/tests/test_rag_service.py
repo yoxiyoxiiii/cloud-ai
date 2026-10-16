@@ -453,3 +453,118 @@ async def test_page_list_kb_files_soft_deleted_invisible(monkeypatch: pytest.Mon
                 assert await delete_kb_file_by_id(s, file_id) == 1
         result = await service.page_list_kb_files(kb_id=kb_id, page=1, size=10)
         assert result.total == 0 and result.rows == []
+
+
+# ---------- 上传编排（2026-10-16 MinIO 轮：原件入对象存储，file_path 即对象键） ----------
+
+import io
+
+from langchain_core.documents import Document
+
+
+class FakeStorage:
+    """MinioStorage 替身：记录 ensure_bucket/put_bytes 调用；put_error 注入对象存储故障。"""
+
+    def __init__(self, put_error: Exception | None = None) -> None:
+        self.put_error = put_error
+        self.ensure_bucket_calls = 0
+        self.put_calls: list[tuple[str, bytes, str]] = []
+
+    def ensure_bucket(self) -> None:
+        self.ensure_bucket_calls += 1
+
+    def put_bytes(self, object_name: str, data: bytes,
+                  content_type: str = "application/octet-stream") -> None:
+        if self.put_error is not None:
+            raise self.put_error
+        self.put_calls.append((object_name, data, content_type))
+
+
+class FakeMilvus:
+    """Milvus 替身：只记录 add_documents 入参（向量写断言不在本组用例范围）。"""
+
+    def __init__(self) -> None:
+        self.added: list[tuple[list, list]] = []
+
+    def add_documents(self, documents: list, ids: list) -> None:
+        self.added.append((documents, ids))
+
+
+def _fake_upload(filename: str, data: bytes, content_type: str | None) -> SimpleNamespace:
+    """UploadFile 替身：service 只读 .file.read()/.filename/.content_type 三处。"""
+    return SimpleNamespace(file=io.BytesIO(data), filename=filename, content_type=content_type)
+
+
+async def _run_upload(monkeypatch: pytest.MonkeyPatch, storage: FakeStorage,
+                      saved: dict, upload: SimpleNamespace) -> int:
+    """装好上传链全部替身（存储/解析/切分/落库/向量）后跑一次 upload_file_by_kb。
+
+    落库实体经 saved 字典捕获（save_kb_file/save_chunks 不写真库）；KB 行走真实 dao。
+    """
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id = await _seed_kb(factory, "e2e_kb_upload", "d")
+        monkeypatch.setattr(service, "get_storage", lambda: storage)
+        monkeypatch.setattr(service.pdfmuse, "to_text", lambda data: "e2e parsed text")
+        child_doc = Document(page_content="e2e child text",
+                             metadata={"id": "e2e-c-1", "parent_id": "e2e-p-1", "type": 1})
+        monkeypatch.setattr(service.chunking, "parent_child_split_file",
+                            lambda **kwargs: ([], [child_doc]))
+
+        async def fake_save_kb_file(session, kb_file):
+            saved["kb_file"] = kb_file
+            kb_file.id = 501
+            return kb_file
+
+        async def fake_save_chunks(session, chunks):
+            for i, chunk in enumerate(chunks, 1):
+                chunk.id = i
+            saved["chunks"] = chunks
+            return chunks
+
+        monkeypatch.setattr(service.dao, "save_kb_file", fake_save_kb_file)
+        monkeypatch.setattr(service.dao, "save_chunks", fake_save_chunks)
+        fake_milvus = FakeMilvus()
+        monkeypatch.setattr(service.vectorstore, "get_milvus", lambda name: fake_milvus)
+        return await service.upload_file_by_kb(kb_id, upload), kb_id
+
+
+async def test_upload_stores_original_to_minio(monkeypatch: pytest.MonkeyPatch) -> None:
+    """原件字节入 MinIO：对象键即落库 file_path，kb/{kb_id}/ 前缀 + 原后缀 + content_type 透传。"""
+    storage = FakeStorage()
+    saved: dict = {}
+    file_bytes = b"%PDF-1.4 e2e upload bytes"
+    upload = _fake_upload("e2e_doc.pdf", file_bytes, "application/pdf")
+    _, kb_id = await _run_upload(monkeypatch, storage, saved, upload)
+
+    assert storage.ensure_bucket_calls == 1
+    assert len(storage.put_calls) == 1
+    object_name, data, content_type = storage.put_calls[0]
+    assert data == file_bytes  # 原件字节原样上传
+    assert content_type == "application/pdf"
+    assert object_name == saved["kb_file"].file_path  # 落库 file_path 即对象键
+    assert object_name.startswith(f"kb/{kb_id}/")
+    assert object_name.endswith(".pdf")  # 后缀取自原文件名
+    assert saved["chunks"] and saved["chunks"][0].file_id == 501  # chunk 关联文件行
+
+
+async def test_upload_minio_failure_zero_db_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """对象存储写失败：异常上抛（事务回滚），此时零 DB 写——save_kb_file 未被调用。"""
+    storage = FakeStorage(put_error=RuntimeError("minio down"))
+    saved: dict = {}
+    upload = _fake_upload("e2e_doc.pdf", b"%PDF-1.4 e2e", "application/pdf")
+    with pytest.raises(RuntimeError, match="minio down"):
+        await _run_upload(monkeypatch, storage, saved, upload)
+    assert storage.put_calls == []  # 异常发生在记录前
+    assert "kb_file" not in saved  # 零 DB 写：文件行未落库
+    assert "chunks" not in saved
+
+
+async def test_upload_content_type_none_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """content_type 为 None（客户端未带）：put_bytes 收到 application/octet-stream 兜底。"""
+    storage = FakeStorage()
+    saved: dict = {}
+    upload = _fake_upload("e2e_doc.pdf", b"%PDF-1.4 e2e", None)
+    await _run_upload(monkeypatch, storage, saved, upload)
+    assert storage.put_calls[0][2] == "application/octet-stream"
+
