@@ -2,6 +2,7 @@
   <div class="rag-chat">
     <!-- 左：会话列表（首版本地态，持久化见迭代方向） -->
     <aside class="sessions">
+      <div class="sessions-title">对话列表</div>
       <el-button type="primary" class="new-btn" @click="newSession">新建对话</el-button>
       <div
         v-for="s in sessions"
@@ -163,13 +164,23 @@ function stop(): void {
   height: 100%;
   gap: 12px;
 }
+/* 左：会话列表——灰底面板，与右侧白底消息卡片形成视觉分区 */
 .sessions {
   width: 220px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding: 12px;
+  background: #f5f7fa;
+  border-radius: 8px;
   overflow-y: auto;
+}
+.sessions-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #606266;
+  padding: 0 0 8px 2px;
 }
 .new-btn {
   margin-bottom: 8px;
@@ -182,11 +193,12 @@ function stop(): void {
   border-radius: 6px;
   cursor: pointer;
 }
+/* 灰底上的色阶：hover 深一档，活动色用 primary 浅底（#ecf5ff 对比不足改 #d9ecff） */
 .session-item:hover {
-  background: #f5f7fa;
+  background: #ebedf0;
 }
 .session-item.active {
-  background: #ecf5ff;
+  background: #d9ecff;
   color: #409eff;
 }
 .session-item .title {
@@ -197,11 +209,16 @@ function stop(): void {
 .session-item .del {
   flex-shrink: 0;
 }
+/* 右：消息区——白底卡片（边框 + 圆角），与灰底列表面板分区 */
 .main {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
+  background: #fff;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  padding: 12px;
 }
 .empty {
   flex: 1;
@@ -213,7 +230,6 @@ function stop(): void {
 .msg-list {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
 }
 .msg {
   display: flex;
@@ -236,10 +252,12 @@ function stop(): void {
 .msg.assistant .bubble {
   background: #f5f7fa;
 }
+/* 输入区与消息区的浅分隔线（层次：消息滚动区 / 输入贴底） */
 .input-bar {
   display: flex;
   gap: 8px;
   align-items: flex-end;
-  padding-top: 8px;
+  padding-top: 12px;
+  border-top: 1px solid #f0f2f5;
 }
 </style>
