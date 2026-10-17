@@ -38,11 +38,12 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    /** 前缀白名单：登录/刷新、demo、inner 屏蔽（SetStatus 路由接管）、网关自身监控 */
+    /** 前缀白名单：登录/刷新、demo、inner 与 MCP 屏蔽（SetStatus 路由接管）、网关自身监控 */
     private static final List<String> WHITELIST = List.of(
             "/sso/auth/login", "/sso/auth/refresh",
             "/sso/demo", "/system/demo", "/bpmn/demo",
             "/sso/inner", "/system/inner", "/bpmn/inner",
+            "/system/mcp",
             "/actuator");
 
     private final StringRedisTemplate stringRedisTemplate;
