@@ -14,6 +14,13 @@ spring:
       - optional:nacos:${spring.application.name}.yaml
       # 共享配置接线（2026-10-09 xxl-job 整合设计 D6）：公共项 cloud-common.yaml，optional 容缺向后安全
       - optional:nacos:cloud-common.yaml
+  # MCP server（契约 2026-10-17-mcp-tools-api §1.1）：streamable HTTP 单端点 /mcp（默认值，显式声明确保形态）
+  ai:
+    mcp:
+      server:
+        name: cloud-system-mcp
+        version: 1.0.0
+        protocol: streamable
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
