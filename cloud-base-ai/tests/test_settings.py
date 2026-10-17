@@ -159,3 +159,23 @@ def test_minio_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CLOUD_BASE_AI_MINIO__BUCKET", "other-bucket")
     s = Settings(_env_file=None)
     assert s.minio.bucket == "other-bucket"
+
+
+def test_mcp_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mcp 段默认值：直连 cloud-system 9202（网关屏蔽 /system/mcp，内网直连是既定寻址），
+    client_secret 默认空 = 未配置态（调用时报 5010，不阻断启动）。
+
+    先 delenv 再断言（同 minio 段先例）：防 uv run 注入的真实 .env 使「默认空」翻转。
+    """
+    for key in ("BASE_URL", "CLIENT_SECRET"):
+        monkeypatch.delenv(f"CLOUD_BASE_AI_MCP__{key}", raising=False)
+    s = Settings(_env_file=None)
+    assert s.mcp.base_url == "http://127.0.0.1:9202/mcp"
+    assert s.mcp.client_secret == ""
+
+
+def test_mcp_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """mcp 段 env 覆盖（CLOUD_BASE_AI_MCP__CLIENT_SECRET，嵌套分隔 "__"）。"""
+    monkeypatch.setenv("CLOUD_BASE_AI_MCP__CLIENT_SECRET", "test-secret")
+    s = Settings(_env_file=None)
+    assert s.mcp.client_secret == "test-secret"

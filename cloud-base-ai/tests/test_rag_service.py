@@ -79,6 +79,9 @@ def test_history_no_truncation_under_limit(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_chat_answer_vo_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 先清 LLM__MODEL 再断言默认值：uv run 会把项目 .env 注入进程 env，本地换模型
+    # （如 glm 系列）会让「默认 model」断言随环境翻转——同 test_settings 的 delenv 先例。
+    monkeypatch.delenv("CLOUD_BASE_AI_LLM__MODEL", raising=False)
     install_model(monkeypatch, FakeModel(content="你好，我是助手"))
     vo = asyncio.run(chat_answer(dto_of(1)))
     assert vo.answer == "你好，我是助手"

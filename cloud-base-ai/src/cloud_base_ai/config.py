@@ -70,6 +70,19 @@ class MinIOSettings(BaseModel):
     secure: bool = False  # 本机 http；TLS 部署置 True
 
 
+class McpSettings(BaseModel):
+    """MCP 客户端通道参数（对端=cloud-system MCP server）：直连服务端口 9202——
+    /system/mcp 被网关刻意屏蔽（服务间面不外露），AI 基座属内网可信调用方不走网关。
+
+    env 覆盖形态：CLOUD_BASE_AI_MCP__BASE_URL / __CLIENT_SECRET。
+    client_secret 与 cloud-system Nacos cloud.mcp.client-secret 同值，真值仅本地 .env；
+    默认空 = 未配置态（调用时报 5010，不阻断启动——同 LLM api_key 哲学）。
+    """
+
+    base_url: str = "http://127.0.0.1:9202/mcp"
+    client_secret: str = ""
+
+
 class DatabaseSettings(BaseModel):
     """MySQL 连接参数（spec D6）：默认本机事实值——DB 是本机基础设施（与 LLM 外部
     付费依赖的「默认空=未配置态」哲学不同源，对齐 Nacos 段默认 127.0.0.1 先例）。
@@ -99,6 +112,7 @@ class Settings(BaseSettings):
     embedding_llm: EmbeddingModelSettings = EmbeddingModelSettings()
     milvus: MilvusSettings = MilvusSettings()
     minio: MinIOSettings = MinIOSettings()
+    mcp: McpSettings = McpSettings()
     db: DatabaseSettings = DatabaseSettings()
     app_port: int = 8010  # uvicorn 监听与注册实例端口同源
 
