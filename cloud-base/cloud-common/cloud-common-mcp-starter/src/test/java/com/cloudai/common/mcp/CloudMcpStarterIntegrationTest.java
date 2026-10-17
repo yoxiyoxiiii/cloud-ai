@@ -1,5 +1,7 @@
 package com.cloudai.common.mcp;
 
+import com.cloudai.common.mcp.config.CloudMcpAutoConfiguration;
+import com.cloudai.common.mcp.perm.McpRequirePerm;
 import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;
 import org.junit.jupiter.api.Test;

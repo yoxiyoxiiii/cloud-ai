@@ -1,4 +1,4 @@
-package com.cloudai.common.mcp;
+package com.cloudai.common.mcp.perm;
 
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
@@ -19,7 +19,7 @@ import java.lang.reflect.Method;
 @Aspect
 public class McpPermissionAspect {
 
-    @Around("@annotation(com.cloudai.common.mcp.McpRequirePerm)")
+    @Around("@annotation(com.cloudai.common.mcp.perm.McpRequirePerm)")
     public Object enforce(ProceedingJoinPoint pjp) throws Throwable {
         Method method = ((MethodSignature) pjp.getSignature()).getMethod();
         McpRequirePerm requirePerm = method.getAnnotation(McpRequirePerm.class);

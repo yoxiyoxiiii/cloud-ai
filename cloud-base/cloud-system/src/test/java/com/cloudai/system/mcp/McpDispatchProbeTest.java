@@ -1,7 +1,7 @@
 package com.cloudai.system.mcp;
 
-import com.cloudai.common.mcp.CloudMcpAutoConfiguration;
-import com.cloudai.common.mcp.McpPrincipal;
+import com.cloudai.common.mcp.auth.McpPrincipal;
+import com.cloudai.common.mcp.config.CloudMcpAutoConfiguration;
 import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;
 import org.aspectj.lang.ProceedingJoinPoint;

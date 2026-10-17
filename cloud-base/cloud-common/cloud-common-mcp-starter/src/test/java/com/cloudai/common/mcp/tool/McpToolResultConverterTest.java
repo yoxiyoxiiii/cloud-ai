@@ -1,4 +1,4 @@
-package com.cloudai.common.mcp;
+package com.cloudai.common.mcp.tool;
 
 import org.junit.jupiter.api.Test;
 

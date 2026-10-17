@@ -1,5 +1,6 @@
-package com.cloudai.common.mcp;
+package com.cloudai.common.mcp.perm;
 
+import com.cloudai.common.mcp.auth.McpPrincipal;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.web.MockHttpServletRequest;

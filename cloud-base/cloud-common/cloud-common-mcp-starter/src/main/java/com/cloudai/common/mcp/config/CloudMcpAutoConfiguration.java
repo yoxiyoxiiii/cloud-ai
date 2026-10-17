@@ -1,5 +1,7 @@
-package com.cloudai.common.mcp;
+package com.cloudai.common.mcp.config;
 
+import com.cloudai.common.mcp.auth.McpAuthFilter;
+import com.cloudai.common.mcp.perm.McpPermissionAspect;
 import com.cloudai.common.security.props.JwtProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -1,4 +1,4 @@
-package com.cloudai.common.mcp;
+package com.cloudai.common.mcp.tool;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

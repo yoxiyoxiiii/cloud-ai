@@ -1,5 +1,6 @@
-package com.cloudai.common.mcp;
+package com.cloudai.common.mcp.perm;
 
+import com.cloudai.common.mcp.auth.McpPrincipal;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 

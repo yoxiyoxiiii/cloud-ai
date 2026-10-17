@@ -1,4 +1,4 @@
-package com.cloudai.common.mcp;
+package com.cloudai.common.mcp.perm;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;

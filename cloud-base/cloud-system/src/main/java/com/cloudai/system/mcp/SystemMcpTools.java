@@ -2,8 +2,8 @@ package com.cloudai.system.mcp;
 
 import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
-import com.cloudai.common.mcp.McpRequirePerm;
-import com.cloudai.common.mcp.McpToolResultConverter;
+import com.cloudai.common.mcp.perm.McpRequirePerm;
+import com.cloudai.common.mcp.tool.McpToolResultConverter;
 import com.cloudai.common.translate.domain.DictItemEntry;
 import com.cloudai.system.service.SysDictDataManageService;
 import com.cloudai.system.service.SysUserManageService;

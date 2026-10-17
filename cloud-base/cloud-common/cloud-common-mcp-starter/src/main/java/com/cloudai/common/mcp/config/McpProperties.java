@@ -1,4 +1,4 @@
-package com.cloudai.common.mcp;
+package com.cloudai.common.mcp.config;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;

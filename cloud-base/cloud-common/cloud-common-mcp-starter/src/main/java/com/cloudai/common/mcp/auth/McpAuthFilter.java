@@ -1,6 +1,7 @@
-package com.cloudai.common.mcp;
+package com.cloudai.common.mcp.auth;
 
 import com.cloudai.common.core.domain.R;
+import com.cloudai.common.mcp.config.McpProperties;
 import com.cloudai.common.security.constant.SecurityConstants;
 import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;
