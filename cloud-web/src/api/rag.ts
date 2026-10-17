@@ -14,6 +14,7 @@ import type {
   KbVo,
   RagChatAnswerVo,
   RagChatMessage,
+  ReembedPayload,
   UpdateKbPayload,
 } from '../types/api'
 
@@ -86,5 +87,20 @@ export function pageKbFiles(kbId: number, query: KbFilePageQuery): Promise<AiPag
     url: `/ai/rag/kb/${kbId}/files`,
     method: 'get',
     params: query,
+  })
+}
+
+/**
+ * 文件重新向量化（kb 契约 §8，perms ai:kb:update）：body JSON，data 恒 null；
+ * 同步单文件「分片→落库→向量化」置换旧代，时长与上传同量级——timeout 放大至 120s
+ * （沿 uploadKbFile/chatRag 先例）；错误分支 5005 文件不存在 / 5006 文件无原件 /
+ * 5007 原件读取失败（以上零副作用）/ 5008 向量清理失败（重试即收敛）均拦截器统一 toast
+ */
+export function reembedKbFile(payload: ReembedPayload): Promise<null> {
+  return request<null>({
+    url: '/ai/rag/kb/reembedding',
+    method: 'post',
+    data: payload,
+    timeout: 120000,
   })
 }

@@ -1031,7 +1031,9 @@ export interface KbVo {
 /**
  * 知识库文件 VO（契约 §7）：文件抽屉表格行，文件 id 倒序；
  * file_split_type 值域 "parent-child"（父子分片），预留 "recursion"（递归分片）；
- * create_time 为 yyyy-MM-dd HH:mm:ss 字符串直显
+ * create_time 为 yyyy-MM-dd HH:mm:ss 字符串直显；
+ * file_chunk_size/file_chunk_overlap 为 additive 补列（增量新增）
+ * （该文件当前快照值，旧消费方忽略即兼容）——重新向量化参数弹窗的预填数据源
  */
 export interface KbFileVo {
   /** 文件 id（AI 域口径：JSON number，契约 §1） */
@@ -1039,6 +1041,10 @@ export interface KbFileVo {
   file_name: string
   file_split_type: string
   create_time: string
+  /** 子块分片大小·当前快照（契约 §7 additive）：随重新向量化（§8）成功更新为最新生效参数 */
+  file_chunk_size: number
+  /** 子块重叠大小·当前快照（契约 §7 additive）：同上 */
+  file_chunk_overlap: number
 }
 
 /**
@@ -1070,4 +1076,17 @@ export interface KbPageQuery {
 export interface UpdateKbPayload {
   name: string
   description: string
+}
+
+/**
+ * 文件重新向量化入参（契约 §8）：
+ * 两分片参数可选——不传 = 沿用该文件快照值（覆盖换 embedding 模型后原参刷新场景）；
+ * chunk_size 整数 1..499（上限因父块固定 500、子块必须更小）、chunk_overlap 整数 ≥0
+ * 且须小于**生效的** chunk_size（含只传其一的组合，后端 service 对生效值判定，违例 1001）
+ */
+export interface ReembedPayload {
+  /** 目标文件 id（≥1；文件行自带库归属，端点不收 kb_id） */
+  file_id: number
+  chunk_size?: number
+  chunk_overlap?: number
 }

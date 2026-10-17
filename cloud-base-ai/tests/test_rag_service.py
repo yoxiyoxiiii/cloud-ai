@@ -463,12 +463,15 @@ from langchain_core.documents import Document
 
 
 class FakeStorage:
-    """MinioStorage 替身：记录 ensure_bucket/put_bytes 调用；put_error 注入对象存储故障。"""
+    """MinioStorage 替身：记录 ensure_bucket/put_bytes/get_bytes 调用；错误注入。"""
 
-    def __init__(self, put_error: Exception | None = None) -> None:
+    def __init__(self, put_error: Exception | None = None,
+                 get_bytes_error: Exception | None = None) -> None:
         self.put_error = put_error
+        self.get_bytes_error = get_bytes_error
         self.ensure_bucket_calls = 0
         self.put_calls: list[tuple[str, bytes, str]] = []
+        self.get_bytes_calls: list[str] = []
 
     def ensure_bucket(self) -> None:
         self.ensure_bucket_calls += 1
@@ -479,15 +482,27 @@ class FakeStorage:
             raise self.put_error
         self.put_calls.append((object_name, data, content_type))
 
+    def get_bytes(self, object_name: str) -> bytes:
+        if self.get_bytes_error is not None:
+            raise self.get_bytes_error
+        self.get_bytes_calls.append(object_name)
+        return b"%PDF-1.4 e2e original bytes"
+
 
 class FakeMilvus:
-    """Milvus 替身：只记录 add_documents 入参（向量写断言不在本组用例范围）。"""
+    """Milvus 替身：记录 add_documents/delete 入参；delete 返回值可配置（5008 断言用）。"""
 
-    def __init__(self) -> None:
+    def __init__(self, delete_result: bool = True) -> None:
         self.added: list[tuple[list, list]] = []
+        self.delete_calls: list[list[str]] = []
+        self.delete_result = delete_result
 
     def add_documents(self, documents: list, ids: list) -> None:
         self.added.append((documents, ids))
+
+    def delete(self, ids: list[str] | None = None, **_kwargs: object) -> bool:
+        self.delete_calls.append(list(ids or []))
+        return self.delete_result
 
 
 def _fake_upload(filename: str, data: bytes, content_type: str | None) -> SimpleNamespace:
@@ -567,4 +582,247 @@ async def test_upload_content_type_none_defaults(monkeypatch: pytest.MonkeyPatch
     upload = _fake_upload("e2e_doc.pdf", b"%PDF-1.4 e2e", None)
     await _run_upload(monkeypatch, storage, saved, upload)
     assert storage.put_calls[0][2] == "application/octet-stream"
+
+
+# ---------- 重新向量化编排（契约 §8：置换编排/快照默认/错误分支） ----------
+
+from minio.error import S3Error
+
+from cloud_base_ai.rag.dao import delete_chunks_by_file
+from cloud_base_ai.rag.schemas import ReembeddingReq
+
+_REEMBED_PARENT = Document(page_content="e2e parent text",
+                           metadata={"id": "e2e-p", "parent_id": "", "type": 0})
+_REEMBED_CHILD = Document(page_content="e2e child text",
+                          metadata={"id": "e2e-c", "parent_id": "e2e-p", "type": 1})
+
+
+async def _seed_reembed_file(factory, file_path: str = "kb/1/e2e_doc.pdf",
+                             chunk_size: int = 128, chunk_overlap: int = 20) -> tuple[int, int]:
+    """造一库一文件行（file_path 缺省为 MinIO 对象键形态，参数快照缺省 128/20）。"""
+    async with factory() as s:
+        async with s.begin():
+            kb = await save_kb(s, AiKnowledgeBase(name="e2e_kb_reembed", description="d"))
+            row = await save_kb_file(s, AiKnowledgeBaseFiles(
+                kb_id=kb.id, file_path=file_path, file_name="e2e_doc.pdf",
+                file_chunk_count=1, file_chunk_size=chunk_size,
+                file_chunk_overlap=chunk_overlap,
+                file_split_type=AiKnowledgeBaseFiles.SplitTypeEnum.PARENT_CHILD.value))
+            return kb.id, row.id
+
+
+async def _seed_gen_chunk(factory, kb_id: int, file_id: int, tag: str) -> tuple[int, int]:
+    """造一代块（1 父 1 子），返回 (父行 id, 子行 id)。"""
+    async with factory() as s:
+        async with s.begin():
+            parent = await save_chunk(s, AiKbChunk(
+                kb_id=kb_id, file_id=file_id, chunk_id=f"e2e-p-{tag}",
+                parent_chunk_id="", chunk_type=AiKbChunk.ChunkTypeEnum.PARENT,
+                seq_no=0, content=f"e2e parent {tag}"))
+            child = await save_chunk(s, AiKbChunk(
+                kb_id=kb_id, file_id=file_id, chunk_id=f"e2e-c-{tag}",
+                parent_chunk_id=parent.chunk_id,
+                chunk_type=AiKbChunk.ChunkTypeEnum.CHILD,
+                seq_no=0, content=f"e2e child {tag}"))
+            return parent.id, child.id
+
+
+def _install_reembed_fakes(monkeypatch: pytest.MonkeyPatch, storage: FakeStorage,
+                           milvus: FakeMilvus, split_kwargs: dict | None = None) -> None:
+    """装好重嵌入链全部替身（存储/解析/分片/向量）；DB 走真实 dao（SQLite）。"""
+
+    def fake_split(**kwargs: object) -> tuple[list[Document], list[Document]]:
+        if split_kwargs is not None:
+            split_kwargs.update(kwargs)
+        return [_REEMBED_PARENT], [_REEMBED_CHILD]
+
+    monkeypatch.setattr(service, "get_storage", lambda: storage)
+    monkeypatch.setattr(service.pdfmuse, "to_text", lambda data: "e2e parsed text")
+    monkeypatch.setattr(service.chunking, "parent_child_split_file", fake_split)
+    monkeypatch.setattr(service.vectorstore, "get_milvus", lambda name: milvus)
+
+
+async def test_reembedding_file_missing_5005(monkeypatch: pytest.MonkeyPatch) -> None:
+    """文件不存在 → 5005，零外部调用（MinIO/Milvus 均未触达）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        storage, milvus = FakeStorage(), FakeMilvus()
+        _install_reembed_fakes(monkeypatch, storage, milvus)
+        with pytest.raises(BusinessException) as ei:
+            await service.reembedding(ReembeddingReq(file_id=99999))
+        assert ei.value.code == 5005
+        assert ei.value.msg == "文件不存在"
+        assert storage.get_bytes_calls == [] and milvus.added == []
+
+
+async def test_reembedding_bare_uuid_path_5006_zero_external(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """存量早期行 file_path 为裸 uuid（不以 kb/ 开头、MinIO 无对象）→ 5006 且零外部调用。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _, file_id = await _seed_reembed_file(
+            factory, file_path="e2e0123456789abcdef0123456789abc")
+        storage, milvus = FakeStorage(), FakeMilvus()
+        _install_reembed_fakes(monkeypatch, storage, milvus)
+        with pytest.raises(BusinessException) as ei:
+            await service.reembedding(ReembeddingReq(file_id=file_id))
+        assert ei.value.code == 5006
+        assert ei.value.msg == "文件无原件，请删除后重新上传"
+        assert storage.get_bytes_calls == [] and milvus.added == []
+
+
+async def test_reembedding_s3error_5007(monkeypatch: pytest.MonkeyPatch,
+                                        caplog: pytest.LogCaptureFixture) -> None:
+    """MinIO get_bytes 抛 S3Error → 5007，catch 先 log.error 记根因。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _, file_id = await _seed_reembed_file(factory)
+        storage = FakeStorage(get_bytes_error=S3Error(
+            None, "NoSuchKey", "The specified key does not exist",
+            "/kb-bucket/kb/1/e2e_doc.pdf", "e2e-req-id", "e2e-host-id"))
+        _install_reembed_fakes(monkeypatch, storage, FakeMilvus())
+        with caplog.at_level(logging.ERROR, logger="cloud_base_ai.rag.service"):
+            with pytest.raises(BusinessException) as ei:
+                await service.reembedding(ReembeddingReq(file_id=file_id))
+        assert ei.value.code == 5007
+        assert ei.value.msg == "文件原件读取失败，请删除后重新上传"
+        assert "NoSuchKey" in caplog.text
+
+
+async def test_reembedding_default_params_use_snapshot(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """不传两参：分片收到快照值（128/20、父块 500），文件行快照回写为同值、count=新子块数。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _, file_id = await _seed_reembed_file(factory)  # 快照 128/20
+        split_kwargs: dict = {}
+        _install_reembed_fakes(monkeypatch, FakeStorage(), FakeMilvus(), split_kwargs)
+        await service.reembedding(ReembeddingReq(file_id=file_id))
+        assert split_kwargs == {"file_content": "e2e parsed text", "parent_chunk_size": 500,
+                                "child_chunk_size": 128, "child_chunk_overlap": 20}
+        async with factory() as s:
+            async with s.begin():
+                row = await find_kb_file_by_id(s, file_id)
+                assert (row.file_chunk_size, row.file_chunk_overlap,
+                        row.file_chunk_count) == (128, 20, 1)
+
+
+async def test_reembedding_new_params_persist_snapshot(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """传新参 200/30：分片收到新参、快照三值回写（count=新子块数）、新块 create_by 审计。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id, file_id = await _seed_reembed_file(factory)
+        set_current_account("e2e_admin")
+        split_kwargs: dict = {}
+        _install_reembed_fakes(monkeypatch, FakeStorage(), FakeMilvus(), split_kwargs)
+        await service.reembedding(
+            ReembeddingReq(file_id=file_id, chunk_size=200, chunk_overlap=30))
+        assert split_kwargs["child_chunk_size"] == 200
+        assert split_kwargs["child_chunk_overlap"] == 30
+        assert split_kwargs["parent_chunk_size"] == 500  # 父块固定不开放
+        async with factory() as s:
+            async with s.begin():
+                row = await find_kb_file_by_id(s, file_id)
+                assert (row.file_chunk_size, row.file_chunk_overlap,
+                        row.file_chunk_count) == (200, 30, 1)
+                assert row.update_by == "e2e_admin"  # 快照更新审计两值
+                new_rows = [r for r in (await s.execute(
+                    select(AiKbChunk).where(AiKbChunk.file_id == file_id))).scalars()
+                    if r.deleted == 0]
+                assert len(new_rows) == 2  # 新代 1 父 1 子
+                assert all(r.create_by == "e2e_admin" for r in new_rows)
+
+
+async def test_reembedding_overlap_relation_1001_combinations(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """关系校验对生效值判定（service 层，非仅 pydantic）：双传相等 / 只传 overlap /
+    只传 size——「沿用快照」组合下的越界同样 1001，且校验先于任何外部调用。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _, file_id = await _seed_reembed_file(factory)  # 快照 128/20
+        storage, milvus = FakeStorage(), FakeMilvus()
+        _install_reembed_fakes(monkeypatch, storage, milvus)
+        cases = (ReembeddingReq(file_id=file_id, chunk_size=200, chunk_overlap=200),
+                 ReembeddingReq(file_id=file_id, chunk_overlap=128),  # 生效 128/128
+                 ReembeddingReq(file_id=file_id, chunk_size=20))      # 生效 20/20
+        for req in cases:
+            with pytest.raises(BusinessException) as ei:
+                await service.reembedding(req)
+            assert ei.value.code == 1001
+            assert ei.value.msg == "分片重叠必须小于分片大小"
+        assert storage.get_bytes_calls == []  # 阶段一拦截，零外部调用
+
+
+async def test_reembedding_swaps_chunks_and_vectors(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """置换编排：旧代软删新代落库；向量先写新（新代 id 字符串）后删旧（历代清单含软删代）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id, file_id = await _seed_reembed_file(factory)
+        _, gen1_child = await _seed_gen_chunk(factory, kb_id, file_id, "g1")
+        async with factory() as s:  # 第一代软删（模拟既往重嵌入留下的历史代）
+            async with s.begin():
+                assert await delete_chunks_by_file(s, file_id) == 2
+        _, gen2_child = await _seed_gen_chunk(factory, kb_id, file_id, "g2")  # 当前活代
+        milvus = FakeMilvus()
+        _install_reembed_fakes(monkeypatch, FakeStorage(), milvus)
+        await service.reembedding(
+            ReembeddingReq(file_id=file_id, chunk_size=200, chunk_overlap=30))
+        # 向量断言：add 收新代 id（字符串化）；delete 收历代清单（软删 gen1 + 刚置换的 gen2）
+        assert len(milvus.added) == 1
+        added_ids = milvus.added[0][1]
+        assert len(added_ids) == 1 and added_ids[0].isdigit()
+        new_child_id = int(added_ids[0])
+        assert milvus.delete_calls == [[str(gen1_child), str(gen2_child)]]
+        assert new_child_id not in (gen1_child, gen2_child)  # 清单与新代零交集
+        # DB 断言：两旧代子块软删、新代子块活
+        async with factory() as s:
+            async with s.begin():
+                rows = {r.id: r for r in (await s.execute(
+                    select(AiKbChunk).where(AiKbChunk.file_id == file_id)
+                    .order_by(AiKbChunk.id.asc()))).scalars()}
+        assert rows[gen1_child].deleted == 1
+        assert rows[gen2_child].deleted == 1
+        assert rows[new_child_id].deleted == 0
+
+
+async def test_reembedding_empty_old_ids_skips_delete(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """文件无任何块行（新文件首次重嵌入极端场景）：空清单跳过 milvus.delete——
+    空 ids 列表会触发 langchain-milvus 断言错误。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _, file_id = await _seed_reembed_file(factory)  # 不造块行
+        milvus = FakeMilvus()
+        _install_reembed_fakes(monkeypatch, FakeStorage(), milvus)
+        await service.reembedding(ReembeddingReq(file_id=file_id))
+        assert len(milvus.added) == 1  # 新代照写
+        assert milvus.delete_calls == []  # 空清单零调用
+
+
+async def test_reembedding_purge_false_5008(monkeypatch: pytest.MonkeyPatch,
+                                            caplog: pytest.LogCaptureFixture) -> None:
+    """milvus.delete 返回 False → 5008（MySQL 已置换、旧向量未清——原样重试即收敛）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id, file_id = await _seed_reembed_file(factory)
+        _, gen_child = await _seed_gen_chunk(factory, kb_id, file_id, "g1")
+        milvus = FakeMilvus(delete_result=False)
+        _install_reembed_fakes(monkeypatch, FakeStorage(), milvus)
+        with caplog.at_level(logging.ERROR, logger="cloud_base_ai.rag.service"):
+            with pytest.raises(BusinessException) as ei:
+                await service.reembedding(ReembeddingReq(file_id=file_id))
+        assert ei.value.code == 5008
+        assert ei.value.msg == "向量清理失败，请重试"
+        assert "purge old vectors failed" in caplog.text
+        assert len(milvus.added) == 1  # 新向量已写（先写新后删旧）
+        async with factory() as s:  # MySQL 已生效：新代子块活、旧代软删
+            async with s.begin():
+                alive = [r for r in (await s.execute(
+                    select(AiKbChunk).where(AiKbChunk.file_id == file_id))).scalars()
+                    if r.deleted == 0]
+                assert len(alive) == 2
+                assert len(milvus.delete_calls) == 1 \
+                    and milvus.delete_calls[0] == [str(gen_child)]
 

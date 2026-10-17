@@ -318,6 +318,24 @@ async def list_chunks_by_file(session: AsyncSession, file_id: int) -> Sequence[A
     return (await session.execute(stmt)).scalars().all()
 
 
+async def list_child_ids_by_file(session: AsyncSession, file_id: int) -> Sequence[int]:
+    """某文件历代子块行 id（重新向量化的删除清单数据源；命中 idx_file）。
+
+    「读路径显式 deleted=0」通则的例外：清单用途是外部向量清理（向量主键=子块行 id），
+    恰要包含已软删的历史代——既往重嵌入失败残留的向量靠本清单在重试时收敛。
+    父块不进向量库，chunk_type 只取子块；id 升序仅保证清单稳定可断言。
+    """
+    stmt = (
+        select(AiKbChunk.id)
+        .where(
+            AiKbChunk.file_id == file_id,
+            AiKbChunk.chunk_type == AiKbChunk.ChunkTypeEnum.CHILD,
+        )
+        .order_by(AiKbChunk.id.asc())
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
 async def update_chunk(session: AsyncSession, chunk: AiKbChunk) -> AiKbChunk:
     """修改分块：审计两值 → merge → flush（消费方典型流：find 拿活实体→改字段→本方法）。"""
     fill_update_audit(chunk)

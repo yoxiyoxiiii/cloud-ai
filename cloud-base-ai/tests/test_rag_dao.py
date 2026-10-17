@@ -25,6 +25,7 @@ from cloud_base_ai.rag.dao import (
     find_kb_by_id,
     find_kb_by_name,
     find_kb_file_by_id,
+    list_child_ids_by_file,
     list_chunks_by_file,
     list_chunks_by_ids,
     list_kb_files,
@@ -379,6 +380,35 @@ async def test_list_chunks_by_file_scopes_to_file():
             ])
         rows = await list_chunks_by_file(s, 11)
         assert [r.content for r in rows] == ["f1_parent", "f1_child"]  # id 升序=原文顺序
+
+
+async def test_list_child_ids_by_file_includes_deleted_generations():
+    """历代口径：软删的历史代子块在清单内（重嵌入删除清单的自愈数据源），父块排除。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            c1 = await save_chunk(s, _chunk(
+                1, "gen1_child", file_id=11, chunk_id="g1c",
+                chunk_type=AiKbChunk.ChunkTypeEnum.CHILD))
+        async with s.begin():  # 第一代整体软删（模拟既往重嵌入置换）
+            assert await delete_chunks_by_file(s, 11) == 1
+        async with s.begin():  # 第二代：1 父 1 子
+            await save_chunk(s, _chunk(1, "gen2_parent", file_id=11, chunk_id="g2p"))
+            c2 = await save_chunk(s, _chunk(
+                1, "gen2_child", file_id=11, chunk_id="g2c",
+                chunk_type=AiKbChunk.ChunkTypeEnum.CHILD))
+        async with s.begin():  # 裸读包 begin 块（防隐式事务悬挂）
+            ids = list(await list_child_ids_by_file(s, 11))
+        assert ids == [c1.id, c2.id]  # 软删代 c1 含在内、两代父块排除、id 升序
+
+
+async def test_list_child_ids_by_file_empty_when_no_chunks():
+    """无块文件返空列表（新文件首次重嵌入的极端场景：空清单跳过向量删除）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            await save_chunk(s, _chunk(1, "parent_only", file_id=11))  # 仅父块也不进清单
+        async with s.begin():
+            assert list(await list_child_ids_by_file(s, 11)) == []
+            assert list(await list_child_ids_by_file(s, 99999)) == []  # 无任何块行
 
 
 async def test_page_list_chunks_filters_kb_and_type():

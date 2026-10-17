@@ -26,6 +26,7 @@ from cloud_base_ai.rag.schemas import (
     KbVo,
     RagChatAnswerVo,
     RagChatDto,
+    ReembeddingReq,
     UpdateKBReq,
 )
 from cloud_base_ai.rag.service import chat_answer, stream_chat_answer
@@ -90,12 +91,13 @@ async def create_kb(req: CreateKBReq) -> R[int]:
     kb_id: int = await service.create_kb(req)
     return R.ok(kb_id)
 
+
 @kb_router.post("/upload")
 async def upload_file_by_kb(
         kb_id: int = Query(..., description="目标知识库ID"),
         file: UploadFile = File(..., description="待上传的文件，单文件")
 ) -> R[int]:
-    """
+    """i
     知识库文件上传：
     1. 查询当前知识库
     2. 对上传的文件设置分片策略（递归分片/父子文档分片）
@@ -126,6 +128,14 @@ async def page_list_kbs(
 async def update_kb(kb_id: int, req: UpdateKBReq) -> R[None]:
     """编辑知识库（契约 §5）：name+description 全量覆盖语义，data 恒 null。"""
     await service.update_kb(kb_id, req)
+    return R.ok(None)
+
+
+@kb_update_router.post("/reembedding")
+async def reembedding(req: ReembeddingReq) -> R[None]:
+    """重新向量化单文件（契约 §8）：分片参数可选（不传=沿用该文件快照），同步完成置换，
+    data 恒 null；权限与编辑同用 ai:kb:update。"""
+    await service.reembedding(req)
     return R.ok(None)
 
 

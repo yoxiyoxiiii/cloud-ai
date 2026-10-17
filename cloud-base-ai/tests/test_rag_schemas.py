@@ -53,7 +53,13 @@ def test_answer_vo_fields() -> None:
 import json
 from datetime import datetime
 
-from cloud_base_ai.rag.schemas import AiPageResult, KbFileVo, KbVo, UpdateKBReq
+from cloud_base_ai.rag.schemas import (
+    AiPageResult,
+    KbFileVo,
+    KbVo,
+    ReembeddingReq,
+    UpdateKBReq,
+)
 
 
 def test_kbvo_description_nullable() -> None:
@@ -95,20 +101,47 @@ def test_updatekbreq_bounds() -> None:
 
 def test_kbfilevo_time_formatted() -> None:
     vo = KbFileVo(id=3, file_name="guide.pdf", file_split_type="parent-child",
-                  create_time=datetime(2026, 10, 15, 9, 30, 0))
+                  create_time=datetime(2026, 10, 15, 9, 30, 0),
+                  file_chunk_size=128, file_chunk_overlap=20)
     data = json.loads(vo.model_dump_json())
     assert data["create_time"] == "2026-10-15 09:30:00"  # 序列化统一 'yyyy-MM-dd HH:mm:ss'
     assert data["id"] == 3
 
 
 def test_kbfilevo_time_none_to_null() -> None:
-    vo = KbFileVo(id=3, file_name="guide.pdf", file_split_type="parent-child", create_time=None)
+    vo = KbFileVo(id=3, file_name="guide.pdf", file_split_type="parent-child", create_time=None,
+                  file_chunk_size=128, file_chunk_overlap=20)
     assert json.loads(vo.model_dump_json())["create_time"] is None
+
+
+def test_kbfilevo_chunk_params_additive() -> None:
+    """分片参数快照两列（增量补列，旧消费方忽略即兼容）：直出 VO 供弹窗预填，JSON number。"""
+    vo = KbFileVo(id=3, file_name="guide.pdf", file_split_type="parent-child",
+                  create_time=None, file_chunk_size=200, file_chunk_overlap=30)
+    data = json.loads(vo.model_dump_json())
+    assert data["file_chunk_size"] == 200
+    assert data["file_chunk_overlap"] == 30
+
+
+def test_reembeddingreq_bounds() -> None:
+    """重新向量化入参边界：file_id>=1；chunk_size 1..499（父块固定 500）；overlap>=0；两参可缺省。"""
+    req = ReembeddingReq(file_id=1)
+    assert req.chunk_size is None and req.chunk_overlap is None  # 不传=沿用快照
+    assert ReembeddingReq(file_id=1, chunk_size=499, chunk_overlap=498)  # 双边界含
+    with pytest.raises(ValidationError):
+        ReembeddingReq(file_id=0)  # file_id 下界 1
+    with pytest.raises(ValidationError):
+        ReembeddingReq(file_id=1, chunk_size=500)  # 上限 499：父块固定 500、子块须更小
+    with pytest.raises(ValidationError):
+        ReembeddingReq(file_id=1, chunk_size=0)
+    with pytest.raises(ValidationError):
+        ReembeddingReq(file_id=1, chunk_overlap=-1)
 
 
 def test_aipageresult_shape() -> None:
     vo = KbFileVo(id=3, file_name="guide.pdf", file_split_type="parent-child",
-                  create_time=datetime(2026, 10, 15, 9, 30, 0))
+                  create_time=datetime(2026, 10, 15, 9, 30, 0),
+                  file_chunk_size=128, file_chunk_overlap=20)
     page = AiPageResult[KbFileVo](total=2, rows=[vo])
     data = json.loads(page.model_dump_json())
     assert list(data.keys()) == ["total", "rows"]

@@ -225,7 +225,8 @@ def fake_kbs() -> list[KbVo]:
 def fake_files_page() -> AiPageResult[KbFileVo]:
     return AiPageResult(total=2, rows=[
         KbFileVo(id=3, file_name="guide.pdf", file_split_type="parent-child",
-                 create_time=datetime(2026, 10, 15, 9, 30, 0))])
+                 create_time=datetime(2026, 10, 15, 9, 30, 0),
+                 file_chunk_size=128, file_chunk_overlap=20)])
 
 
 def test_kb_list_no_perms_403(client: TestClient) -> None:
@@ -433,3 +434,61 @@ def test_kb_delete_ok_data_null(client: TestClient, monkeypatch: pytest.MonkeyPa
     assert body["code"] == 200 and body["msg"] == "操作成功"
     assert body["data"] is None  # data 恒 null
     assert captured == {"kb_id": 1}  # 路径参数透传 service
+
+
+# ---------- 重新向量化端点（契约 §8：perms 复用 ai:kb:update） ----------
+
+REEMBED_BODY: dict[str, int] = {"file_id": 1}
+
+
+def test_kb_reembed_no_perms_403(client: TestClient) -> None:
+    resp = client.post("/rag/kb/reembedding", json=REEMBED_BODY)
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["code"] == 403
+    assert body["msg"] == "无操作权限"
+
+
+def test_kb_reembed_add_perms_not_enough_403(client: TestClient) -> None:
+    # 权限按动作分立：持创建权限 ai:kb:add 也不能重嵌入（须 ai:kb:update）
+    resp = client.post("/rag/kb/reembedding", json=REEMBED_BODY, headers=KB_PERMS)
+    assert resp.json()["code"] == 403
+
+
+def test_kb_reembed_chunk_size_over_499_1001(client: TestClient) -> None:
+    resp = client.post("/rag/kb/reembedding",
+                       json={"file_id": 1, "chunk_size": 600}, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_reembed_missing_file_id_1001(client: TestClient) -> None:
+    resp = client.post("/rag/kb/reembedding", json={"chunk_size": 100},
+                       headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_reembed_5006_passthrough(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_reembed(req: object) -> None:
+        raise BusinessException("文件无原件，请删除后重新上传", 5006)
+    monkeypatch.setattr(service_module, "reembedding", fake_reembed)
+    resp = client.post("/rag/kb/reembedding", json=REEMBED_BODY, headers=KB_UPDATE_PERMS)
+    body = resp.json()
+    assert body["code"] == 5006
+    assert body["msg"] == "文件无原件，请删除后重新上传"
+
+
+def test_kb_reembed_ok_data_null_and_body_passthrough(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_reembed(req: object) -> None:
+        captured.update(file_id=req.file_id, chunk_size=req.chunk_size,
+                        chunk_overlap=req.chunk_overlap)
+    monkeypatch.setattr(service_module, "reembedding", fake_reembed)
+    resp = client.post("/rag/kb/reembedding",
+                       json={"file_id": 7, "chunk_size": 200, "chunk_overlap": 30},
+                       headers=KB_UPDATE_PERMS)
+    body = resp.json()
+    assert body["code"] == 200 and body["msg"] == "操作成功"
+    assert body["data"] is None  # data 恒 null
+    assert captured == {"file_id": 7, "chunk_size": 200, "chunk_overlap": 30}  # body 透传

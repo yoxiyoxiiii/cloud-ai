@@ -47,6 +47,18 @@ class UpdateKBReq(BaseModel):
     description: str = Field(description="描述信息", max_length=500)
 
 
+class ReembeddingReq(BaseModel):
+    """重新向量化入参（契约 §8）：chunk_size/chunk_overlap 不传 = 沿用该文件行快照值；
+    chunk_size 上限 499 因父块分片大小固定 500、子块必须更小。
+    「重叠须小于生效分片大小」由 service 对生效值判定（只传其一时 pydantic 静态校验覆盖不了）。"""
+
+    file_id: int = Field(description="目标文件ID（文件行自带库归属，端点不收 kb_id）", ge=1)
+    chunk_size: int | None = Field(default=None, description="子块分片大小；不传=沿用文件行快照值",
+                                   ge=1, le=499)
+    chunk_overlap: int | None = Field(default=None, description="子块重叠大小；不传=沿用文件行快照值",
+                                      ge=0)
+
+
 class VoTimeMixin(BaseModel):
     """出参时间统一 'yyyy-MM-dd HH:mm:ss'（对齐 Java Jackson 全局格式，前端展示口径一致）。
 
@@ -69,12 +81,16 @@ class KbVo(VoTimeMixin):
 
 
 class KbFileVo(VoTimeMixin):
-    """知识库文件行（管理面右栏表格；create_time 序列化为 'yyyy-MM-dd HH:mm:ss' 字符串）。"""
+    """知识库文件行（管理面右栏表格；create_time 序列化为 'yyyy-MM-dd HH:mm:ss' 字符串；
+    file_chunk_size/file_chunk_overlap 为分片参数快照——重新向量化弹窗的预填数据源，
+    随重嵌入成功更新为最新生效参数）。"""
 
     id: int
     file_name: str
     file_split_type: str
     create_time: datetime | None
+    file_chunk_size: int
+    file_chunk_overlap: int
 
 
 class AiPageResult(BaseModel, Generic[T]):

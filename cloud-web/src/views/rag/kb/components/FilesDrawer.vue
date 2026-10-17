@@ -1,14 +1,17 @@
 <script setup lang="ts">
 /**
- * 知识库文件管理抽屉（契约 §7 文件分页 + §3 上传）：代码自旧两栏页右栏平移，能力面不增不减。
+ * 知识库文件管理抽屉（契约 §7 文件分页 + §3 上传 + §8 重新向量化）：
  * 打开时回第一页加载；上传成功回第一页刷新（新文件 id 倒序居首）；
- * 上传与新建同权限门控 ai:kb:add（契约 §1）；错误分支拦截器统一 toast，catch 留空
+ * 重新向量化成功刷新当前页（行位不变，仅行数据快照列变化）；
+ * 上传与新建同权限门控 ai:kb:add（契约 §1），重新向量化与编辑同用 ai:kb:update（契约 §8）；
+ * 错误分支拦截器统一 toast，catch 留空
  */
 import { reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
 import { pageKbFiles, uploadKbFile } from '../../../../api/rag'
 import type { KbFileVo } from '../../../../types/api'
+import ReembedDialog from './ReembedDialog.vue'
 
 interface Props {
   modelValue: boolean
@@ -94,6 +97,16 @@ async function handleUpload(options: UploadRequestOptions): Promise<unknown> {
     uploading.value = false
   }
 }
+
+/* ============ 重新向量化（契约 §8，参数弹窗预填 §7 快照列） ============ */
+
+const reembedVisible = ref(false)
+const reembedFile = ref<KbFileVo | null>(null)
+
+function openReembed(file: KbFileVo): void {
+  reembedFile.value = file
+  reembedVisible.value = true
+}
 </script>
 
 <template>
@@ -131,6 +144,14 @@ async function handleUpload(options: UploadRequestOptions): Promise<unknown> {
       <el-table-column label="上传时间" min-width="170">
         <template #default="{ row }">{{ rowOf(row).create_time }}</template>
       </el-table-column>
+      <el-table-column label="操作" width="120">
+        <template #default="{ row }">
+          <!-- 重新向量化与编辑同用 ai:kb:update（契约 §8 权限复用，零新增种子） -->
+          <el-button v-perms="'ai:kb:update'" link type="primary" @click="openReembed(rowOf(row))"
+            >重新向量化</el-button
+          >
+        </template>
+      </el-table-column>
     </el-table>
     <el-pagination
       class="files-pagination"
@@ -142,6 +163,8 @@ async function handleUpload(options: UploadRequestOptions): Promise<unknown> {
       @current-change="loadFiles"
       @size-change="handleSizeChange"
     />
+    <!-- 成功刷新当前页（非回首页）：重嵌入不增删行，行位不变仅快照列变化，保持用户浏览位置 -->
+    <ReembedDialog v-model="reembedVisible" :file="reembedFile" @success="loadFiles()" />
   </el-drawer>
 </template>
 

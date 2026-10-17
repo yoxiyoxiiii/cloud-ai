@@ -1,5 +1,5 @@
 /**
- * AI 知识库列表管理页 e2e（2026-10-15 列表管理轮；契约 2026-10-14-ai-kb-api 修订版，plan I1）
+ * AI 知识库列表管理页 e2e（契约：docs/superpowers/contracts/2026-10-14-ai-kb-api.md）
  *
  * 运行前提：后端 gateway 18080 / sso 9201 / system 9202（种子 182-185 已落库——184/185 为
  * 编辑/删除按钮权限，admin 须在落库后登录取新 perms 快照）已启动；前端 dev 5173 已启动。
@@ -9,7 +9,8 @@
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码。
  * 测试数据：零后端写（kb 端点全 mock 内存态）；admin 种子账号只登录不改，种子菜单零触碰。
  *
- * 场景（plan I1 AC1-AC9；AC6 的删空回退子场景独立为 AC10 落实）：
+ * 场景（AC1-AC10 知识库列表管理——AC6 的删空回退子场景独立为 AC10；
+ * AC11-AC13 文件重新向量化，契约 §8）：
  * - AC1 菜单可达：admin 登录 → AI 助手/知识库 → /rag/kb 表格 mock 2 行 + 分页 total + 操作列三按钮
  * - AC2 搜索：name 参数断言 + 结果过滤；无结果空态；重置回全量（name 参数不携带断言）
  * - AC3 新建流：空提交内联必填（0 请求）→ 填写提交 mock 200 → toast + 表格刷新（新库 id 倒序居首）
@@ -20,6 +21,10 @@
  * - AC8 上传：抽屉内 mock upload 200 → 表格刷新 toast（multipart content-type route 层断言）
  * - AC9 KB 表分页：mock total=15 → 翻第 2 页 → 请求 page=2 断言 + 余 5 行
  * - AC10 删空回退：第 2 页连删 5 行 → 删空自动回第 1 页（page=1 请求断言 + 10 行）
+ * - AC11 重嵌入弹窗：抽屉行「重新向量化」按钮可见（ai:kb:update）→ 弹窗预填行快照 128/20 + 文件名只读
+ * - AC12 提交流：关系校验（重叠≥分片）内联错误 0 请求 → 改参 200/30 提交 route 层 body 断言
+ *   → toast + 弹窗关 + files 当前页（page=2）重发；重开弹窗预填 mock 回写后的新快照
+ * - AC13 错误分支：mock {code:5006} → toast「文件无原件…」+ 弹窗不关
  *
  * 选择器注意：文件抽屉 el-drawer 关闭后 DOM 仅 hidden 残留（页面侧已加 append-to-body 挂 body）——
  * 主表格断言用 `.el-card__body > .el-table`（直接子级）双保险，避免误数抽屉内表格行
@@ -56,6 +61,7 @@ const kbs = [
   { id: 2, name: '规章制度库', description: null, create_time: '2026-10-15 09:00:00' },
 ]
 // kb1: 15 行（AC7 翻页 total=15）；类型混 parent-child/recursion（映射验证）；kb2: 空库
+// 行带 §7 两 additive 快照列（AC11 弹窗预填数据源；显示列无这两项，纯 mock 侧数据）
 const filesByKb = new Map([
   [
     1,
@@ -63,6 +69,8 @@ const filesByKb = new Map([
       id: 100 - i,
       file_name: `guide-${i + 1}.pdf`,
       file_split_type: i % 3 === 1 ? 'recursion' : 'parent-child',
+      file_chunk_size: 128,
+      file_chunk_overlap: 20,
       create_time: '2026-10-15 09:30:00',
     })),
   ],
@@ -75,6 +83,8 @@ let lastListName = undefined // 最近一次 list 请求 name 参数解码值（
 let lastFilesUrl = '' // 最近一次 files 请求完整 URL（AC7/AC8 kb_id 与 page 断言锚）
 let uploadSawMultipart = false // AC8 multipart 证据（route 层验 content-type）
 let uploadKbIdParam = '' // AC8 kb_id query 参数证据
+let reembedFail = false // AC13 开关：true → reembedding 回 5006（文件无原件）
+let lastReembedBody = null // AC12 route 层 reembedding 请求 body 证据
 
 await page.route('**/api/ai/**', async (route) => {
   const req = route.request()
@@ -136,8 +146,25 @@ await page.route('**/api/ai/**', async (route) => {
     uploadSawMultipart = (req.headers()['content-type'] || '').includes('multipart/form-data')
     uploadKbIdParam = q.get('kb_id') ?? ''
     const kbId = Number(uploadKbIdParam)
-    filesByKb.get(kbId)?.unshift({ id: nextFileId++, file_name: 'e2e-kb-upload.pdf', file_split_type: 'parent-child', create_time: '2026-10-15 11:00:00' })
+    filesByKb.get(kbId)?.unshift({ id: nextFileId++, file_name: 'e2e-kb-upload.pdf', file_split_type: 'parent-child', file_chunk_size: 128, file_chunk_overlap: 20, create_time: '2026-10-15 11:00:00' })
     return route.fulfill(json(R(kbId)))
+  }
+  // POST /rag/kb/reembedding（§8）：记录 body 供 AC12 route 层断言；reembedFail 开关回 5006（AC13）；
+  // 成功按提交参回写 mock 行快照——对齐后端「重嵌入后回写文件表快照」语义（AC12 重开预填断言锚）
+  if (p === '/ai/rag/kb/reembedding' && req.method() === 'POST') {
+    lastReembedBody = req.postDataJSON()
+    if (reembedFail) {
+      return route.fulfill(json(ERR(5006, '文件无原件，请删除后重新上传')))
+    }
+    for (const arr of filesByKb.values()) {
+      const f = arr.find((x) => x.id === lastReembedBody.file_id)
+      if (f) {
+        f.file_chunk_size = lastReembedBody.chunk_size
+        f.file_chunk_overlap = lastReembedBody.chunk_overlap
+        break
+      }
+    }
+    return route.fulfill(json(R(null)))
   }
   const filesMatch = p.match(/^\/ai\/rag\/kb\/(\d+)\/files$/)
   if (filesMatch) {
@@ -153,10 +180,15 @@ await page.route('**/api/ai/**', async (route) => {
 /** 页面侧请求计数（「0 请求」与「刷新再请求」断言锚） */
 const createPosts = () => h.state.apiCalls.filter((c) => c.method === 'POST' && c.url === '/api/ai/rag/kb').length
 const filesGets = () => h.state.apiCalls.filter((c) => c.method === 'GET' && c.url.includes('/ai/rag/kb/') && c.url.includes('/files')).length
+const reembedPosts = () => h.state.apiCalls.filter((c) => c.method === 'POST' && c.url.includes('/ai/rag/kb/reembedding')).length
 
 // 主表格 scope：抽屉关闭后 DOM 残留仅 hidden，行/分页断言一律限定 .el-card（drawer teleport 在 body）
 const mainRow = (n) => page.locator('.el-card__body > .el-table .el-table__row').nth(n)
 const mainRowCount = () => page.locator('.el-card__body > .el-table .el-table__row').count()
+// 重嵌入弹窗输入定位：「重叠大小」的校验文案含「分片大小」字样，hasText('分片大小') 会命中两项——
+// DOM 顺序分片在前，取 .first() 锁定；el-input-number 数值一律 inputValue 断言（值不进 innerText）
+const sizeInputOf = (dlg) => dlg.locator('.el-form-item', { hasText: '分片大小' }).locator('input').first()
+const overlapInputOf = (dlg) => dlg.locator('.el-form-item', { hasText: '重叠大小' }).locator('input').first()
 
 try {
   // ================= AC1 菜单可达 =================
@@ -378,6 +410,118 @@ try {
     assertEq(await mainRowCount(), 10, '回退第 1 页后应显示 10 行（余 10 库）')
   })
 
+  // ================= AC11 重嵌入弹窗 =================
+  await step('AC11', '重嵌入弹窗：抽屉行「重新向量化」按钮可见 → 打开 → 预填行快照 128/20 + 文件名只读', async () => {
+    // 脚本侧 mock 造库（AC10 后主表余 10 个分页扩容库，id 300 居首）；12 文件供第 2 页断言
+    kbs.push({ id: 300, name: 'e2e_kb_reembed_库', description: '重嵌入场景', create_time: '2026-10-16 10:00:00' })
+    filesByKb.set(
+      300,
+      Array.from({ length: 12 }, (_, i) => ({
+        id: 612 - i,
+        file_name: `reembed-doc-${i + 1}.pdf`,
+        file_split_type: 'parent-child',
+        file_chunk_size: 128,
+        file_chunk_overlap: 20,
+        create_time: '2026-10-16 10:10:00',
+      })),
+    )
+    await page.getByRole('button', { name: '查询' }).click()
+    await waitTableIdle(page)
+    await mainRow(0).getByRole('button', { name: '文件管理' }).click()
+    const drawer = page.locator('.el-drawer')
+    await drawer.waitFor({ state: 'visible', timeout: 8000 })
+    await drawer.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 5000 })
+    // 翻第 2 页（2 行）——AC12「提交后 files 保持当前页」断言的前提页
+    await drawer.locator('.el-pagination .el-pager li', { hasText: '2' }).click()
+    await waitTableIdle(page)
+    assertEq(await drawer.locator('.el-table__row').count(), 2, '文件表第 2 页应 2 行（12 文件 - 首页 10）')
+    const row = drawer.locator('.el-table__row', { hasText: 'reembed-doc-11.pdf' }).first()
+    assertEq(await row.getByRole('button', { name: '重新向量化' }).count(), 1, '操作列应有「重新向量化」按钮（admin 含 ai:kb:update）')
+    await row.getByRole('button', { name: '重新向量化' }).click()
+    const dlg = page.locator('.el-dialog', { hasText: '重新向量化' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 5000 })
+    // 预填断言用 inputValue（input 值不进 innerText）；「分片大小」关系错误文案含「分片大小」故取 .first() 锁定顺序
+    assertEq(
+      await dlg.locator('.el-form-item', { hasText: '文件名' }).locator('input').first().inputValue(),
+      'reembed-doc-11.pdf',
+      '文件名应显示行数据（只读展示）',
+    )
+    assertEq(await sizeInputOf(dlg).inputValue(), '128', '分片大小应预填行快照 128（契约 §7 列）')
+    assertEq(await overlapInputOf(dlg).inputValue(), '20', '重叠大小应预填行快照 20（契约 §7 列）')
+    await shot(page, 'aikb-ac11-dialog.png')
+    await dlg.getByRole('button', { name: '取消' }).click()
+    await waitDialogGone(page, '重新向量化')
+  })
+
+  // ================= AC12 提交流 =================
+  await step('AC12', '提交流：关系校验内联错误 0 请求 → 改参 200/30 提交 body 断言 → toast + 弹窗关 + files 当前页重发；重开预填回写快照', async () => {
+    const drawer = page.locator('.el-drawer')
+    const row = drawer.locator('.el-table__row', { hasText: 'reembed-doc-11.pdf' }).first()
+    await row.getByRole('button', { name: '重新向量化' }).click()
+    const dlg = page.locator('.el-dialog', { hasText: '重新向量化' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 5000 })
+    const sizeInput = sizeInputOf(dlg)
+    const overlapInput = overlapInputOf(dlg)
+    // 关系校验：重叠 20 ≥ 改后分片 20 → 内联错误 + 零请求（el-input-number 须 Tab 触发 change/blur）
+    const postsBefore = reembedPosts()
+    await sizeInput.fill('20')
+    await sizeInput.press('Tab')
+    await sleep(600)
+    const err = dlg.locator('.el-form-item__error')
+    await err.first().waitFor({ state: 'visible', timeout: 3000 })
+    assert((await err.first().innerText()).includes('重叠大小须小于分片大小'), `内联文案应含关系提示，实际 "${await err.first().innerText()}"`)
+    assertEq(reembedPosts(), postsBefore, '校验失败不得发出 reembedding 请求')
+    // 合法参数提交（mock 200 → 快照回写 + R(null)）
+    const filesBefore = filesGets()
+    await sizeInput.fill('200')
+    await sizeInput.press('Tab')
+    await overlapInput.fill('30')
+    await overlapInput.press('Tab')
+    await sleep(300)
+    assertEq(await dlg.locator('.el-form-item__error').count(), 0, '参数合法后内联错误应消失')
+    await dlg.getByRole('button', { name: '重新向量化' }).click()
+    await waitToast(page, '重新向量化完成', 'success')
+    await shot(page, 'aikb-ac12-success.png')
+    await waitDialogGone(page, '重新向量化')
+    // route 层 body 断言（契约 §8：恒带 file_id + 两参）
+    assert(lastReembedBody != null, 'route 层应记录到 reembedding 请求 body')
+    assertEq(lastReembedBody.file_id, 602, `body.file_id 应为目标行 602，实际 ${lastReembedBody.file_id}`)
+    assertEq(lastReembedBody.chunk_size, 200, `body.chunk_size 应为 200，实际 ${lastReembedBody.chunk_size}`)
+    assertEq(lastReembedBody.chunk_overlap, 30, `body.chunk_overlap 应为 30，实际 ${lastReembedBody.chunk_overlap}`)
+    assertEq(Object.keys(lastReembedBody).sort().join(','), 'chunk_overlap,chunk_size,file_id', 'body 应恰含三键（无多余字段）')
+    // files 重发且保持当前页（提交发生在第 2 页）
+    assertEq(filesGets(), filesBefore + 1, '成功后应重发 files 请求（当前页刷新）')
+    assert(lastFilesUrl.includes('page=2'), `刷新应保持当前页（page=2），实际 ${lastFilesUrl}`)
+    // 重开弹窗：mock 已按提交参回写行快照 → 预填新值（对齐后端快照回写语义）
+    await row.getByRole('button', { name: '重新向量化' }).click()
+    await dlg.waitFor({ state: 'visible', timeout: 5000 })
+    assertEq(await sizeInput.inputValue(), '200', '重开后分片大小应预填回写后的快照 200')
+    assertEq(await overlapInput.inputValue(), '30', '重开后重叠大小应预填回写后的快照 30')
+    await dlg.getByRole('button', { name: '取消' }).click()
+    await waitDialogGone(page, '重新向量化')
+  })
+
+  // ================= AC13 错误分支 =================
+  await step('AC13', '错误分支：mock {code:5006} → toast「文件无原件」+ 弹窗不关', async () => {
+    reembedFail = true
+    const drawer = page.locator('.el-drawer')
+    const row = drawer.locator('.el-table__row', { hasText: 'reembed-doc-11.pdf' }).first()
+    await row.getByRole('button', { name: '重新向量化' }).click()
+    const dlg = page.locator('.el-dialog', { hasText: '重新向量化' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 5000 })
+    // 预填即 AC12 回写后的 200/30（合法），直接提交走 5006 分支
+    await dlg.getByRole('button', { name: '重新向量化' }).click()
+    await waitToast(page, '文件无原件，请删除后重新上传', 'error')
+    assert(await dlg.isVisible(), '5006 后弹窗应保持打开（拦截器 toast，页面 catch 留空不关窗）')
+    await shot(page, 'aikb-ac13-5006.png')
+    await dlg.getByRole('button', { name: '取消' }).click()
+    await waitDialogGone(page, '重新向量化')
+    // 关抽屉清场 + 还原开关
+    await page.locator('.el-drawer__close-btn').click()
+    await page.locator('.el-drawer').waitFor({ state: 'hidden', timeout: 5000 })
+    reembedFail = false
+  })
+
   // ================= 证据核验 =================
   await step('AC-VERIFY', '证据核验：无 console error / pageerror / >=400 /api / 网络失败', async () => {
     const NOISE_404 = /^Failed to load resource: the server responded with a status of 404/
@@ -390,7 +534,7 @@ try {
 } finally {
   h.summary({
     extras: [
-      '\n测试数据: 零后端写（kb 六端点全 mock 内存态）；admin 种子账号只登录不改，种子菜单零触碰',
+      '\n测试数据: 零后端写（kb 七端点全 mock 内存态，含 reembedding）；admin 种子账号只登录不改，种子菜单零触碰',
       'mock 面: page.route(**/api/ai/**) fulfill 假 R JSON（登录链走真实网关/sso/system）——cloud-base-ai 8010 与 Milvus 未依赖',
     ],
   })
