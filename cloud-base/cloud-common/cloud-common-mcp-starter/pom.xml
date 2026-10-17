@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.cloudai</groupId>
+        <artifactId>cloud-common</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>cloud-common-mcp-starter</artifactId>
+    <name>cloud-common-mcp-starter</name>
+    <description>MCP server 安全组件封装（双主体认证过滤器 + 工具权限注解切面 + 出参序列化，cloud.mcp.enabled 默认关）</description>
+
+    <dependencies>
+        <!-- 认证过滤器三依赖：R 统一返回 / JWT 验签 / 在线会话读取 -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-core-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-security-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-redis-starter</artifactId>
+        </dependency>
+        <!-- MCP server 装配（版本走根 pom spring-ai-bom；本 starter 是它在云内的唯一封装入口） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+        </dependency>
+        <!-- 权限切面织入 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

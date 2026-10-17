@@ -123,6 +123,11 @@
                 <artifactId>cloud-common-xxljob-starter</artifactId>
                 <version>${project.version}</version>
             </dependency>
+            <dependency>
+                <groupId>com.cloudai</groupId>
+                <artifactId>cloud-common-mcp-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <!-- 服务间契约 api 模块（2026-10-09 Feign 统一接口层） -->
             <dependency>
                 <groupId>com.cloudai</groupId>

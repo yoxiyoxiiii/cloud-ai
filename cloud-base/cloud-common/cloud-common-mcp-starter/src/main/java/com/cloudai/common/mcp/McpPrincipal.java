@@ -1,4 +1,4 @@
-package com.cloudai.system.mcp;
+package com.cloudai.common.mcp;
 
 import java.util.List;
 

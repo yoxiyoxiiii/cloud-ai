@@ -1,4 +1,4 @@
-package com.cloudai.system.mcp;
+package com.cloudai.common.mcp;
 
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.security.constant.SecurityConstants;

@@ -60,6 +60,9 @@ management:
 # 引 cloud-bpmn-api jar 即得唯一事件监听对象 + 定时对账，两行配置显式启用（默认关防提供方误装配）；
 # 消费组名沿用 Round D 组名 g_system_approval_event——broker offset 延续无重放（设计 D3 硬约束）
 cloud:
+  # MCP 安全组件开关（密钥 cloud.mcp.client-secret 在 Nacos cloud-system.yaml，不入仓库）
+  mcp:
+    enabled: true
   bpmn:
     projection:
       enabled: true

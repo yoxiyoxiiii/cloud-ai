@@ -1,4 +1,4 @@
-package com.cloudai.system.mcp;
+package com.cloudai.common.mcp;
 
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;

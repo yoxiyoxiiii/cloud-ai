@@ -3,6 +3,7 @@ package com.cloudai.system;
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -511,5 +512,24 @@ class ArchitectureGuardTest {
             }
         }
         return files;
+    }
+
+    /** mcp 包内每个 @Tool 方法必须携带权限档位注解（漏标注=权限机制旁路，构建期拦截）。
+     * 计数为文本级：该目录源码（含 javadoc/注释）禁止出现档位注解名的裸字面串，否则计数虚高误红。 */
+    @Test
+    void mcpToolMethods_mustDeclareMcpRequirePerm() throws IOException {
+        try (Stream<Path> files = Files.walk(MAIN_JAVA.resolve("com/cloudai/system/mcp"))) {
+            files.filter(p -> p.toString().endsWith(".java")).forEach(file -> {
+                try {
+                    String text = Files.readString(file, StandardCharsets.UTF_8);
+                    int toolCount = text.split("@Tool\\(", -1).length - 1;
+                    int permCount = text.split("@McpRequirePerm", -1).length - 1;
+                    assertThat(permCount).as("%s：@Tool 方法必须逐个携带 @McpRequirePerm（空值=登录即可，也须显式标注）",
+                            file).isEqualTo(toolCount);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        }
     }
 }

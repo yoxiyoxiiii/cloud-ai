@@ -1,0 +1,2 @@
+com.cloudai.common.mcp.CloudMcpAutoConfiguration
+com.cloudai.common.mcp.CloudMcpGuardSentinelAutoConfiguration

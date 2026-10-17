@@ -2,6 +2,7 @@ package com.cloudai.system.mcp;
 
 import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
+import com.cloudai.common.mcp.McpPrincipal;
 import com.cloudai.common.translate.domain.DictItemEntry;
 import com.cloudai.system.service.SysDictDataManageService;
 import com.cloudai.system.service.SysUserManageService;
@@ -21,12 +22,12 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.BDDMockito.given;
 
 /**
  * MCP 业务工具测试（契约 §2-§4）：
- * 有 perms 查用户透传分页结果 / 无 perms 权限拒绝 / 字典工具免 perms / 字典空结果透传。
+ * 有 perms 查用户透传分页结果 / 分页缺省值 / 字典工具免 perms / 字典空结果透传。
+ * 权限拒绝已注解化，由 starter 切面全链路强制（starter 集成测试覆盖），直调方法不在切面路径上。
  */
 @ExtendWith(MockitoExtension.class)
 class SystemMcpToolsTest {
@@ -65,14 +66,6 @@ class SystemMcpToolsTest {
         assertThat(result).isSameAs(expected);
         assertThat(captor.getValue().getPageNum()).isEqualTo(2);
         assertThat(captor.getValue().getPageSize()).isEqualTo(5);
-    }
-
-    @Test
-    void queryUsers_withoutPerm_throwsPermissionDenied() {
-        withPrincipal(List.of());
-        assertThatThrownBy(() -> tools.queryUsers(1, 10))
-                .isInstanceOf(McpPermissionDeniedException.class)
-                .hasMessageContaining("PERMISSION_DENIED: system:user:list");
     }
 
     @Test

@@ -1,4 +1,4 @@
-package com.cloudai.system.mcp;
+package com.cloudai.common.mcp;
 
 /**
  * MCP 工具权限拒绝：由 MCP 层转为 isError=true 结果

@@ -1,4 +1,4 @@
-package com.cloudai.system.mcp;
+package com.cloudai.common.mcp;
 
 import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;

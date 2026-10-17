@@ -55,10 +55,10 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-loadbalancer</artifactId>
         </dependency>
-        <!-- MCP server（版本走根 pom spring-ai-bom；AI 基座经 streamable HTTP 直连本服务 /mcp） -->
+        <!-- MCP server 安全组件（spring-ai-starter-mcp-server-webmvc 经其传递引入；AI 基座经 streamable HTTP 直连本服务 /mcp） -->
         <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-mcp-starter</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
