@@ -976,6 +976,9 @@ if __name__ == "__main__":
    visible_tools 清单注入模型；工具调用结果回填对话。本轮只建了通道（设计 §11 明确范围外）。
 2. bpmn/sso 的 MCP server 化：复制 cloud-system 模式（starter+filter+guard+网关屏蔽各一条），
    工具名前缀换服务域。
+   （2026-10-17 组件抽取轮已落地 cloud-common-mcp-starter——接入动作收敛为：引 starter + Nacos 配
+   cloud.mcp.* 两键 + 工具类/@McpRequirePerm 注解 + 网关屏蔽一条 + 守护规则复制，见
+   2026-10-17-mcp-starter-extraction-design.md 与其计划的移交备忘。）
 3. nacos-client 3.0.3 ↔ server 2.4.3 若 POC 走了钉版本回退：升级 Nacos server 容器（v3.x，
    配置数据迁移）后解除钉版，独立小轮。
 4. SCA 2025.0.x 线出了新 patch / Boot 3.5 出了新 patch：独立小轮升级，勿混入功能轮。
