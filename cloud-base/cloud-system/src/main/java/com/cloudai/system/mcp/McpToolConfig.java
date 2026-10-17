@@ -13,8 +13,7 @@ import org.springframework.context.annotation.Configuration;
 public class McpToolConfig {
 
     @Bean
-    public ToolCallbackProvider systemMcpToolCallbackProvider() {
-        // 骨架态：显式空数组（builder 零参 build 会因 toolObjects=null 拒绝构造）
-        return MethodToolCallbackProvider.builder().toolObjects(new Object[0]).build();
+    public ToolCallbackProvider systemMcpToolCallbackProvider(SystemMcpTools tools) {
+        return MethodToolCallbackProvider.builder().toolObjects(tools).build();
     }
 }
