@@ -967,3 +967,18 @@ if __name__ == "__main__":
 - 覆盖对照：设计 §3（POC 门禁）=Task 1-4；§4（升级影响面）=Task 5-7；§5/§6/§7（组装/权限/屏蔽）=Task 8-12；§8（工具面）=Task 11；§9（错误语义）=Task 10/11/14；§10（测试策略）=各任务+Task 15；§12（移交）=Task 16。无遗漏。
 - 类型一致性：McpPrincipal(ATTR)/McpPermGuard.require/McpPermissionDeniedException 文本前缀、TOOL_PERMS 键名、错误码 5009/5010 在 Java/Python/契约三处一致。
 - 占位符扫描：代码块均为可运行语义；标注「以实测为准」处均为外部 API 形态核对项（红线要求不凭记忆），非逻辑空洞。
+
+---
+
+## 移交后续阶段的备忘
+
+1. MCP 工具接入对话编排（LLM 真正用上工具）：langchain.mcp MCPAdapter 适配 + 对话链路把
+   visible_tools 清单注入模型；工具调用结果回填对话。本轮只建了通道（设计 §11 明确范围外）。
+2. bpmn/sso 的 MCP server 化：复制 cloud-system 模式（starter+filter+guard+网关屏蔽各一条），
+   工具名前缀换服务域。
+3. nacos-client 3.0.3 ↔ server 2.4.3 若 POC 走了钉版本回退：升级 Nacos server 容器（v3.x，
+   配置数据迁移）后解除钉版，独立小轮。
+4. SCA 2025.0.x 线出了新 patch / Boot 3.5 出了新 patch：独立小轮升级，勿混入功能轮。
+5. MCP 会话按请求建立（无连接复用）的性能取舍：编排轮次若实测高频调用成为瓶颈，
+   评估会话池（需先实证服务端 streamable 会话生命周期语义）。
+6. 写操作类 MCP 工具（如需）：事务与幂等口径必须单独设计（本设计 §11 范围外）。
