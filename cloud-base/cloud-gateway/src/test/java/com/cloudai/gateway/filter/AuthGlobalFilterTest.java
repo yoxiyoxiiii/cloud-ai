@@ -8,17 +8,20 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.ArgumentCaptor;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.http.HttpHeaders;
 import org.springframework.mock.http.server.reactive.MockServerHttpRequest;
 import org.springframework.mock.web.server.MockServerWebExchange;
+import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -91,7 +94,10 @@ class AuthGlobalFilterTest {
                     h.set(SecurityConstants.HEADER_USER_PERMS, "evil:perm");
                 });
         filter.filter(exchange, chain).block();
-        var headers = exchange.getRequest().getHeaders();
+        // Spring Framework 6.2 起 mutate() 返回装饰器不再回写 mock 自身——断言下沉到 chain 实收的 exchange
+        ArgumentCaptor<ServerWebExchange> forwarded = ArgumentCaptor.forClass(ServerWebExchange.class);
+        verify(chain).filter(forwarded.capture());
+        var headers = forwarded.getValue().getRequest().getHeaders();
         assertThat(headers.getFirst(SecurityConstants.HEADER_USER_ID)).isEqualTo("1");
         assertThat(headers.getFirst(SecurityConstants.HEADER_USER_ACCOUNT)).isEqualTo("admin");
         assertThat(headers.getFirst(SecurityConstants.HEADER_USER_PERMS)).isEqualTo("system:user:list");
