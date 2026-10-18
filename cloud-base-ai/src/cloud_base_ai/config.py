@@ -102,6 +102,22 @@ class DatabaseSettings(BaseModel):
     echo: bool = False
 
 
+class RedisSettings(BaseModel):
+    """Redis Cluster 连接参数（redis-py RedisCluster，装机版 8.1.0）：
+    集群模式**无 db 键**——客户端传 db 直接抛 RedisClusterException（源码实证），
+    且集群本身只支持 db 0。地址走配置不写死（「接入外部系统」规范）。
+
+    env 覆盖形态：CLOUD_BASE_AI_REDIS__HOSTS / __PORT / __PASSWORD。
+    hosts 为逗号分隔起始节点（任一可达即可完成集群发现，拓扑发现后自动接管）；
+    password 默认空 = 无密码集群（本机常态），真值跨环境走 .env 不入库。
+    消费方 redis_client.get_redis_client()。
+    """
+
+    hosts: str = "127.0.0.1"
+    port: int = 6379
+    password: str = ""
+
+
 class Settings(BaseSettings):
     """应用配置根（env 前缀 CLOUD_BASE_AI_，嵌套分隔符 "__"——单 "_" 与内层字段名
     自身含下划线歧义，含下划线内层字段覆盖会静默失效，2026-10-12 实测后主控拍板 "__"）。
@@ -114,6 +130,7 @@ class Settings(BaseSettings):
     minio: MinIOSettings = MinIOSettings()
     mcp: McpSettings = McpSettings()
     db: DatabaseSettings = DatabaseSettings()
+    redis: RedisSettings = RedisSettings()
     app_port: int = 8010  # uvicorn 监听与注册实例端口同源
 
     model_config = SettingsConfigDict(
