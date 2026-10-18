@@ -80,6 +80,16 @@
          WHERE u.account = #{account} AND u.deleted = 0 AND m.perms != ''
     </select>
 
+    <!-- 登录角色 id 聚合（身份快照 roleIds）：账号 → 启用角色 id，启用口径与 listPermsByAccount 同源
+         （r.status=0 AND r.deleted=0，停用角色的授权在消费侧自然失配） -->
+    <select id="listRoleIdsByAccount" resultType="long">
+        SELECT r.id
+          FROM sys_user u
+          JOIN sys_user_role ur ON ur.user_id = u.id
+          JOIN sys_role r ON r.id = ur.role_id AND r.status = 0 AND r.deleted = 0
+         WHERE u.account = #{account} AND u.deleted = 0
+    </select>
+
     <!-- 翻译回源全量（翻译设计 §6 小表取舍：无 WHERE 选择列全表扫可接受，量级涨至数万分页/增量再议）；
          投影列不含 password -->
     <select id="listTransAll" resultType="com.cloudai.system.entity.SysUser">

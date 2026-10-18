@@ -21,6 +21,7 @@ from cloud_base_ai.rag import service
 from cloud_base_ai.rag.dao import delete_kb_by_id, find_kb_by_name
 from cloud_base_ai.rag.schemas import CreateKBReq, RagChatDto, RagChatMessage
 from cloud_base_ai.rag.service import chat_answer, stream_chat_answer
+from cloud_base_ai.security import Identity, set_current_identity
 from tests.db_testing import make_service_session_factory
 
 
@@ -147,8 +148,19 @@ pytestmark = pytest.mark.anyio
 @pytest.fixture(autouse=True)
 def _reset_account():
     set_current_account(None)
+    set_current_identity(None)
     yield
     set_current_account(None)
+    set_current_identity(None)
+
+
+def _login_identity(perms: tuple[str, ...] = ("ai:kb:list",), user_id: int | None = 952,
+                    account: str | None = "e2e_user",
+                    role_ids: tuple[int, ...] = (),
+                    dept_ids: tuple[int, ...] = ()) -> None:
+    """模拟 require_perms 已解析的五头身份（可见性求值三要素随用例注入）。"""
+    set_current_identity(Identity(user_id=user_id, account=account, perms=perms,
+                                  role_ids=role_ids, dept_ids=dept_ids))
 
 
 async def test_create_kb_returns_id_and_audits(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -199,7 +211,12 @@ from cloud_base_ai.rag.dao import (
     save_kb,
     save_kb_file,
 )
-from cloud_base_ai.rag.entities import AiKbChunk, AiKnowledgeBase, AiKnowledgeBaseFiles
+from cloud_base_ai.rag.entities import (
+    AiKbChunk,
+    AiKbGrant,
+    AiKnowledgeBase,
+    AiKnowledgeBaseFiles,
+)
 from cloud_base_ai.rag.schemas import AiPageResult, KbFileVo, KbVo, UpdateKBReq
 
 
@@ -456,6 +473,227 @@ async def test_page_list_kb_files_soft_deleted_invisible(monkeypatch: pytest.Mon
                 assert await delete_kb_file_by_id(s, file_id) == 1
         result = await service.page_list_kb_files(kb_id=kb_id, page=1, size=10)
         assert result.total == 0 and result.rows == []
+
+
+# ---------- 知识库授权编排（2026-10-18 权限轮，契约 §2/§3：全删全插 + 三组分型回显） ----------
+
+from cloud_base_ai.rag import dao as rag_dao
+from cloud_base_ai.rag.schemas import KbPermsSaveReq
+
+
+async def _seed_grants(factory, kb_id: int, role_ids: tuple[int, ...] = (),
+                       dept_ids: tuple[int, ...] = (),
+                       user_ids: tuple[int, ...] = ()) -> None:
+    """直接走 dao 造授权行（不经 service.save_kb_perms，保持用例聚焦被测编排）。"""
+    grants = [AiKbGrant(subject_type=AiKbGrant.SubjectTypeEnum.ROLE, subject_id=i)
+              for i in role_ids] \
+        + [AiKbGrant(subject_type=AiKbGrant.SubjectTypeEnum.DEPT, subject_id=i)
+           for i in dept_ids] \
+        + [AiKbGrant(subject_type=AiKbGrant.SubjectTypeEnum.USER, subject_id=i)
+           for i in user_ids]
+    async with factory() as s:
+        async with s.begin():
+            await rag_dao.save_kb_grants(s, kb_id, grants)
+
+
+async def test_find_kb_perms_missing_5004(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        with pytest.raises(BusinessException) as ei:
+            await service.find_kb_perms(9999)
+        assert ei.value.code == 5004
+        assert "不存在" in ei.value.msg
+
+
+async def test_find_kb_perms_groups_and_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """回显按主体类型三组分型；无授权库回三空数组（契约 §2）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id = await _seed_kb(factory, "e2e_kb_perm", "d")
+        empty_id = await _seed_kb(factory, "e2e_kb_perm_empty", "d")
+        await _seed_grants(factory, kb_id, role_ids=(5, 2), dept_ids=(3,), user_ids=(952,))
+        vo = await service.find_kb_perms(kb_id)
+        assert vo.role_ids == [2, 5]  # subject_id 升序（稳定回显锚）
+        assert vo.dept_ids == [3]
+        assert vo.user_ids == [952]
+        empty_vo = await service.find_kb_perms(empty_id)
+        assert empty_vo.role_ids == [] and empty_vo.dept_ids == [] and empty_vo.user_ids == []
+
+
+async def test_save_kb_perms_missing_5004(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        with pytest.raises(BusinessException) as ei:
+            await service.save_kb_perms(9999, KbPermsSaveReq(role_ids=[2]))
+        assert ei.value.code == 5004
+
+
+async def test_save_kb_perms_dedup_and_full_replace(monkeypatch: pytest.MonkeyPatch) -> None:
+    """重复 id 静默去重；二次保存整集替换（旧授权行全清）；审计 create_by 落当前账号。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id = await _seed_kb(factory, "e2e_kb_save", "d")
+        set_current_account("e2e_admin")
+        await service.save_kb_perms(kb_id, KbPermsSaveReq(
+            role_ids=[2, 2, 5], dept_ids=[3, 3], user_ids=[952]))
+        vo = await service.find_kb_perms(kb_id)
+        assert vo.role_ids == [2, 5] and vo.dept_ids == [3] and vo.user_ids == [952]
+        set_current_account("e2e_ops")
+        await service.save_kb_perms(kb_id, KbPermsSaveReq(role_ids=[7]))  # 全量覆盖
+        vo2 = await service.find_kb_perms(kb_id)
+        assert vo2.role_ids == [7] and vo2.dept_ids == [] and vo2.user_ids == []
+        async with factory() as s:
+            async with s.begin():
+                rows = await rag_dao.list_grants_by_kb(s, kb_id)
+        assert all(r.create_by == "e2e_ops" for r in rows)  # 后写者整集替换
+
+
+async def test_save_kb_perms_empty_clears(monkeypatch: pytest.MonkeyPatch) -> None:
+    """三数组全空（缺省 []）= 清空授权。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id = await _seed_kb(factory, "e2e_kb_clear", "d")
+        await _seed_grants(factory, kb_id, role_ids=(2,))
+        await service.save_kb_perms(kb_id, KbPermsSaveReq())
+        vo = await service.find_kb_perms(kb_id)
+        assert vo.role_ids == [] and vo.dept_ids == [] and vo.user_ids == []
+
+
+# ---------- 列表可见性编排（契约 §4 修订：豁免全量 / list-only own+granted） ----------
+
+
+async def test_page_list_kbs_exempt_sees_all(monkeypatch: pytest.MonkeyPatch) -> None:
+    """管理豁免（任一 ai:kb:add/update/delete）：全量可见，行为同旧版。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        await _seed_kb(factory, "e2e_kb_x1", "d")
+        await _seed_kb(factory, "e2e_kb_x2", "d")
+        for mgmt_perm in ("ai:kb:add", "ai:kb:update", "ai:kb:delete"):
+            _login_identity(perms=("ai:kb:list", mgmt_perm))
+            result = await service.page_list_kbs(page=1, size=10)
+            assert result.total == 2
+
+
+async def test_page_list_kbs_list_only_own_union_granted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """list-only：own ∪ 角色命中 ∪ 部门祖先链命中 ∪ 直授用户；未授权他人库不可见。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        set_current_account("e2e_user")
+        own_id = await _seed_kb(factory, "e2e_kb_own", "d")
+        set_current_account("someone")
+        role_granted_id = await _seed_kb(factory, "e2e_kb_role", "d")
+        dept_granted_id = await _seed_kb(factory, "e2e_kb_dept", "d")
+        user_granted_id = await _seed_kb(factory, "e2e_kb_user", "d")
+        invisible_id = await _seed_kb(factory, "e2e_kb_none", "d")
+        await _seed_grants(factory, role_granted_id, role_ids=(5,))
+        await _seed_grants(factory, dept_granted_id, dept_ids=(12,))  # 祖先链内任一节点即命中
+        await _seed_grants(factory, user_granted_id, user_ids=(952,))
+        _login_identity(perms=("ai:kb:list",), user_id=952, account="e2e_user",
+                        role_ids=(5,), dept_ids=(1, 3, 12))
+        result = await service.page_list_kbs(page=1, size=10)
+        assert result.total == 4  # own + 三类 granted；e2e_kb_none 不可见
+        visible_names = {v.name for v in result.rows}
+        assert visible_names == {"e2e_kb_own", "e2e_kb_role", "e2e_kb_dept", "e2e_kb_user"}
+        assert own_id and invisible_id  # 语义锚：两 id 均真实落库（对照行存在性）
+
+
+async def test_page_list_kbs_list_only_empty_identity_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """身份头缺失=空集语义：非豁免用户仅见自己创建的库，不算错误。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        set_current_account("e2e_user")
+        await _seed_kb(factory, "e2e_kb_own2", "d")
+        set_current_account("someone")
+        await _seed_kb(factory, "e2e_kb_other2", "d")
+        _login_identity(perms=("ai:kb:list",), user_id=None, account="e2e_user",
+                        role_ids=(), dept_ids=())
+        result = await service.page_list_kbs(page=1, size=10)
+        assert result.total == 1 and result.rows[0].name == "e2e_kb_own2"
+
+
+async def test_page_list_kbs_no_identity_context_keeps_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """无请求上下文（identity None：本地脚本/未走鉴权依赖）按豁免处理——既有内部调用不回归。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        set_current_account("someone")
+        await _seed_kb(factory, "e2e_kb_legacy", "d")
+        result = await service.page_list_kbs(page=1, size=10)  # 不设 identity
+        assert result.total == 1
+
+
+# ---------- 文件可见性编排（契约 §5 修订：5004 前置 + 豁免/创建者/授权命中三态 + 5011） ----------
+
+
+async def test_page_list_kb_files_5011_no_access(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        set_current_account("someone")
+        kb_id = await _seed_kb(factory, "e2e_kb_f_denied", "d")
+        await _seed_file(factory, kb_id, "e2e_a.pdf")
+        _login_identity(perms=("ai:kb:list",), user_id=952, account="e2e_user",
+                        role_ids=(5,), dept_ids=(3,))
+        with pytest.raises(BusinessException) as ei:
+            await service.page_list_kb_files(kb_id=kb_id, page=1, size=10)
+        assert ei.value.code == 5011
+        assert ei.value.msg == "无权访问该知识库"
+
+
+async def test_page_list_kb_files_creator_exempt_granted_pass(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """三态放行：创建者 / 管理豁免 / 授权命中（角色/部门/直授各一锚）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        set_current_account("e2e_user")
+        own_id = await _seed_kb(factory, "e2e_kb_f_own", "d")
+        set_current_account("someone")
+        exempt_id = await _seed_kb(factory, "e2e_kb_f_exempt", "d")
+        role_id = await _seed_kb(factory, "e2e_kb_f_role", "d")
+        dept_id = await _seed_kb(factory, "e2e_kb_f_dept", "d")
+        user_id_kb = await _seed_kb(factory, "e2e_kb_f_user", "d")
+        for kb in (own_id, exempt_id, role_id, dept_id, user_id_kb):
+            await _seed_file(factory, kb, "e2e_a.pdf")
+        await _seed_grants(factory, role_id, role_ids=(5,))
+        await _seed_grants(factory, dept_id, dept_ids=(12,))
+        await _seed_grants(factory, user_id_kb, user_ids=(952,))
+        # 创建者（非豁免、无授权命中）
+        _login_identity(perms=("ai:kb:list",), account="e2e_user")
+        assert (await service.page_list_kb_files(kb_id=own_id, page=1, size=10)).total == 1
+        # 管理豁免（非创建者、无授权命中）
+        _login_identity(perms=("ai:kb:list", "ai:kb:delete"))
+        assert (await service.page_list_kb_files(kb_id=exempt_id, page=1, size=10)).total == 1
+        # 授权命中三型：角色 / 部门祖先链 / 直授用户
+        _login_identity(perms=("ai:kb:list",), user_id=952, account="e2e_user",
+                        role_ids=(5,), dept_ids=(1, 3, 12))
+        assert (await service.page_list_kb_files(kb_id=role_id, page=1, size=10)).total == 1
+        assert (await service.page_list_kb_files(kb_id=dept_id, page=1, size=10)).total == 1
+        assert (await service.page_list_kb_files(kb_id=user_id_kb, page=1, size=10)).total == 1
+
+
+async def test_page_list_kb_files_missing_5004_before_5011(monkeypatch: pytest.MonkeyPatch) -> None:
+    """校验顺序：库不存在 → 5004（先于可见性判定，非 5011）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _login_identity(perms=("ai:kb:list",), account="e2e_user")
+        with pytest.raises(BusinessException) as ei:
+            await service.page_list_kb_files(kb_id=9999, page=1, size=10)
+        assert ei.value.code == 5004
+
+
+# ---------- 删除级联追加授权物理清理（契约 §6 语义扩展） ----------
+
+
+async def test_delete_kb_cascades_grants_physical(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        kb_id = await _seed_kb(factory, "e2e_kb_cascade_grant", "d")
+        other_id = await _seed_kb(factory, "e2e_kb_cascade_other", "d")
+        await _seed_grants(factory, kb_id, role_ids=(2,), dept_ids=(3,))
+        await _seed_grants(factory, other_id, role_ids=(2,))
+        await service.delete_kb(kb_id)
+        async with factory() as s:
+            async with s.begin():
+                assert list(await rag_dao.list_grants_by_kb(s, kb_id)) == []  # 物理清零
+                assert len(list(await rag_dao.list_grants_by_kb(s, other_id))) == 1  # 他库不动
 
 
 # ---------- 上传编排（2026-10-16 MinIO 轮：原件入对象存储，file_path 即对象键） ----------

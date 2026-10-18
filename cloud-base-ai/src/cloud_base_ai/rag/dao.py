@@ -4,7 +4,9 @@
 - 模块函数收 session：写方法以 flush 收尾、永不 commit——事务边界归编排层
   （service 的 async with session.begin() 块，Java @Transactional 对应物）；
 - 软删：所有读路径显式 filter(deleted == 0)；delete = UPDATE SET deleted=1 + 审计两值；
+- 例外（ai_kb_grant 纯关系表）：无 deleted 列，行生命周期只有插入与物理删除；
 - 审计：save/update 走 fill_*_audit 公共路径（account 来源 contextvar）；
+  grant 表插入不走 fill（仅 create_by/create_time 两列，时间由 DB DEFAULT 时钟生成，应用层不传）；
 - 异常零转译：IntegrityError（uk 撞重/墓碑占键）等原样上抛，兜底转译在 service（端点轮）；
 - 分页 clamp：page>=1、1<=size<=MAX_PAGE_SIZE（对齐 Java 分页插件 maxLimit 200），排序 id DESC。
 """
@@ -12,7 +14,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloud_base_ai.db.base import (
@@ -21,7 +23,12 @@ from cloud_base_ai.db.base import (
     fill_create_audit,
     fill_update_audit,
 )
-from cloud_base_ai.rag.entities import AiKbChunk, AiKnowledgeBase, AiKnowledgeBaseFiles
+from cloud_base_ai.rag.entities import (
+    AiKbChunk,
+    AiKbGrant,
+    AiKnowledgeBase,
+    AiKnowledgeBaseFiles,
+)
 
 MAX_PAGE_SIZE = 200
 
@@ -90,13 +97,28 @@ async def delete_kb_by_id(session: AsyncSession, kb_id: int) -> int:
 
 
 async def page_list_kbs(
-    session: AsyncSession, page: int, size: int, name: str | None = None
+    session: AsyncSession,
+    page: int,
+    size: int,
+    name: str | None = None,
+    account: str | None = None,
+    visible_ids: Sequence[int] | None = None,
 ) -> tuple[Sequence[AiKnowledgeBase], int]:
-    """分页查知识库（name 模糊过滤可选；total 与 rows 同条件；排序 id DESC 主键反向扫）。"""
+    """分页查知识库（name 模糊过滤可选；total 与 rows 同条件；排序 id DESC 主键反向扫）。
+
+    可见性过滤（2026-10-18 权限轮）：account 为 None = 不过滤（管理豁免/内部调用，行为同旧版）；
+    account 非 None = 非豁免用户，条件追加 create_by == account OR id IN visible_ids
+    （visible_ids 为空集时退化为仅创建者条件——调用方负责空集短路传 []，本方法不拼接 IN ()）。
+    """
     page, size = _clamp_page(page, size)
     conds = [AiKnowledgeBase.deleted == SoftDeleteMixin.DeletedEnum.NORMAL]
     if name:
         conds.append(AiKnowledgeBase.name.like(f"%{name}%"))
+    if account is not None:
+        vis_conds = [AiKnowledgeBase.create_by == account]
+        if visible_ids:
+            vis_conds.append(AiKnowledgeBase.id.in_(visible_ids))
+        conds.append(or_(*vis_conds))
     total = (
         await session.execute(select(func.count()).select_from(AiKnowledgeBase).where(*conds))
     ).scalar_one()
@@ -438,3 +460,88 @@ async def count_chunks_by_kb(session: AsyncSession, kb_id: int) -> int:
         )
     )
     return (await session.execute(stmt)).scalar_one()
+
+
+# ---------- AiKbGrant（纯关系表：物理删除、无软删列；授权求值见 list_visible_kb_ids） ----------
+
+
+async def list_grants_by_kb(session: AsyncSession, kb_id: int) -> Sequence[AiKbGrant]:
+    """某知识库的全部授权行（授权回显路径；命中 uk_kb_subject 的 kb_id 前缀；
+    排序 subject_type/subject_id 仅保证回显与断言稳定）。"""
+    stmt = (
+        select(AiKbGrant)
+        .where(AiKbGrant.kb_id == kb_id)
+        .order_by(AiKbGrant.subject_type.asc(), AiKbGrant.subject_id.asc())
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def save_kb_grants(session: AsyncSession, kb_id: int, grants: Sequence[AiKbGrant]) -> None:
+    """保存授权 = 按 kb_id 全删全插（同一事务由 service 的 @transactional 收口）：
+    先物理 DELETE 全部旧授权行，再非空批插新行。
+
+    create_by 取 current_account（contextvar，X-User-Account 来源）；create_time 不设值——
+    DB DEFAULT CURRENT_TIMESTAMP 时钟生成（审计时间 DB 时钟全仓口径）。
+    """
+    await delete_grants_by_kb(session, kb_id)
+    if not grants:
+        return
+    account = current_account()
+    for grant in grants:
+        grant.kb_id = kb_id
+        grant.create_by = account
+    session.add_all(grants)
+    await session.flush()
+
+
+async def list_visible_kb_ids(
+    session: AsyncSession,
+    user_id: int | None,
+    role_ids: Sequence[int],
+    dept_ids: Sequence[int],
+) -> Sequence[int]:
+    """按主体反查可见知识库 id 集（可见性求值主路径，命中 idx_subject）。
+
+    三分支独立并集：直授用户（subject_id == user_id）/ 角色 IN / 部门 IN——
+    空列表分支不拼接（防 IN () 非法 SQL）、user_id 为 None 跳过用户分支
+    （身份头缺失=空集语义，非错误）；distinct 防同库多主体命中出重复行。
+    """
+    branches = []
+    if user_id is not None:
+        branches.append(
+            and_(
+                AiKbGrant.subject_type == AiKbGrant.SubjectTypeEnum.USER,
+                AiKbGrant.subject_id == user_id,
+            )
+        )
+    if role_ids:
+        branches.append(
+            and_(
+                AiKbGrant.subject_type == AiKbGrant.SubjectTypeEnum.ROLE,
+                AiKbGrant.subject_id.in_(role_ids),
+            )
+        )
+    if dept_ids:
+        branches.append(
+            and_(
+                AiKbGrant.subject_type == AiKbGrant.SubjectTypeEnum.DEPT,
+                AiKbGrant.subject_id.in_(dept_ids),
+            )
+        )
+    if not branches:
+        return []
+    stmt = (
+        select(AiKbGrant.kb_id)
+        .where(or_(*branches))
+        .distinct()
+        .order_by(AiKbGrant.kb_id.asc())
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def delete_grants_by_kb(session: AsyncSession, kb_id: int) -> int:
+    """物理删除某知识库的全部授权行（知识库删除级联段；命中 uk_kb_subject 前缀）；
+    返回影响行数。"""
+    stmt = delete(AiKbGrant).where(AiKbGrant.kb_id == kb_id).execution_options(synchronize_session=False)
+    result = await session.execute(stmt)
+    return result.rowcount

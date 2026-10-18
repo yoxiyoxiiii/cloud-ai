@@ -18,6 +18,7 @@ from cloud_base_ai.rag.dao import (
     delete_chunk_by_id,
     delete_chunks_by_file,
     delete_chunks_by_kb,
+    delete_grants_by_kb,
     delete_kb_by_id,
     delete_kb_file_by_id,
     delete_kb_files_by_kb,
@@ -28,8 +29,10 @@ from cloud_base_ai.rag.dao import (
     list_child_ids_by_file,
     list_chunks_by_file,
     list_chunks_by_ids,
+    list_grants_by_kb,
     list_kb_files,
     list_kbs,
+    list_visible_kb_ids,
     page_list_chunks,
     page_list_kb_files,
     page_list_kbs,
@@ -37,11 +40,17 @@ from cloud_base_ai.rag.dao import (
     save_chunks,
     save_kb,
     save_kb_file,
+    save_kb_grants,
     update_chunk,
     update_kb,
     update_kb_file,
 )
-from cloud_base_ai.rag.entities import AiKbChunk, AiKnowledgeBase, AiKnowledgeBaseFiles
+from cloud_base_ai.rag.entities import (
+    AiKbChunk,
+    AiKbGrant,
+    AiKnowledgeBase,
+    AiKnowledgeBaseFiles,
+)
 from tests.db_testing import make_db_session
 
 pytestmark = pytest.mark.anyio
@@ -466,6 +475,177 @@ async def test_delete_chunks_cascade_by_file_and_kb():
         assert row.update_by == "ops"
         assert row.update_time is not None
         assert await count_chunks_by_kb(s, 1) == 0
+
+
+# ---------- AiKbGrant（2026-10-18 权限轮：纯关系表全删全插 + 可见性求值） ----------
+
+
+def _grant(subject_type: int, subject_id: int) -> AiKbGrant:
+    """授权行构造（kb_id 由 save_kb_grants 统一落值，构造时不传）。"""
+    return AiKbGrant(subject_type=subject_type, subject_id=subject_id)
+
+
+async def test_save_kb_grants_full_replace_and_audit():
+    """全删全插：二次保存为整集原子替换；create_by 取 contextvar，create_time 由 DB 生成。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            kb = await save_kb(s, _kb("grant_kb"))
+        set_current_account("admin")
+        async with s.begin():
+            await save_kb_grants(s, kb.id, [
+                _grant(AiKbGrant.SubjectTypeEnum.ROLE, 2),
+                _grant(AiKbGrant.SubjectTypeEnum.ROLE, 5),   # 同组两角色
+                _grant(AiKbGrant.SubjectTypeEnum.DEPT, 3),
+                _grant(AiKbGrant.SubjectTypeEnum.USER, 952),
+            ])
+        async with s.begin():  # 裸读包 begin 块（防隐式事务悬挂）
+            rows = await list_grants_by_kb(s, kb.id)
+        assert len(rows) == 4
+        assert all(r.kb_id == kb.id for r in rows)  # kb_id 由 dao 统一落值
+        assert all(r.create_by == "admin" for r in rows)
+        assert all(r.create_time is not None for r in rows)  # DB DEFAULT 时钟生成
+        # 排序稳定（subject_type, subject_id 升序）——回显断言锚
+        assert [(r.subject_type, r.subject_id) for r in rows] == [
+            (AiKbGrant.SubjectTypeEnum.ROLE, 2),
+            (AiKbGrant.SubjectTypeEnum.ROLE, 5),
+            (AiKbGrant.SubjectTypeEnum.DEPT, 3),
+            (AiKbGrant.SubjectTypeEnum.USER, 952),
+        ]
+        set_current_account("ops")
+        async with s.begin():  # 二次保存：整集替换
+            await save_kb_grants(s, kb.id, [_grant(AiKbGrant.SubjectTypeEnum.ROLE, 7)])
+        async with s.begin():
+            rows2 = await list_grants_by_kb(s, kb.id)
+        assert [(r.subject_type, r.subject_id) for r in rows2] == [(0, 7)]
+        assert rows2[0].create_by == "ops"
+
+
+async def test_save_kb_grants_empty_clears_all():
+    """空数组保存 = 清空授权（库回落「仅创建者+豁免者」可见的底层动作）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            kb = await save_kb(s, _kb("grant_clear"))
+        async with s.begin():
+            await save_kb_grants(s, kb.id, [_grant(AiKbGrant.SubjectTypeEnum.ROLE, 2)])
+        async with s.begin():
+            await save_kb_grants(s, kb.id, [])
+        async with s.begin():
+            assert list(await list_grants_by_kb(s, kb.id)) == []
+
+
+async def test_save_kb_grants_duplicate_same_kb_pk_raises():
+    """同请求重复主体（未经 service 去重的裸 dao 调用）撞 uk_kb_subject 抛 IntegrityError——
+    去重责任在 service 组装层（dict.fromkeys），dao 不转译。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            kb = await save_kb(s, _kb("grant_dup"))
+        with pytest.raises(IntegrityError):
+            async with s.begin():
+                await save_kb_grants(s, kb.id, [
+                    _grant(AiKbGrant.SubjectTypeEnum.ROLE, 2),
+                    _grant(AiKbGrant.SubjectTypeEnum.ROLE, 2),
+                ])
+
+
+async def test_list_visible_kb_ids_union_of_three_subjects():
+    """三分支独立并集 + distinct 去重：同一库被多主体命中只出一行。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            kb_a = await save_kb(s, _kb("vis_a"))
+            kb_b = await save_kb(s, _kb("vis_b"))
+            kb_c = await save_kb(s, _kb("vis_c"))
+            kb_d = await save_kb(s, _kb("vis_d"))  # 无任何授权
+            # kb_a：角色 5 与部门 12 同时命中（distinct 锚）；kb_b：仅直授用户；kb_c：仅部门
+            await save_kb_grants(s, kb_a.id, [
+                _grant(AiKbGrant.SubjectTypeEnum.ROLE, 5),
+                _grant(AiKbGrant.SubjectTypeEnum.DEPT, 12),
+            ])
+            await save_kb_grants(s, kb_b.id, [_grant(AiKbGrant.SubjectTypeEnum.USER, 952)])
+            await save_kb_grants(s, kb_c.id, [_grant(AiKbGrant.SubjectTypeEnum.DEPT, 3)])
+        async with s.begin():
+            all_ids = await list_visible_kb_ids(s, 952, [5], [3, 12])
+            role_only = await list_visible_kb_ids(s, None, [5], [])
+            user_only = await list_visible_kb_ids(s, 952, [], [])
+            none_hit = await list_visible_kb_ids(s, None, [], [])
+        assert list(all_ids) == [kb_a.id, kb_b.id, kb_c.id]  # 升序且 kb_a 只一行
+        assert list(role_only) == [kb_a.id]
+        assert list(user_only) == [kb_b.id]
+        assert list(none_hit) == []  # 空集短路：三分支全空直接返空
+
+
+async def test_list_visible_kb_ids_other_kb_grants_isolated():
+    """按主体反查只命中授权行本身：他库同主体授权不串扰（kb_id 归属校验）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            kb1 = await save_kb(s, _kb("iso_1"))
+            kb2 = await save_kb(s, _kb("iso_2"))
+            await save_kb_grants(s, kb2.id, [_grant(AiKbGrant.SubjectTypeEnum.ROLE, 9)])
+        async with s.begin():
+            assert list(await list_visible_kb_ids(s, None, [5], [])) == []
+            assert list(await list_visible_kb_ids(s, None, [9], [])) == [kb2.id]
+            assert list(await list_visible_kb_ids(s, None, [], [12])) == []
+
+
+async def test_delete_grants_by_kb_cascade_physical():
+    """级联物理删除：只清本库行、二次删 0、他库不受影响（纯关系表无墓碑）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            kb1 = await save_kb(s, _kb("cas_1"))
+            kb2 = await save_kb(s, _kb("cas_2"))
+            await save_kb_grants(s, kb1.id, [
+                _grant(AiKbGrant.SubjectTypeEnum.ROLE, 2),
+                _grant(AiKbGrant.SubjectTypeEnum.DEPT, 3),
+            ])
+            await save_kb_grants(s, kb2.id, [_grant(AiKbGrant.SubjectTypeEnum.ROLE, 2)])
+        async with s.begin():
+            assert await delete_grants_by_kb(s, kb1.id) == 2
+            assert await delete_grants_by_kb(s, kb1.id) == 0  # 物理删后无残留
+        async with s.begin():
+            assert list(await list_grants_by_kb(s, kb1.id)) == []
+            assert len(list(await list_grants_by_kb(s, kb2.id))) == 1  # 他库不动
+
+
+async def test_page_list_kbs_visibility_filter():
+    """可见性过滤三分支：account None=不过滤（豁免）；非豁免 own ∪ visible_ids；
+    visible_ids 空=仅 own。"""
+    async with make_db_session() as s:
+        set_current_account("alice")
+        async with s.begin():
+            kb_a = await save_kb(s, _kb("own_a"))
+            kb_b = await save_kb(s, _kb("own_b"))
+        set_current_account("bob")
+        async with s.begin():
+            kb_c = await save_kb(s, _kb("own_c"))
+        async with s.begin():
+            await save_kb_grants(s, kb_a.id, [_grant(AiKbGrant.SubjectTypeEnum.ROLE, 5)])
+        async with s.begin():
+            exempt_rows, exempt_total = await page_list_kbs(s, 1, 10)  # account None 不过滤
+            bob_granted, t1 = await page_list_kbs(s, 1, 10, account="bob", visible_ids=[kb_a.id])
+            bob_own_only, t2 = await page_list_kbs(s, 1, 10, account="bob", visible_ids=[])
+            alice_own, t3 = await page_list_kbs(s, 1, 10, account="alice", visible_ids=[])
+        assert exempt_total == 3  # 豁免路径行为同旧版（既有用例不回归的锚）
+        assert {r.name for r in exempt_rows} == {"own_a", "own_b", "own_c"}
+        assert t1 == 2 and {r.name for r in bob_granted} == {"own_a", "own_c"}  # granted + own
+        assert t2 == 1 and [r.name for r in bob_own_only] == ["own_c"]
+        assert t3 == 2 and {r.name for r in alice_own} == {"own_a", "own_b"}
+
+
+async def test_page_list_kbs_visibility_with_name_filter_composed():
+    """可见性过滤与 name 模糊组合（and 组合，total 与 rows 同条件）。"""
+    async with make_db_session() as s:
+        set_current_account("bob")
+        async with s.begin():
+            kb1 = await save_kb(s, _kb("bob_alpha"))
+            await save_kb(s, _kb("bob_beta"))
+        set_current_account("alice")
+        async with s.begin():
+            await save_kb(s, _kb("alice_alpha"))
+        async with s.begin():
+            await save_kb_grants(s, kb1.id, [_grant(AiKbGrant.SubjectTypeEnum.USER, 952)])
+        async with s.begin():
+            rows, total = await page_list_kbs(s, 1, 10, name="alpha",
+                                              account="bob", visible_ids=[])
+        assert total == 1 and [r.name for r in rows] == ["bob_alpha"]  # alice_alpha 不可见
 
 
 # ---------- 事务块口径（D5 行为锚）：DAO 不 commit，rollback 干净 ----------

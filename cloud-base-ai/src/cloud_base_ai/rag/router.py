@@ -23,6 +23,8 @@ from cloud_base_ai.rag.schemas import (
     AiPageResult,
     CreateKBReq,
     KbFileVo,
+    KbPermsSaveReq,
+    KbPermsVo,
     KbVo,
     RagChatAnswerVo,
     RagChatDto,
@@ -143,6 +145,22 @@ async def reembedding(req: ReembeddingReq) -> R[None]:
 async def delete_kb(kb_id: int) -> R[None]:
     """删除知识库（契约 §6）：KB/文件/chunk 三表级联软删，data 恒 null。"""
     await service.delete_kb(kb_id)
+    return R.ok(None)
+
+
+@kb_update_router.get("/{kb_id}/perms")
+async def find_kb_perms(kb_id: int) -> R[KbPermsVo]:
+    """查询知识库授权（契约 2026-10-18-kb-permission-api.md §2）：按主体类型三组回显，
+    无授权组空数组；权限复用 ai:kb:update（读授权清单与保存同权限，不开放给 list-only）。"""
+    vo = await service.find_kb_perms(kb_id)
+    return R.ok(vo)
+
+
+@kb_update_router.put("/{kb_id}/perms")
+async def save_kb_perms(kb_id: int, req: KbPermsSaveReq) -> R[None]:
+    """保存知识库授权（契约 2026-10-18-kb-permission-api.md §3）：三组全量覆盖
+    （全空/不传 = 清空授权），重复 id 服务端静默去重，data 恒 null。"""
+    await service.save_kb_perms(kb_id, req)
     return R.ok(None)
 
 

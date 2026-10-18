@@ -1,6 +1,7 @@
 /**
  * AI 接口（cloud-base-ai，网关前缀 /ai）：
- * 对话 = 契约 2026-10-13-ai-rag-chat-api；知识库管理 = 契约 2026-10-14-ai-kb-api。
+ * 对话 = 契约 2026-10-13-ai-rag-chat-api；知识库管理 = 契约 2026-10-14-ai-kb-api；
+ * 知识库授权 = 契约 2026-10-18-kb-permission-api。
  * 流式端点 /ai/rag/chat/stream 不在本文件——axios/XHR 无法流式读取，见 utils/sse.ts。
  * AI 域出参口径（kb 契约 §1）：字段 snake_case、id/total 为 JSON number（非 Java 域
  * Long→String）、分页查询参数名 page/size（非 pageNum/pageSize）
@@ -11,6 +12,8 @@ import type {
   CreateKbPayload,
   KbFileVo,
   KbPageQuery,
+  KbPermsSavePayload,
+  KbPermsVo,
   KbVo,
   RagChatAnswerVo,
   RagChatMessage,
@@ -103,4 +106,23 @@ export function reembedKbFile(payload: ReembedPayload): Promise<null> {
     data: payload,
     timeout: 120000,
   })
+}
+
+/**
+ * 查询知识库授权（kb-perm 契约 §2，perms ai:kb:update）：回显三主体 id 数组；
+ * 目标库不存在 5004。注意出参 id 为 AI 域 number——与选择器数据源（system 域
+ * subject-options/dept-tree 的 string id）不同轨，弹窗内做换轨（契约 §1 专段）
+ */
+export function getKbPerms(kbId: number): Promise<KbPermsVo> {
+  return request<KbPermsVo>({ url: `/ai/rag/kb/${kbId}/perms`, method: 'get' })
+}
+
+/**
+ * 保存知识库授权（kb-perm 契约 §3，perms ai:kb:update）：全量覆盖（按 kb_id 物理删旧行
+ * + 批插新行同一事务），空三数组 = 清空授权；data 恒 null。入参三数组为 number[]——
+ * 选择器数据源的 string id 须先逐个 Number(id) 转换（自增 id 值域内安全，契约 §1）；
+ * 1001（元素 <1/任一数组超 100）/ 5004 由拦截器统一 toast
+ */
+export function saveKbPerms(kbId: number, payload: KbPermsSavePayload): Promise<null> {
+  return request<null>({ url: `/ai/rag/kb/${kbId}/perms`, method: 'put', data: payload })
 }

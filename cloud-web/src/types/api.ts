@@ -1090,3 +1090,31 @@ export interface ReembedPayload {
   chunk_size?: number
   chunk_overlap?: number
 }
+
+/* ===== AI 知识库授权（契约 2026-10-18-kb-permission-api，权限标识复用 ai:kb:update 零新增） ===== */
+
+/**
+ * 知识库授权回显 VO（kb-perm 契约 §2，perms ai:kb:update）：按主体类型分三组的
+ * 当前全部授权行。注意 id 类型换轨（契约 §1 专段）：本 VO 三数组为 AI 域 JSON number，
+ * 而选择器数据源（system 域 subject-options / dept/tree）出参 id 为 string（Java
+ * Long→String）——弹窗内回显 Number→String 进勾选态、提交前 String→Number 转换
+ */
+export interface KbPermsVo {
+  /** 被授权角色 id 集合（sys_role.id）；无则 [] */
+  role_ids: number[]
+  /** 被授权部门 id 集合（sys_dept.id，仅被勾选节点——含子树语义由服务端求值侧生效）；无则 [] */
+  dept_ids: number[]
+  /** 被授权用户 id 集合（sys_user.id）；无则 [] */
+  user_ids: number[]
+}
+
+/**
+ * 保存知识库授权入参（kb-perm 契约 §3）：全量覆盖语义（按 kb_id 物理删全部旧行后批插，
+ * 同一事务）；三数组可选缺省 []，全空/不传 = 清空授权（库回落「仅创建者+豁免者」可见）；
+ * 每元素整数 ≥1、每数组 ≤100（后端 1001 权威，前端友好提示）；重复元素服务端静默去重
+ */
+export interface KbPermsSavePayload {
+  role_ids?: number[]
+  dept_ids?: number[]
+  user_ids?: number[]
+}

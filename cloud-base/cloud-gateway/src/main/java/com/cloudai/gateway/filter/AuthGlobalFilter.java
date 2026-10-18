@@ -25,6 +25,7 @@ import reactor.core.publisher.Mono;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /**
  * 网关鉴权：白名单放行；其余验签 JWT + Redis 在线检查（注销/强退立即生效）；
@@ -78,16 +79,25 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             return unauthorized(exchange);
         }
         List<String> perms = List.of();
+        List<Long> roleIds = null;
+        List<Long> deptIds = null;
         try {
             OnlineSessionView session = objectMapper.readValue(json, OnlineSessionView.class);
-            if (session != null && session.getPermissions() != null) {
-                perms = session.getPermissions();
+            if (session != null) {
+                if (session.getPermissions() != null) {
+                    perms = session.getPermissions();
+                }
+                roleIds = session.getRoleIds();
+                deptIds = session.getDeptIds();
             }
         } catch (JsonProcessingException e) {
             // 会话值损坏按无权限处理（下游 @PreAuthorize 会拒绝）
         }
-        ServerWebExchange authed = withUserHeaders(safeExchange,
-                claims.getSubject(), claims.get("account", String.class), String.join(SecurityConstants.PERMS_SEPARATOR, perms));
+        UserHeaderValues values = new UserHeaderValues(claims.getSubject(),
+                claims.get("account", String.class),
+                String.join(SecurityConstants.PERMS_SEPARATOR, perms),
+                joinIds(roleIds), joinIds(deptIds));
+        ServerWebExchange authed = withUserHeaders(safeExchange, values);
         return chain.filter(authed);
     }
 
@@ -97,17 +107,33 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
                     headers.remove(SecurityConstants.HEADER_USER_ID);
                     headers.remove(SecurityConstants.HEADER_USER_ACCOUNT);
                     headers.remove(SecurityConstants.HEADER_USER_PERMS);
+                    headers.remove(SecurityConstants.HEADER_USER_ROLE_IDS);
+                    headers.remove(SecurityConstants.HEADER_USER_DEPT_IDS);
                 })).build();
     }
 
-    private ServerWebExchange withUserHeaders(ServerWebExchange exchange, String userId,
-                                              String account, String perms) {
+    private ServerWebExchange withUserHeaders(ServerWebExchange exchange, UserHeaderValues values) {
         return exchange.mutate().request(builder -> builder
                 .headers(headers -> {
-                    headers.set(SecurityConstants.HEADER_USER_ID, userId);
-                    headers.set(SecurityConstants.HEADER_USER_ACCOUNT, account == null ? "" : account);
-                    headers.set(SecurityConstants.HEADER_USER_PERMS, perms);
+                    headers.set(SecurityConstants.HEADER_USER_ID, values.userId());
+                    headers.set(SecurityConstants.HEADER_USER_ACCOUNT, values.account() == null ? "" : values.account());
+                    headers.set(SecurityConstants.HEADER_USER_PERMS, values.perms());
+                    headers.set(SecurityConstants.HEADER_USER_ROLE_IDS, values.roleIds());
+                    headers.set(SecurityConstants.HEADER_USER_DEPT_IDS, values.deptIds());
                 })).build();
+    }
+
+    /** id 列表转逗号分隔串；null/空表（无角色/无部门/旧格式会话缺字段）注入空串，消费侧解析为空列表 */
+    private String joinIds(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return "";
+        }
+        return ids.stream().map(String::valueOf).collect(Collectors.joining(SecurityConstants.PERMS_SEPARATOR));
+    }
+
+    /** 注入下游的身份头值聚合（五个 X-User-* 头的字符串形态；方法入参超 3 个须封装对象） */
+    private record UserHeaderValues(String userId, String account, String perms,
+                                    String roleIds, String deptIds) {
     }
 
     private Mono<Void> unauthorized(ServerWebExchange exchange) {
@@ -129,9 +155,11 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         return -100;
     }
 
-    /** 网关侧在线会话投影（只取权限字段；@class 头与其余字段被 ObjectMapper 忽略） */
+    /** 网关侧在线会话投影（只取权限/角色/部门字段；@class 头与其余字段被 ObjectMapper 忽略；旧会话缺新字段反序列化为 null → 注入空串） */
     @lombok.Data
     public static class OnlineSessionView {
         private List<String> permissions;
+        private List<Long> roleIds;
+        private List<Long> deptIds;
     }
 }

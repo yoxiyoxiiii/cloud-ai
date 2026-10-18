@@ -492,3 +492,131 @@ def test_kb_reembed_ok_data_null_and_body_passthrough(
     assert body["code"] == 200 and body["msg"] == "操作成功"
     assert body["data"] is None  # data 恒 null
     assert captured == {"file_id": 7, "chunk_size": 200, "chunk_overlap": 30}  # body 透传
+
+
+# ---------- 知识库授权端点（2026-10-18 权限轮，契约 2026-10-18-kb-permission-api.md §2/§3） ----------
+
+from cloud_base_ai.rag.schemas import KbPermsVo
+
+
+def test_kb_perms_get_no_perms_403(client: TestClient) -> None:
+    resp = client.get("/rag/kb/1/perms")
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["code"] == 403
+    assert body["msg"] == "无操作权限"
+
+
+def test_kb_perms_get_list_perms_rejected_403(client: TestClient) -> None:
+    # 读授权清单与保存同权限：持 ai:kb:list 亦拒（管理配置动作，权限按动作分立）
+    resp = client.get("/rag/kb/1/perms", headers=KB_READ_PERMS)
+    assert resp.json()["code"] == 403
+
+
+def test_kb_perms_get_kb_id_not_int_1001(client: TestClient) -> None:
+    resp = client.get("/rag/kb/abc/perms", headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_perms_get_missing_5004(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_find(kb_id: int) -> KbPermsVo:
+        raise BusinessException("知识库不存在", 5004)
+    monkeypatch.setattr(service_module, "find_kb_perms", fake_find)
+    resp = client.get("/rag/kb/9999/perms", headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 5004
+
+
+def test_kb_perms_get_ok_three_groups_numbers(client: TestClient,
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, int] = {}
+
+    async def fake_find(kb_id: int) -> KbPermsVo:
+        captured["kb_id"] = kb_id
+        return KbPermsVo(role_ids=[2, 5], dept_ids=[3], user_ids=[952])
+    monkeypatch.setattr(service_module, "find_kb_perms", fake_find)
+    resp = client.get("/rag/kb/1/perms", headers=KB_UPDATE_PERMS)
+    body = resp.json()
+    assert body["code"] == 200 and body["msg"] == "操作成功"
+    assert captured == {"kb_id": 1}  # 路径参数透传 service
+    assert body["data"] == {"role_ids": [2, 5], "dept_ids": [3], "user_ids": [952]}
+    assert all(isinstance(i, int) for i in body["data"]["role_ids"])  # JSON number 数组
+
+
+def test_kb_perms_get_ok_empty_arrays(client: TestClient,
+                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_find(kb_id: int) -> KbPermsVo:
+        return KbPermsVo(role_ids=[], dept_ids=[], user_ids=[])
+    monkeypatch.setattr(service_module, "find_kb_perms", fake_find)
+    resp = client.get("/rag/kb/2/perms", headers=KB_UPDATE_PERMS)
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["data"] == {"role_ids": [], "dept_ids": [], "user_ids": []}  # 无则空数组
+
+
+def test_kb_perms_put_no_perms_403(client: TestClient) -> None:
+    resp = client.put("/rag/kb/1/perms", json={"role_ids": [2]})
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["code"] == 403
+    assert body["msg"] == "无操作权限"
+
+
+def test_kb_perms_put_kb_id_not_int_1001(client: TestClient) -> None:
+    resp = client.put("/rag/kb/abc/perms", json={"role_ids": [2]}, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_perms_put_element_below_one_1001(client: TestClient) -> None:
+    resp = client.put("/rag/kb/1/perms", json={"role_ids": [0]}, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_perms_put_element_not_int_1001(client: TestClient) -> None:
+    resp = client.put("/rag/kb/1/perms", json={"dept_ids": ["3"]}, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_perms_put_array_over_100_1001(client: TestClient) -> None:
+    resp = client.put("/rag/kb/1/perms", json={"user_ids": list(range(1, 102))},
+                      headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_kb_perms_put_missing_5004(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_save(kb_id: int, req: object) -> None:
+        raise BusinessException("知识库不存在", 5004)
+    monkeypatch.setattr(service_module, "save_kb_perms", fake_save)
+    resp = client.put("/rag/kb/9999/perms", json={"role_ids": [2]}, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 5004
+
+
+def test_kb_perms_put_ok_data_null_and_body_passthrough(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_save(kb_id: int, req: object) -> None:
+        captured.update(kb_id=kb_id, role_ids=list(req.role_ids),
+                        dept_ids=list(req.dept_ids), user_ids=list(req.user_ids))
+    monkeypatch.setattr(service_module, "save_kb_perms", fake_save)
+    resp = client.put("/rag/kb/3/perms",
+                      json={"role_ids": [2, 2, 5], "dept_ids": [3], "user_ids": [952]},
+                      headers=KB_UPDATE_PERMS)
+    body = resp.json()
+    assert body["code"] == 200 and body["msg"] == "操作成功"
+    assert body["data"] is None  # R<null>：data 恒 null
+    assert captured == {"kb_id": 3, "role_ids": [2, 2, 5], "dept_ids": [3],
+                        "user_ids": [952]}  # body 原样透传 service（去重是 service 责任）
+
+
+def test_kb_perms_put_partial_body_defaults_empty(client: TestClient,
+                                                  monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_save(kb_id: int, req: object) -> None:
+        captured.update(role_ids=list(req.role_ids), dept_ids=list(req.dept_ids),
+                        user_ids=list(req.user_ids))
+    monkeypatch.setattr(service_module, "save_kb_perms", fake_save)
+    resp = client.put("/rag/kb/4/perms", json={"role_ids": [7]}, headers=KB_UPDATE_PERMS)
+    assert resp.json()["code"] == 200
+    # 不传的两组缺省 []（= 清空该组授权，全量覆盖语义）
+    assert captured == {"role_ids": [7], "dept_ids": [], "user_ids": []}

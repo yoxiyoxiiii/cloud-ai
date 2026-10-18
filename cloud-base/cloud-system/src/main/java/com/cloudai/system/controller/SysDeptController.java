@@ -29,11 +29,12 @@ public class SysDeptController {
 
     /**
      * 部门树（§2.1）：全量未删除部门（含停用，tag 区分），sort/id 升序内存组森林。
-     * hasAnyAuthority 三权限（设计 D12）：树是部门管理与用户表单（部门选择器）共同数据源，
-     * 用户管理员无部门管理权也应能选部门。
+     * hasAnyAuthority 四权限（设计 D12）：树是部门管理与用户表单（部门选择器）共同数据源，
+     * 用户管理员无部门管理权也应能选部门；追加 ai:kb:update——知识库授权弹窗的部门树
+     * 共同数据源（additive 放宽，契约 2026-10-18-kb-permission-api §7）。
      */
     @GetMapping("/tree")
-    @PreAuthorize("hasAnyAuthority('system:dept:list','system:user:add','system:user:edit')")
+    @PreAuthorize("hasAnyAuthority('system:dept:list','system:user:add','system:user:edit','ai:kb:update')")
     public R<List<DeptTreeNode>> tree() {
         List<DeptTreeNode> tree = manageService.listTree();
         return R.ok(tree);

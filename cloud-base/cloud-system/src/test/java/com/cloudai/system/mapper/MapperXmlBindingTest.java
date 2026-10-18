@@ -50,12 +50,14 @@ class MapperXmlBindingTest {
         //   User +3（countByDeptId/listEnabledAccountsByDeptIds/listByIds）、Role +2（listEnabledRoleIdsByUserId/listByIds）；
         //   2026-10-10 注册表重构轮：DataPermRule +1 / DataPermColumn +1（D17 一致性检查 DISTINCT 两查询）；
         //   2026-10-11 谓词轮：DataPermRule +1（listAll——D39 一致性检查第三维度 predicates 逐条解析）；
-        //   2026-10-11 死信治理轮：+MqDlqLog 域 7 语句（watch 落库/分页/单查/重投流转/状态流转/重置/过期清理））
+        //   2026-10-11 死信治理轮：+MqDlqLog 域 7 语句（watch 落库/分页/单查/重投流转/状态流转/重置/过期清理）；
+        //   2026-10-18 知识库权限轮：User +1（listRoleIdsByAccount——登录 roleIds 聚合），89 → 90）
         assertThat(mappings.stream().filter(n -> n.startsWith("com.cloudai.system.mapper")).count())
-                .isEqualTo(89);
+                .isEqualTo(90);
         // 抽查关键语句存在（JOIN 聚合 / 插件分页 / 动态 SQL / 批量插入 / 字典域 / 翻译回源 / 请假域 / 部门与数据权限域）
         assertThat(mappings).contains(
                 "com.cloudai.system.mapper.SysUserMapper.listPermsByAccount",
+                "com.cloudai.system.mapper.SysUserMapper.listRoleIdsByAccount",
                 "com.cloudai.system.mapper.SysUserMapper.pageList",
                 "com.cloudai.system.mapper.SysUserMapper.listEnabledOptions",
                 "com.cloudai.system.mapper.SysMenuMapper.listNavByAccount",
@@ -94,6 +96,17 @@ class MapperXmlBindingTest {
                 .getMappedStatement("com.cloudai.system.mapper.SysUserMapper.pageList");
         String sql = statement.getBoundSql(null).getSql();
         assertThat(sql).contains("u.is_builtin AS builtin");
+    }
+
+    @Test
+    void listRoleIdsFiltersEnabledRoles() throws IOException {
+        // 登录 roleIds 聚合的启用口径钉（与 listPermsByAccount 同源）：停用/已删角色不进身份快照，
+        // 停用角色的知识库授权在消费侧自然失配（自愈语义）
+        SqlSessionFactory factory = buildFactory();
+        MappedStatement statement = factory.getConfiguration()
+                .getMappedStatement("com.cloudai.system.mapper.SysUserMapper.listRoleIdsByAccount");
+        String sql = statement.getBoundSql(null).getSql();
+        assertThat(sql).contains("r.status = 0 AND r.deleted = 0");
     }
 
     /** 与生产一致的配置构建 SqlSessionFactory（13 个 XML 逐个解析，不连库） */

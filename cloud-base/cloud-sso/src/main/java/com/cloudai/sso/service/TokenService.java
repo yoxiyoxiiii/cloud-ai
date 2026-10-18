@@ -204,6 +204,8 @@ public class TokenService {
         session.setUserId(dto.getUserId());
         session.setAccount(dto.getAccount());
         session.setPermissions(dto.getPermissions());
+        session.setRoleIds(dto.getRoleIds());
+        session.setDeptIds(dto.getDeptIds());
         session.setLoginTime(System.currentTimeMillis());
         session.setIp(ip);
         String sessionJson;

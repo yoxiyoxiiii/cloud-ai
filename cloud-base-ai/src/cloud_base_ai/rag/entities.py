@@ -5,9 +5,20 @@
 实体与 pydantic DTO 分离（规范第 2 条边界：实体不是 DTO），转换器随端点轮落。
 """
 
+from datetime import datetime
 from enum import Enum, IntEnum
 
-from sqlalchemy import Index, Integer, SmallInteger, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from cloud_base_ai.db.base import AuditMixin, Base, SoftDeleteMixin
@@ -98,3 +109,49 @@ class AiKbChunk(Base, AuditMixin, SoftDeleteMixin):
     chunk_type: Mapped[int] = mapped_column(SmallInteger, nullable=False, server_default=text("0"), comment="块类型：0父块 1子块")
     seq_no: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"), comment="块在原文中的顺序号")
     content: Mapped[str] = mapped_column(Text, nullable=False, comment="块文本")
+
+
+class AiKbGrant(Base):
+    """AI 知识库授权（纯关系表：物理删除、无软删无 update 审计列——行只有插入与删除两个生命周期）。
+
+    保存授权 = 按 kb_id 全删全插（同一事务）；删除知识库 = 级联物理清理。
+    主体弱引用：不校验 role/dept/user 存在性（主数据在 cloud_system 库），失效授权永不命中（自愈）。
+    """
+
+    __tablename__ = "ai_kb_grant"
+    __table_args__ = (
+        UniqueConstraint("kb_id", "subject_type", "subject_id", name="uk_kb_subject"),
+        Index("idx_subject", "subject_type", "subject_id"),
+        {"comment": "AI知识库授权（纯关系表：物理删除，随保存全删全插、随知识库删除级联清理）"},
+    )
+
+    class SubjectTypeEnum(IntEnum):
+        """主体类型（禁魔法数；与数据权限域的主体枚举数值语义不同、不共享——两域各自定义）。"""
+
+        ROLE = 0
+        DEPT = 1
+        USER = 2
+
+        @classmethod
+        def of(cls, value: int) -> "AiKbGrant.SubjectTypeEnum | None":
+            try:
+                return cls(value)
+            except ValueError:
+                return None
+
+    # MySQL=BIGINT（DDL 口径）；sqlite 变体 Integer——SQLite 仅 INTEGER PRIMARY KEY 走 rowid
+    # 自增，BIGINT 主键插入会报 NOT NULL 约束（内存替身数据库的行为差异收敛点）
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True, autoincrement=True, comment="授权ID（主键）",
+    )
+    kb_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="知识库ID（ai_knowledge_base.id，弱引用不建外键）")
+    subject_type: Mapped[int] = mapped_column(SmallInteger, nullable=False, comment="主体类型：0=角色 1=部门 2=用户")
+    subject_id: Mapped[int] = mapped_column(BigInteger, nullable=False, comment="主体ID（sys_role.id / sys_dept.id / sys_user.id，主数据在 cloud_system 库）")
+    create_by: Mapped[str | None] = mapped_column(String(30), comment="授权操作人账号")
+    create_time: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP"),
+        comment="授权时间（DB 时钟生成，应用层插入不传时间值）",
+    )

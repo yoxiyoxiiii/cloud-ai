@@ -102,4 +102,60 @@ class AuthGlobalFilterTest {
         assertThat(headers.getFirst(SecurityConstants.HEADER_USER_ACCOUNT)).isEqualTo("admin");
         assertThat(headers.getFirst(SecurityConstants.HEADER_USER_PERMS)).isEqualTo("system:user:list");
     }
+
+    /** 会话含 roleIds/deptIds 时注入两新头（逗号分隔；部门头=自身+祖先链值） */
+    @Test
+    void sessionWithRoleAndDeptIdsInjectsNewHeaders() {
+        String token = JwtUtil.createToken(SECRET, 1L, "admin", "jti-1", 7200);
+        String sessionJson = "{\"tokenId\":\"jti-1\",\"userId\":1,\"account\":\"admin\","
+                + "\"permissions\":[\"ai:kb:list\"],\"roleIds\":[2,5],\"deptIds\":[1,3,12]}";
+        when(valueOps.get("sso:online:jti-1")).thenReturn(sessionJson);
+        when(chain.filter(any())).thenReturn(Mono.empty());
+        MockServerWebExchange exchange = get("http://localhost/system/user/page",
+                h -> h.setBearerAuth(token));
+        filter.filter(exchange, chain).block();
+        ArgumentCaptor<ServerWebExchange> forwarded = ArgumentCaptor.forClass(ServerWebExchange.class);
+        verify(chain).filter(forwarded.capture());
+        var headers = forwarded.getValue().getRequest().getHeaders();
+        assertThat(headers.getFirst(SecurityConstants.HEADER_USER_ROLE_IDS)).isEqualTo("2,5");
+        assertThat(headers.getFirst(SecurityConstants.HEADER_USER_DEPT_IDS)).isEqualTo("1,3,12");
+    }
+
+    /** 外部伪造两新头被剥离：下游收到的是会话真值，非请求原值 */
+    @Test
+    void forgedRoleAndDeptHeadersAreStripped() {
+        String token = JwtUtil.createToken(SECRET, 1L, "admin", "jti-1", 7200);
+        when(valueOps.get("sso:online:jti-1")).thenReturn(ONLINE_JSON);
+        when(chain.filter(any())).thenReturn(Mono.empty());
+        MockServerWebExchange exchange = get("http://localhost/system/user/page",
+                h -> {
+                    h.setBearerAuth(token);
+                    h.set(SecurityConstants.HEADER_USER_ROLE_IDS, "777");
+                    h.set(SecurityConstants.HEADER_USER_DEPT_IDS, "888,999");
+                });
+        filter.filter(exchange, chain).block();
+        ArgumentCaptor<ServerWebExchange> forwarded = ArgumentCaptor.forClass(ServerWebExchange.class);
+        verify(chain).filter(forwarded.capture());
+        var headers = forwarded.getValue().getRequest().getHeaders();
+        // ONLINE_JSON 无 roleIds/deptIds 字段 → 反序列化 null → 注入空串（伪造值 777/888 不透传）
+        assertThat(headers.getFirst(SecurityConstants.HEADER_USER_ROLE_IDS)).isEmpty();
+        assertThat(headers.getFirst(SecurityConstants.HEADER_USER_DEPT_IDS)).isEmpty();
+    }
+
+    /** 旧格式会话（升级前登录，JSON 无新字段）兼容：两新头注入空串，既有三头不受影响 */
+    @Test
+    void legacySessionWithoutNewFieldsInjectsEmptyStrings() {
+        String token = JwtUtil.createToken(SECRET, 1L, "admin", "jti-1", 7200);
+        when(valueOps.get("sso:online:jti-1")).thenReturn(ONLINE_JSON);
+        when(chain.filter(any())).thenReturn(Mono.empty());
+        MockServerWebExchange exchange = get("http://localhost/system/user/page",
+                h -> h.setBearerAuth(token));
+        filter.filter(exchange, chain).block();
+        ArgumentCaptor<ServerWebExchange> forwarded = ArgumentCaptor.forClass(ServerWebExchange.class);
+        verify(chain).filter(forwarded.capture());
+        var headers = forwarded.getValue().getRequest().getHeaders();
+        assertThat(headers.getFirst(SecurityConstants.HEADER_USER_ROLE_IDS)).isEqualTo("");
+        assertThat(headers.getFirst(SecurityConstants.HEADER_USER_DEPT_IDS)).isEqualTo("");
+        assertThat(headers.getFirst(SecurityConstants.HEADER_USER_PERMS)).isEqualTo("system:user:list");
+    }
 }

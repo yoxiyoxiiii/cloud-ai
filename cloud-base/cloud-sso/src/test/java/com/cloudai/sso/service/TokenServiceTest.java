@@ -67,6 +67,66 @@ class TokenServiceTest {
         return dto;
     }
 
+    /** 登录落库的会话 JSON 含 roleIds/deptIds 两新字段（网关 OnlineSessionView 的消费前提） */
+    @Test
+    void login_successWritesRoleAndDeptIdsIntoSession() throws Exception {
+        injectSecret();
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        LoginUserDTO dto = admin();
+        dto.setRoleIds(List.of(2L, 5L));
+        dto.setDeptIds(List.of(1L, 3L, 12L));
+        when(userClient.getUserByAccount("admin")).thenReturn(R.ok(dto));
+
+        tokenService.login("admin", "admin123", "127.0.0.1");
+
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        verify(valueOps).set(startsWith(SecurityConstants.ONLINE_KEY_PREFIX), captor.capture(), anyLong(), any(TimeUnit.class));
+        assertThat(captor.getValue()).contains("\"roleIds\":[2,5]").contains("\"deptIds\":[1,3,12]");
+    }
+
+    /** 旧格式会话（升级前登录，JSON 无新字段）反序列化不报错且两字段为 null（存量 Redis 会话兼容） */
+    @Test
+    void legacySessionJsonDeserializesNewFieldsAsNull() throws Exception {
+        String legacyJson = "{\"tokenId\":\"jti-old\",\"userId\":1,\"account\":\"admin\","
+                + "\"permissions\":[\"p1\"],\"loginTime\":1,\"ip\":\"127.0.0.1\"}";
+        OnlineSession session = JSON.readValue(legacyJson, OnlineSession.class);
+        assertThat(session.getAccount()).isEqualTo("admin");
+        assertThat(session.getRoleIds()).isNull();
+        assertThat(session.getDeptIds()).isNull();
+    }
+
+    /** refresh 以 system 回查的最新聚合覆盖会话（换部门场景：deptIds/roleIds 随新快照更新） */
+    @Test
+    void refresh_updatesRoleAndDeptSnapshot() throws Exception {
+        injectSecret();
+        when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh:1"))
+                .thenReturn("{\"tokenId\":\"jti-old\",\"token\":\"rt-old\"}");
+        OnlineSession session = new OnlineSession();
+        session.setTokenId("jti-old");
+        session.setUserId(1L);
+        session.setAccount("admin");
+        session.setPermissions(List.of("old:perm"));
+        session.setRoleIds(List.of(2L));
+        session.setDeptIds(List.of(1L, 9L));
+        session.setLoginTime(1L);
+        session.setIp("1.2.3.4");
+        when(valueOps.get("sso:online:jti-old")).thenReturn(sessionJson(session));
+        LoginUserDTO fresh = admin();
+        fresh.setRoleIds(List.of(2L, 7L));
+        fresh.setDeptIds(List.of(1L, 3L, 12L));   // 换部门：9 → 3/12 链
+        when(userClient.getUserByAccount("admin")).thenReturn(R.ok(fresh));
+
+        tokenService.refresh("rt-old");
+
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        verify(valueOps).set(startsWith(SecurityConstants.ONLINE_KEY_PREFIX), captor.capture(), anyLong(), any(TimeUnit.class));
+        OnlineSession written = JSON.readValue(captor.getValue(), OnlineSession.class);
+        assertThat(written.getRoleIds()).containsExactly(2L, 7L);
+        assertThat(written.getDeptIds()).containsExactly(1L, 3L, 12L);
+    }
+
     /** 在线会话按新约定以纯 JSON 字符串存储（无 @class/集合类型包裹），网关 OnlineSessionView 才能解析 */
     private String sessionJson(OnlineSession session) {
         try {

@@ -9,6 +9,10 @@ public final class SecurityConstants {
     public static final String HEADER_USER_ID = "X-User-Id";
     public static final String HEADER_USER_ACCOUNT = "X-User-Account";
     public static final String HEADER_USER_PERMS = "X-User-Perms";
+    /** 角色 id 逗号分隔（登录快照，仅启用角色）；AI 知识库授权的角色命中消费方 */
+    public static final String HEADER_USER_ROLE_IDS = "X-User-RoleIds";
+    /** 部门 id 逗号分隔 = 自身部门 + 全部祖先（root→self 顺序）——部门授权「固定含子树」在消费侧退化为一次 IN 比较 */
+    public static final String HEADER_USER_DEPT_IDS = "X-User-DeptIds";
     public static final String PERMS_SEPARATOR = ",";
 
     /**

@@ -19,6 +19,10 @@ public class LoginUserDTO implements Serializable {
     private String password;
     /** 权限标识集合 */
     private List<String> permissions;
+    /** 启用角色 id 集合（知识库授权等身份快照消费；停用角色排除，与权限聚合同口径） */
+    private List<Long> roleIds;
+    /** 部门祖先链 id 集合（自身部门 + 全部祖先，root→self 顺序；未挂部门为空表） */
+    private List<Long> deptIds;
     /** 0正常 1停用 */
     private Integer status;
 }

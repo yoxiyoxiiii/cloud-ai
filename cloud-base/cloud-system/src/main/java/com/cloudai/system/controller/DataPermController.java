@@ -79,9 +79,11 @@ public class DataPermController {
         return R.ok(resources);
     }
 
-    /** 主体选项（§3.6）：type=0 启用角色 / type=1 启用用户；label 后端拼好 */
+    /** 主体选项（§3.6）：type=0 启用角色 / type=1 启用用户；label 后端拼好。
+     * 追加 ai:kb:update——知识库授权弹窗的角色/用户选项共同数据源（additive 放宽，
+     * 契约 2026-10-18-kb-permission-api §7）。 */
     @GetMapping("/subject-options")
-    @PreAuthorize("hasAuthority('system:dataPerm:list')")
+    @PreAuthorize("hasAnyAuthority('system:dataPerm:list','ai:kb:update')")
     public R<List<SubjectOptionVo>> listSubjectOptions(@RequestParam("type") Integer type) {
         List<SubjectOptionVo> options = manageService.listSubjectOptions(type);
         return R.ok(options);

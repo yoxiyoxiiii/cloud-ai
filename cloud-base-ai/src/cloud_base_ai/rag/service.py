@@ -25,18 +25,21 @@ from cloud_base_ai.db.tx import current_session, transactional
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.models.model_factory import get_chat_model
 from cloud_base_ai.rag import dao, chunking, vectorstore
-from cloud_base_ai.rag.entities import AiKnowledgeBase, AiKbChunk, AiKnowledgeBaseFiles
+from cloud_base_ai.rag.entities import AiKnowledgeBase, AiKbChunk, AiKbGrant, AiKnowledgeBaseFiles
 from cloud_base_ai.rag.generation import to_lc_messages
 from cloud_base_ai.rag.schemas import (
     AiPageResult,
     CreateKBReq,
     KbFileVo,
+    KbPermsSaveReq,
+    KbPermsVo,
     KbVo,
     RagChatAnswerVo,
     RagChatDto,
     ReembeddingReq,
     UpdateKBReq,
 )
+from cloud_base_ai.security import current_identity, is_mgmt_exemption
 from cloud_base_ai.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -55,6 +58,9 @@ CODE_FILE_ORIGINAL_READ_FAILED: int = 5007
 MSG_FILE_ORIGINAL_READ_FAILED: str = "文件原件读取失败，请删除后重新上传"
 CODE_VECTOR_PURGE_FAILED: int = 5008
 MSG_VECTOR_PURGE_FAILED: str = "向量清理失败，请重试"
+# 5011 接在 AI 段 5009/5010（MCP 客户端通道）之后；5012 为 AI 段下一可用号
+CODE_KB_NO_ACCESS: int = 5011
+MSG_KB_NO_ACCESS: str = "无权访问该知识库"
 CODE_CHUNK_PARAM_INVALID: int = 1001
 MSG_CHUNK_PARAM_INVALID: str = "分片重叠必须小于分片大小"
 # 父块分片大小固定 500 不开放（文件表无父块快照列——开放需 DDL，欠账登记 docs/handoff/ai.md）
@@ -124,11 +130,24 @@ async def create_kb(req: CreateKBReq) -> int:
 
 @transactional
 async def page_list_kbs(page: int, size: int, name: str | None = None) -> AiPageResult[KbVo]:
-    """分页查活知识库（契约 §4）：id 倒序（新建居首），name 包含匹配可选过滤。
+    """分页查活知识库（契约 §4 修订，2026-10-18 权限轮）：id 倒序（新建居首），name 包含匹配可选过滤。
+
+    可见性两态：管理豁免（perms 含任一 ai:kb:add/update/delete）全量；其余仅
+    create_by = 本账号 或 被授权（角色 ∪ 部门祖先链 ∪ 直授用户）的库。
+    identity 为 None（无请求上下文：本地脚本/未走鉴权依赖）按豁免处理，保持既有内部调用行为。
 
     VO 在 service 层逐字段构造（对齐 Java「Service 层统一转换、禁三方拷贝工具」口径）。
     """
-    rows, total = await dao.page_list_kbs(current_session(), page, size, name)
+    session = current_session()
+    identity = current_identity()
+    if identity is None or is_mgmt_exemption(identity):
+        rows, total = await dao.page_list_kbs(session, page, size, name)
+    else:
+        visible_ids = await dao.list_visible_kb_ids(
+            session, identity.user_id, identity.role_ids, identity.dept_ids)
+        # account 空值归一为 ""：防 None 进入比较被渲染成 IS NULL 误中 NULL 创建行
+        rows, total = await dao.page_list_kbs(
+            session, page, size, name, account=identity.account or "", visible_ids=visible_ids)
     vos = [KbVo(id=row.id, name=row.name, description=row.description,
                 create_time=row.create_time) for row in rows]
     return AiPageResult(total=total, rows=vos)
@@ -157,14 +176,15 @@ async def update_kb(kb_id: int, req: UpdateKBReq) -> None:
 
 @transactional
 async def delete_kb(kb_id: int) -> None:
-    """删除知识库（契约 §6）：chunk → 文件行 → KB 三表软删级联，同一事务，
-    无「库下有文件阻止删除」前置约束；物理向量不动（孤儿向量治理记账
-    docs/handoff/ai.md，检索轮做 collection 隔离时统一清理）。"""
+    """删除知识库（契约 §6）：chunk → 文件行 → 授权行 → KB 级联删除，同一事务；
+    授权表是纯关系表（物理删除），其余三表软删。无「库下有文件阻止删除」前置约束；
+    物理向量不动（孤儿向量治理记账 docs/handoff/ai.md，检索轮做 collection 隔离时统一清理）。"""
     session = current_session()
     if await dao.find_kb_by_id(session, kb_id) is None:
         raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
     await dao.delete_chunks_by_kb(session, kb_id)
     await dao.delete_kb_files_by_kb(session, kb_id)
+    await dao.delete_grants_by_kb(session, kb_id)
     rowcount = await dao.delete_kb_by_id(session, kb_id)
     if rowcount == 0:
         # 并发窗口兜底：校验存在后被并发删除；raise 回滚本事务级联（对方事务已删，无害）
@@ -172,11 +192,70 @@ async def delete_kb(kb_id: int) -> None:
 
 
 @transactional
-async def page_list_kb_files(kb_id: int, page: int, size: int) -> AiPageResult[KbFileVo]:
-    """分页列某知识库文件：先校验库存在（5004，与上传端点同语义），再分页查文件。"""
+async def find_kb_perms(kb_id: int) -> KbPermsVo:
+    """查询知识库授权（契约 2026-10-18-kb-permission-api.md §2）：先校验库存在（5004），
+    再按主体类型三组分型回显；读授权清单与保存同权限（管理配置动作）。"""
     session = current_session()
     if await dao.find_kb_by_id(session, kb_id) is None:
         raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
+    grants = await dao.list_grants_by_kb(session, kb_id)
+    role_ids = [g.subject_id for g in grants
+                if g.subject_type == AiKbGrant.SubjectTypeEnum.ROLE]
+    dept_ids = [g.subject_id for g in grants
+                if g.subject_type == AiKbGrant.SubjectTypeEnum.DEPT]
+    user_ids = [g.subject_id for g in grants
+                if g.subject_type == AiKbGrant.SubjectTypeEnum.USER]
+    return KbPermsVo(role_ids=role_ids, dept_ids=dept_ids, user_ids=user_ids)
+
+
+@transactional
+async def save_kb_perms(kb_id: int, req: KbPermsSaveReq) -> None:
+    """保存知识库授权（契约 §3）：先校验库存在（5004），再全量覆盖（按 kb_id 物理删
+    全部旧授权行 → 批插新行，同一事务）；三数组全空/不传 = 清空授权。
+
+    主体弱引用：不校验 role/dept/user 存在性（主数据在 cloud_system 库），
+    失效授权永不命中（自愈语义）。同请求重复 id 由组装层去重（dict.fromkeys 保序）；
+    并发保存同库的撞 uk 属极端窗口，事务级回滚走全局 500（契约 §3 分支无专用码）。
+    """
+    session = current_session()
+    if await dao.find_kb_by_id(session, kb_id) is None:
+        raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
+    await dao.save_kb_grants(session, kb_id, _build_grants(req))
+
+
+def _build_grants(req: KbPermsSaveReq) -> list[AiKbGrant]:
+    """三组 id 保序去重后组装授权行实体（kb_id/create_by 由 dao 统一落值，
+    create_time 由 DB DEFAULT 时钟生成——应用层不传时间）。"""
+    grants: list[AiKbGrant] = []
+    for subject_type, ids in (
+        (AiKbGrant.SubjectTypeEnum.ROLE, req.role_ids),
+        (AiKbGrant.SubjectTypeEnum.DEPT, req.dept_ids),
+        (AiKbGrant.SubjectTypeEnum.USER, req.user_ids),
+    ):
+        for subject_id in dict.fromkeys(ids):
+            grants.append(AiKbGrant(subject_type=subject_type.value, subject_id=subject_id))
+    return grants
+
+
+@transactional
+async def page_list_kb_files(kb_id: int, page: int, size: int) -> AiPageResult[KbFileVo]:
+    """分页列某知识库文件（契约 §5 修订，2026-10-18 权限轮）：三步校验——
+    ① 库不存在（软删不可见）→ 5004；② 管理豁免 或 create_by=本账号 或授权命中 → 200；
+    ③ 否则 → 5011（库存在但当前用户无权访问，与 5004 区分）。
+    identity 为 None（无请求上下文）按豁免处理，与列表口径一致。
+    """
+    session = current_session()
+    kb = await dao.find_kb_by_id(session, kb_id)
+    if kb is None:
+        raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
+    identity = current_identity()
+    if identity is not None and not is_mgmt_exemption(identity):
+        account = identity.account or ""
+        if kb.create_by != account:
+            visible_ids = await dao.list_visible_kb_ids(
+                session, identity.user_id, identity.role_ids, identity.dept_ids)
+            if kb_id not in visible_ids:
+                raise BusinessException(MSG_KB_NO_ACCESS, CODE_KB_NO_ACCESS)
     rows, total = await dao.page_list_kb_files(session, kb_id, page, size)
     vos = [KbFileVo(id=row.id, file_name=row.file_name,
                     file_split_type=row.file_split_type, create_time=row.create_time,

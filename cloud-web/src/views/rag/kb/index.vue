@@ -13,6 +13,7 @@ import type { KbVo } from '../../../types/api'
 import KbFormDialog from './components/KbFormDialog.vue'
 import type { KbFormMode } from './components/KbFormDialog.vue'
 import FilesDrawer from './components/FilesDrawer.vue'
+import KbPermsDialog from './components/KbPermsDialog.vue'
 
 /** = pathToRouteName('/rag/kb')，keep-alive include 依赖，不可省 */
 defineOptions({ name: 'RagKb' })
@@ -128,6 +129,16 @@ function openFiles(kb: KbVo): void {
   drawerVisible.value = true
 }
 
+/* ============ 权限分配弹窗（kb-perm 契约 §2/§3，perms ai:kb:update） ============ */
+
+const permsVisible = ref(false)
+const permsKb = ref<KbVo>()
+
+function openPerms(kb: KbVo): void {
+  permsKb.value = kb
+  permsVisible.value = true
+}
+
 onMounted(() => {
   void load(1)
 })
@@ -168,10 +179,14 @@ onMounted(() => {
       <el-table-column label="创建时间" min-width="170">
         <template #default="{ row }">{{ rowOf(row).create_time }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="210" fixed="right">
+      <el-table-column label="操作" width="265" fixed="right">
         <template #default="{ row }">
           <el-button v-perms="'ai:kb:update'" link type="primary" @click="openEdit(rowOf(row))"
             >编辑</el-button
+          >
+          <!-- 权限分配与编辑同权限 ai:kb:update（kb-perm 契约 §1 拍板零新增） -->
+          <el-button v-perms="'ai:kb:update'" link type="primary" @click="openPerms(rowOf(row))"
+            >权限</el-button
           >
           <el-button v-perms="'ai:kb:delete'" link type="danger" @click="handleDelete(rowOf(row))"
             >删除</el-button
@@ -199,6 +214,8 @@ onMounted(() => {
       :kb="formKb"
       @success="handleFormSuccess"
     />
+    <!-- 权限弹窗不监听 success 刷新列表：授权不影响列表行数据（name/description/create_time） -->
+    <KbPermsDialog v-model="permsVisible" :kb="permsKb" />
     <FilesDrawer v-model="drawerVisible" :kb-id="drawerKb?.id ?? 0" :kb-name="drawerKb?.name ?? ''" />
   </el-card>
 </template>

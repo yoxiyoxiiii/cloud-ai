@@ -34,6 +34,9 @@ public interface SysUserMapper {
     /** 登录权限聚合：账号 → 启用角色 → 启用菜单的权限标识（DISTINCT，非空 perms） */
     List<String> listPermsByAccount(@Param("account") String account);
 
+    /** 登录角色 id 聚合：账号 → 启用角色的 id 列表（身份快照 roleIds 消费，与权限聚合同口径） */
+    List<Long> listRoleIdsByAccount(@Param("account") String account);
+
     /** 翻译回源全量：未删用户 id/account/nickname 投影（小表全扫取舍见翻译设计 §6） */
     List<SysUser> listTransAll();
 

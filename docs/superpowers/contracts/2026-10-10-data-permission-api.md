@@ -31,7 +31,7 @@
 
 ### 2.1 部门树 `GET /system/dept/tree`
 
-- 权限：`hasAnyAuthority('system:dept:list','system:user:add','system:user:edit')`（部门管理与用户表单共同数据源——设计 D12）
+- 权限：`hasAnyAuthority('system:dept:list','system:user:add','system:user:edit','ai:kb:update')`（部门管理与用户表单共同数据源——设计 D12；2026-10-18 追加 `ai:kb:update`：知识库授权弹窗的部门树数据源，additive 放宽，修订声明见 `2026-10-18-kb-permission-api.md` §7）
 - 入参：无
 - 行为：全量未删除部门（含停用，tag 区分——沿 dict §1 口径），按 `sort ASC, id ASC`，内存组树返回森林
 - 返回 `R<List<SysDeptTreeNode>>`（§6.1）
@@ -155,7 +155,7 @@ ColumnRuleItem：
 
 ### 3.6 主体选项 `GET /system/data-perm/subject-options`
 
-- 权限：`system:dataPerm:list`
+- 权限：`hasAnyAuthority('system:dataPerm:list','ai:kb:update')`（2026-10-18 由单权限 `system:dataPerm:list` 放宽：知识库授权弹窗的角色/用户选项数据源，additive 修订声明见 `2026-10-18-kb-permission-api.md` §7）
 - 入参（query）：`type` number 必填（0 角色 / 1 用户，否则 1002）
 - 行为：启用主体选项（角色 status=0；用户 status=0）；label 后端拼好（角色=角色名；用户=`昵称(账号)`）
 - 返回 `R<List<SubjectOptionVo>>`（§6.5；id 为字符串 Long→String）

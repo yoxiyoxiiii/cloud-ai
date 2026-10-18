@@ -69,3 +69,23 @@ CREATE TABLE ai_kb_chunk
     KEY             idx_kb_parent (kb_id, chunk_id, parent_chunk_id),
     KEY             idx_file (file_id)
 ) ENGINE = InnoDB COMMENT = '知识库块（父子两层，向量在库外按 id 关联）';
+
+-- 知识库授权（2026-10-18 知识库权限轮，设计 2026-10-18-kb-permission-design.md D4：
+--   纯关系表沿 sys_user_role/sys_role_menu 先例——物理删除、无 deleted 列、无 update 审计列；
+--   uk_kb_subject 兼查重与配置回显（按 kb_id 前缀取全量授权行）；
+--   idx_subject 命中可见性求值主路径「按主体反查 kb_id」；
+--   subject 弱引用不建外键（主数据在 cloud_system 库），失效授权永不命中（自愈语义）；
+--   create_time 取 DB 时钟 DEFAULT CURRENT_TIMESTAMP（应用层插入不传时间值））
+CREATE TABLE ai_kb_grant
+(
+    id           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '授权ID（主键）',
+    kb_id        BIGINT       NOT NULL COMMENT '知识库ID（ai_knowledge_base.id，弱引用不建外键）',
+    subject_type TINYINT      NOT NULL COMMENT '主体类型：0=角色 1=部门 2=用户',
+    subject_id   BIGINT       NOT NULL COMMENT '主体ID（sys_role.id / sys_dept.id / sys_user.id，主数据在 cloud_system 库）',
+    create_by    VARCHAR(30) NULL COMMENT '授权操作人账号',
+    create_time  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '授权时间（DB 时钟 SQL NOW() 口径，应用层不传时间）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_kb_subject (kb_id, subject_type, subject_id),
+    KEY idx_subject (subject_type, subject_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+  COMMENT ='AI 知识库授权（纯关系表：物理删除，随保存全删全插、随知识库删除级联清理）';

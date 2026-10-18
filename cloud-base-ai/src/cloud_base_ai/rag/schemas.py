@@ -6,7 +6,7 @@ AI 对话轮（2026-10-13）首个实现：字段名与契约 2026-10-13-ai-rag-
 """
 
 from datetime import datetime
-from typing import Generic, Literal, TypeVar
+from typing import Annotated, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, Field, field_serializer
 
@@ -98,4 +98,30 @@ class AiPageResult(BaseModel, Generic[T]):
 
     total: int
     rows: list[T]
+
+
+class KbPermsVo(BaseModel):
+    """知识库授权回显 VO（契约 2026-10-18-kb-permission-api.md §2）：按主体类型分三组，
+    无授权组为空数组；dept_ids 只存被勾选节点（含子树语义在服务端求值侧生效）。"""
+
+    role_ids: list[int]
+    dept_ids: list[int]
+    user_ids: list[int]
+
+
+class KbPermsSaveReq(BaseModel):
+    """知识库授权保存入参（契约 §3）：三组全量覆盖语义（全空/不传 = 清空授权）；
+    重复元素服务端静默去重；每元素 >=1 且必须 JSON number（strict=True：数字串 "3"
+    拒收转 1001，防 pydantic 智能模式宽松协变）、每数组 <=100，
+    违反走既有 RequestValidationError handler（HTTP 200 + R{code:1001}）。"""
+
+    role_ids: list[Annotated[int, Field(ge=1, strict=True)]] = Field(default_factory=list,
+                                                        description="全量覆盖角色授权",
+                                                        max_length=100)
+    dept_ids: list[Annotated[int, Field(ge=1, strict=True)]] = Field(default_factory=list,
+                                                        description="全量覆盖部门授权",
+                                                        max_length=100)
+    user_ids: list[Annotated[int, Field(ge=1, strict=True)]] = Field(default_factory=list,
+                                                        description="全量覆盖用户授权",
+                                                        max_length=100)
 

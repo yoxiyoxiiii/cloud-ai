@@ -2,7 +2,12 @@
 
 from sqlalchemy import UniqueConstraint, inspect
 
-from cloud_base_ai.rag.entities import AiKbChunk, AiKnowledgeBase, AiKnowledgeBaseFiles
+from cloud_base_ai.rag.entities import (
+    AiKbChunk,
+    AiKbGrant,
+    AiKnowledgeBase,
+    AiKnowledgeBaseFiles,
+)
 
 
 def test_table_names():
@@ -59,3 +64,36 @@ def test_chunk_type_enum():
     assert AiKbChunk.ChunkTypeEnum.of(0) is AiKbChunk.ChunkTypeEnum.PARENT
     assert AiKbChunk.ChunkTypeEnum.of(1) is AiKbChunk.ChunkTypeEnum.CHILD
     assert AiKbChunk.ChunkTypeEnum.of(9) is None
+
+
+# ---------- AiKbGrant（2026-10-18 知识库权限轮） ----------
+
+
+def test_grant_table_and_columns_match_ddl():
+    # 纯关系表：无 deleted/update 审计列（行生命周期只有插入与物理删除）
+    assert AiKbGrant.__tablename__ == "ai_kb_grant"
+    cols = {c.name for c in inspect(AiKbGrant).columns}
+    assert cols == {"id", "kb_id", "subject_type", "subject_id", "create_by", "create_time"}
+
+
+def test_grant_not_inheriting_audit_or_softdelete_mixins():
+    # 独立于 Mixin 列集断言的口径复核：实体类不得混入 AuditMixin/SoftDeleteMixin
+    from cloud_base_ai.db.base import AuditMixin, SoftDeleteMixin
+    assert not issubclass(AiKbGrant, AuditMixin)
+    assert not issubclass(AiKbGrant, SoftDeleteMixin)
+
+
+def test_grant_unique_and_index_declarations():
+    grant_constraints = [c for c in AiKbGrant.__table__.constraints
+                         if isinstance(c, UniqueConstraint)]
+    assert any(uc.name == "uk_kb_subject" for uc in grant_constraints)
+    assert any(ix.name == "idx_subject" for ix in AiKbGrant.__table__.indexes)
+
+
+def test_grant_subject_type_enum():
+    assert AiKbGrant.SubjectTypeEnum.of(0) is AiKbGrant.SubjectTypeEnum.ROLE
+    assert AiKbGrant.SubjectTypeEnum.of(1) is AiKbGrant.SubjectTypeEnum.DEPT
+    assert AiKbGrant.SubjectTypeEnum.of(2) is AiKbGrant.SubjectTypeEnum.USER
+    assert AiKbGrant.SubjectTypeEnum.of(9) is None
+    # 字段类型保持 int 映射（禁存枚举实例）
+    assert AiKbGrant.SubjectTypeEnum.ROLE.value == 0
