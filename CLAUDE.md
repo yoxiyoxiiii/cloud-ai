@@ -122,7 +122,7 @@ cloud-base/
 - 业务校验前置（空值/空白 → BusinessException）+ 唯一性查重 + `DuplicateKeyException` 兜底转业务码（防并发 TOCTOU 与墓碑占键）
 - 多表写操作 `@Transactional(rollbackFor = Exception.class)`；只读不加
 - 错误码分段：1xxx 通用 / 2xxx 认证 / 3xxx system（新增实体接续分配，如 3008+）
-- 写操作审计字段显式传参：`SecurityUtils.currentAccount()` + `LocalDateTime.now()`（插入四值= create 值；更新两值）
+- 写操作审计：操作人显式传参 `SecurityUtils.currentAccount()`；审计时间（create_time/update_time）一律 SQL `NOW()` 取数据库时钟（同语句 NOW() 恒定，保持插入 create=update 同值），Service 层不再传时间参数；MP 填充件同口径（SELECT NOW() 偏移缓存，探针失败回退 Java 时间）
 
 **持久层（手写 SQL，mapper XML）**：
 - 主表（带 deleted）所有查询/更新 WHERE 显式 `deleted = 0`；删除 = `UPDATE SET deleted=1` + update 审计两值；纯关系表（sys_user_role/sys_role_menu）物理 DELETE

@@ -103,12 +103,10 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.<service>.entity.XxxYyy;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDateTime;
-
 /**
  * Xxx 表 SQL（XML：mapper/XxxYyyMapper.xml）。
  * 逻辑删除与审计字段由手写 SQL 显式维护：查询带 deleted=0，删除为 UPDATE deleted=1；
- * INSERT/UPDATE 的审计列由 Service 显式传参（更新走实体 updateBy/updateTime 字段）。
+ * 审计时间列（create_time/update_time）由 SQL NOW() 取数据库时钟，操作人由 Service 显式传参（更新走实体 updateBy 字段）。
  */
 public interface XxxYyyMapper {
 
@@ -122,13 +120,12 @@ public interface XxxYyyMapper {
 
     int save(XxxYyy xxx);
 
-    /** 动态更新（仅非空列；审计两值随实体 updateBy/updateTime 传入） */
+    /** 动态更新（仅非空列；操作人随实体 updateBy 传入，update_time 取 NOW()） */
     int update(XxxYyy xxx);
 
-    /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
+    /** 逻辑删除：UPDATE deleted=1 并留更新审计（update_time 取 NOW()） */
     int deleteById(@Param("id") Long id,
-                   @Param("updateBy") String updateBy,
-                   @Param("updateTime") LocalDateTime updateTime);
+                   @Param("updateBy") String updateBy);
 }
 ```
 
@@ -141,7 +138,7 @@ public interface XxxYyyMapper {
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.cloudai.<service>.mapper.XxxYyyMapper">
 
-    <!-- 查询显式 deleted = 0，删除为 UPDATE deleted=1；审计列由 Service 显式传参 -->
+    <!-- 查询显式 deleted = 0，删除为 UPDATE deleted=1；审计时间列由 SQL NOW() 取数据库时钟（操作人 Service 显式传参） -->
     <sql id="allColumns">
         id, name, status, create_by, create_time, update_by, update_time, deleted
     </sql>
@@ -171,7 +168,7 @@ public interface XxxYyyMapper {
 
     <insert id="save" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO xxx_yyy (name, status, create_by, create_time, update_by, update_time)
-        VALUES (#{name}, #{status}, #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+        VALUES (#{name}, #{status}, #{createBy}, NOW(), #{updateBy}, NOW())
     </insert>
 
     <!-- 动态列等价 NOT_NULL 字段策略：null 列不改库值；<if> 标签体必须换行 -->
@@ -187,7 +184,7 @@ public interface XxxYyyMapper {
             <if test="updateBy != null">
                 update_by = #{updateBy},
             </if>
-            update_time = #{updateTime},
+            update_time = NOW(),
         </set>
         WHERE id = #{id} AND deleted = 0
     </update>
@@ -196,7 +193,7 @@ public interface XxxYyyMapper {
     <update id="deleteById">
         UPDATE xxx_yyy
            SET deleted = 1,
-               update_time = #{updateTime}
+               update_time = NOW()
                <if test="updateBy != null">
                    , update_by = #{updateBy}
                </if>
@@ -308,7 +305,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -368,7 +364,6 @@ public class XxxYyyManageService {
         xxx.setName(req.getName());
         xxx.setStatus(req.getStatus());
         xxx.setUpdateBy(SecurityUtils.currentAccount());
-        xxx.setUpdateTime(LocalDateTime.now());
         try {
             xxxMapper.update(xxx);
         } catch (DuplicateKeyException e) {
@@ -380,7 +375,7 @@ public class XxxYyyManageService {
     /** 单语句不加事务；本方法若加关联物理清理（下行注释示例）则变为多写，必须 @Transactional */
     public void delete(Long id) {
         requireXxx(id);
-        xxxMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        xxxMapper.deleteById(id, SecurityUtils.currentAccount());
         // 有关联关系表时在此物理清理（参考 SysUserManageService.delete → userRoleMapper.deleteByUserId，带 @Transactional）
     }
 
@@ -388,14 +383,11 @@ public class XxxYyyManageService {
     // （范本：SysUserManageService.delete 墓碑+关系物理清理 / assignRoles 删旧绑定+批插）；
     // 单表单语句一律不加：语句级原子 + uk 兜底已足够，check-then-act 竞态加事务也防不住（快照读不锁行）
 
-    /** 手写 SQL 无自动填充：审计四值显式构造，插入时 update 值 = create 值 */
+    /** 手写 SQL 无自动填充：操作人显式构造；审计时间由 XML 的 NOW() 落库（插入时 create=update 同值） */
     private void auditCreate(XxxYyy xxx) {
         String operator = SecurityUtils.currentAccount();
-        LocalDateTime now = LocalDateTime.now();
         xxx.setCreateBy(operator);
-        xxx.setCreateTime(now);
         xxx.setUpdateBy(operator);
-        xxx.setUpdateTime(now);
     }
 
     private XxxYyy requireXxx(Long id) {
@@ -507,7 +499,7 @@ public class XxxYyyController {
 
 **生产端三件套**：
 
-1. 生产方法**编排化（去 @Transactional——事务边界归 starter listener）**：校验前置（fail-fast 防白跑 broker）→ 组装实体（id `IdUtil.getSnowflakeNextId()` **预生成**——半消息体先于落库序列化需知 businessKey；审计四值显式）→ `txMessageSender.sendTransactional(topic, tag, keys, payload, channel, bizArg)`。
+1. 生产方法**编排化（去 @Transactional——事务边界归 starter listener）**：校验前置（fail-fast 防白跑 broker）→ 组装实体（id `IdUtil.getSnowflakeNextId()` **预生成**——半消息体先于落库序列化需知 businessKey；操作人显式，审计时间由 XML 的 NOW() 落库）→ `txMessageSender.sendTransactional(topic, tag, keys, payload, channel, bizArg)`。
    - keys=`{businessType}:{businessKey}`；bizArg=预组装实体 **JVM 内透传**（不经 broker 序列化）；`TxMessageSendException`=半消息失败**本地零写**，catch 转「消息服务不可用」业务码（可重试）。
 2. `TxLocalExecutor<P>` 实现（@Component，范本 `LeaveCreateTxExecutor`）：`channel()` 通道名 / `payloadType()` / `executeInTx(payload, ctx)`——完整业务写 + **必调 `ctx.setBusinessRef(type, key)`**（mq_tx_log 审计列来源，缺失整体回滚）；实现内**禁 @Transactional**（双事务边界撕裂——COMMIT 决策返回前本地事务必须已提交）。
 3. 结果事件通知（反向回写）：普通消息 `syncSend(TOPIC + ":" + tag)`，KEYS=`{businessType}:{businessKey}:{eventType}`；**事件消息模型归提供方 api 模块 `mq/` 子包**（与 Feign 契约同位，范本 `ApprovalEventMessage`/`ApprovalMqTopics`）；事件发送失败语义区分：结果事件失败→重抛重试（确定性重放一致），通知事件失败→log.error+ACK（纠偏兜底）。
@@ -632,7 +624,7 @@ public class XxxJobHandler {
 - [ ] **索引**：新表 DDL 已按查询清单设计（uk 兼查重、关联列/高频列覆盖、取舍写明）？迭代新增查询路径已 EXPLAIN 复审既有索引、缺失出增量 ALTER？
 - [ ] **事务**：只挂多写语句方法（单表单语句不加，见步骤 5 事务口径）？
 - [ ] Mapper/Service 方法名在动词集白名单（find/save/update/pageList/list/delete/count + 领域动作 reset/assign 等）且不带实体名前缀？
-- [ ] INSERT 显式审计四值 / UPDATE 两值（Service 构造）；update 单参（审计随实体）、deleteById 三参？
+- [ ] INSERT/UPDATE 操作人显式（Service 构造）、审计时间一律 SQL NOW()（DB 时钟为唯一真相源）？update 单参（操作人随实体）、deleteById 两参（id + updateBy）？
 - [ ] 全部 `#{}` 无 `${}`？分页无 LIMIT？`<if>` 标签体全部换行？
 - [ ] Controller：两行式 + `@PathVariable` 显式命名 + 每方法 javadoc + 全管理端点 @PreAuthorize + 出参 VO（无 `R<实体>`）+ 入参 DTO（禁 Map）？
 - [ ] convert 包 final 类 + 私有构造 + 原生 setter，无三方拷贝工具 import？
