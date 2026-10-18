@@ -5,8 +5,6 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.system.entity.SysDictType;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDateTime;
-
 /**
  * 字典类型表 SQL（XML：mapper/SysDictTypeMapper.xml）。逻辑删除与审计字段显式维护，见 SysUserMapper 说明。
  */
@@ -25,8 +23,7 @@ public interface SysDictTypeMapper {
     /** 动态更新（仅非空列，等价 NOT_NULL 字段策略） */
     int update(SysDictType dictType);
 
-    /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
+    /** 逻辑删除：UPDATE deleted=1 并留更新审计（update_time 取 NOW()） */
     int deleteById(@Param("id") Long id,
-                   @Param("updateBy") String updateBy,
-                   @Param("updateTime") LocalDateTime updateTime);
+                   @Param("updateBy") String updateBy);
 }

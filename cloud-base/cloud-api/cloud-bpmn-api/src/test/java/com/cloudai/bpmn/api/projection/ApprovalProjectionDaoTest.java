@@ -9,8 +9,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.jdbc.core.JdbcTemplate;
 
-import java.sql.Timestamp;
-import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,39 +30,37 @@ class ApprovalProjectionDaoTest {
     @Mock
     private JdbcTemplate jdbcTemplate;
 
-    private final LocalDateTime now = LocalDateTime.of(2026, 10, 9, 15, 0, 0);
-
-    // ---- 三分支 upsert：SQL 参数序 ----
+    // ---- 三分支 upsert：SQL 参数序（update_time 为 SQL NOW()，不在绑定参数中） ----
 
     @Test
     void applyCreateSuccess_bindsParamsInOrder() {
         ApprovalProjectionDao dao = new ApprovalProjectionDao(jdbcTemplate);
 
-        dao.applyCreateSuccess(event(), "bpmn-event", now);
+        dao.applyCreateSuccess(event(), "bpmn-event");
 
         verify(jdbcTemplate).update(eq(ApprovalProjectionDao.SQL_APPLY_CREATE_SUCCESS),
                 eq("leave"), eq("5"), eq(12L), eq("pid-9"),
-                eq("bpmn-event"), eq("bpmn-event"), eq(Timestamp.valueOf(now)));
+                eq("bpmn-event"), eq("bpmn-event"));
     }
 
     @Test
     void applyCreateFailed_bindsParamsInOrder() {
         ApprovalProjectionDao dao = new ApprovalProjectionDao(jdbcTemplate);
 
-        dao.applyCreateFailed(event(), "bpmn-event", now);
+        dao.applyCreateFailed(event(), "bpmn-event");
 
         verify(jdbcTemplate).update(eq(ApprovalProjectionDao.SQL_APPLY_CREATE_FAILED),
-                eq("leave"), eq("5"), eq("bpmn-event"), eq("bpmn-event"), eq(Timestamp.valueOf(now)));
+                eq("leave"), eq("5"), eq("bpmn-event"), eq("bpmn-event"));
     }
 
     @Test
     void applyTerminal_bindsParamsInOrder() {
         ApprovalProjectionDao dao = new ApprovalProjectionDao(jdbcTemplate);
 
-        dao.applyTerminal(event(), 3, "bpmn-event", now);
+        dao.applyTerminal(event(), 3, "bpmn-event");
 
         verify(jdbcTemplate).update(eq(ApprovalProjectionDao.SQL_APPLY_TERMINAL),
-                eq("leave"), eq("5"), eq(3), eq("bpmn-event"), eq("bpmn-event"), eq(Timestamp.valueOf(now)));
+                eq("leave"), eq("5"), eq(3), eq("bpmn-event"), eq("bpmn-event"));
     }
 
     // ---- 乱序矩阵：ON DUPLICATE 列族互斥（设计 D4 单调不变式的 SQL 语义） ----
@@ -100,6 +96,11 @@ class ApprovalProjectionDaoTest {
         assertThat(ApprovalProjectionDao.SQL_APPLY_CREATE_SUCCESS).contains("ON DUPLICATE KEY UPDATE");
         assertThat(ApprovalProjectionDao.SQL_APPLY_CREATE_FAILED).contains("ON DUPLICATE KEY UPDATE");
         assertThat(ApprovalProjectionDao.SQL_APPLY_TERMINAL).contains("ON DUPLICATE KEY UPDATE");
+
+        // 审计时间一律数据库时钟：三分支 INSERT 值段含 NOW()（ON DUPLICATE 经 VALUES() 引用传导）
+        assertThat(ApprovalProjectionDao.SQL_APPLY_CREATE_SUCCESS).contains(", NOW())");
+        assertThat(ApprovalProjectionDao.SQL_APPLY_CREATE_FAILED).contains(", NOW())");
+        assertThat(ApprovalProjectionDao.SQL_APPLY_TERMINAL).contains(", NOW())");
     }
 
     // ---- 对账回写：条件写幂等三防 ----
@@ -109,10 +110,10 @@ class ApprovalProjectionDaoTest {
         ApprovalProjectionDao dao = new ApprovalProjectionDao(jdbcTemplate);
         ReconcileDiff diff = new ReconcileDiff("leave", "5", 1, 12L, "pid-9");
 
-        dao.applyReconcile(diff, "approval-reconcile", now);
+        dao.applyReconcile(diff, "approval-reconcile");
 
         verify(jdbcTemplate).update(eq(ApprovalProjectionDao.SQL_APPLY_RECONCILE),
-                eq(1), eq(12L), eq("pid-9"), eq("approval-reconcile"), eq(Timestamp.valueOf(now)),
+                eq(1), eq(12L), eq("pid-9"), eq("approval-reconcile"),
                 eq("leave"), eq("5"), eq(1));
         String sql = ApprovalProjectionDao.SQL_APPLY_RECONCILE;
         // create_result=2 失败行永不触碰（单向不回退）+ 已收敛行零更新（无审计扰动）
@@ -122,6 +123,8 @@ class ApprovalProjectionDaoTest {
         assertThat(sql).contains("create_result = IF(create_result = 0, 1, create_result)");
         assertThat(sql).contains("approval_id = IFNULL(approval_id, ?)");
         assertThat(sql).contains("process_instance_id = IFNULL(process_instance_id, ?)");
+        // 审计时间一律数据库时钟
+        assertThat(sql).contains("update_time = NOW()");
     }
 
     // ---- 查询面：游标分批 + 按键查 ----

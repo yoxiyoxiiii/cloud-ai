@@ -87,7 +87,7 @@ class SysRoleManageServiceTest {
                 .hasMessageContaining("内置角色禁止删除")
                 .extracting("code")
                 .isEqualTo(3013);
-        verify(roleMapper, never()).deleteById(any(), any(), any());
+        verify(roleMapper, never()).deleteById(any(), any());
     }
 
     @Test

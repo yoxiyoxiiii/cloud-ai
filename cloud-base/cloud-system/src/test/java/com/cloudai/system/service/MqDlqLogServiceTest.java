@@ -99,7 +99,7 @@ class MqDlqLogServiceTest {
                 .hasMessageContaining("重投次数已达上限，已置为已放弃");
         // 自动置弃留痕（resend_count 保持不清零）后拒绝
         verify(dlqLogMapper).updateStatus(eq(1L), eq(MqDlqLog.StatusEnum.ABANDONED.getCode()),
-                any(), any());
+                any());
         verify(consumeDedupDao, never()).delete(anyString(), anyString());
     }
 
@@ -112,7 +112,7 @@ class MqDlqLogServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("消息重投发送失败");
         // 行状态不动（可重试）
-        verify(dlqLogMapper, never()).updateResend(anyLong(), any(), any());
+        verify(dlqLogMapper, never()).updateResend(anyLong(), any());
     }
 
     @Test
@@ -126,7 +126,7 @@ class MqDlqLogServiceTest {
         verify(consumeDedupDao).delete("g_bpmn_approval_create", "leave:e2e-dlq-1");
         // ③ syncSend 原 topic（tag 拼接 destination）+ 成功后行流转
         verify(rocketMQTemplate).syncSend(eq("TX_APPROVAL_CREATE:CREATE_RESULT"), any(Message.class));
-        verify(dlqLogMapper).updateResend(eq(1L), any(), any());
+        verify(dlqLogMapper).updateResend(eq(1L), any());
     }
 
     @Test
@@ -135,11 +135,11 @@ class MqDlqLogServiceTest {
         assertThatThrownBy(() -> service.updateIgnore(1L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("死信状态不允许该操作");
-        verify(dlqLogMapper, never()).updateStatus(anyLong(), anyInt(), any(), any());
+        verify(dlqLogMapper, never()).updateStatus(anyLong(), anyInt(), any());
 
         when(dlqLogMapper.findDlqLogById(2L)).thenReturn(dlq(2L, MqDlqLog.StatusEnum.PENDING.getCode(), 0));
         assertThatCode(() -> service.updateIgnore(2L)).doesNotThrowAnyException();
-        verify(dlqLogMapper).updateStatus(eq(2L), eq(MqDlqLog.StatusEnum.IGNORED.getCode()), any(), any());
+        verify(dlqLogMapper).updateStatus(eq(2L), eq(MqDlqLog.StatusEnum.IGNORED.getCode()), any());
     }
 
     @Test
@@ -148,11 +148,11 @@ class MqDlqLogServiceTest {
         assertThatThrownBy(() -> service.updateReset(1L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("死信状态不允许该操作");
-        verify(dlqLogMapper, never()).updateReset(anyLong(), any(), any());
+        verify(dlqLogMapper, never()).updateReset(anyLong(), any());
 
         when(dlqLogMapper.findDlqLogById(2L)).thenReturn(dlq(2L, MqDlqLog.StatusEnum.IGNORED.getCode(), 3));
         assertThatCode(() -> service.updateReset(2L)).doesNotThrowAnyException();
-        verify(dlqLogMapper).updateReset(eq(2L), any(), any());
+        verify(dlqLogMapper).updateReset(eq(2L), any());
     }
 
     @Test

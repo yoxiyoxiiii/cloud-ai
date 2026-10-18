@@ -32,7 +32,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -150,7 +149,6 @@ public class DataPermEvaluator {
         // deny 行是拒绝事件标记而非范围结论：scopeSummary 固定 'deny'（NOT NULL 约束），规则摘要留空
         denyRow.setScopeSummary("deny");
         denyRow.setBusinessKey(businessKey);
-        denyRow.setCreateTime(LocalDateTime.now());
         try {
             logMapper.save(denyRow);
         } catch (Exception e) {
@@ -554,7 +552,6 @@ public class DataPermEvaluator {
             logRow.setColumnSummary(decision.getColumnScope().isEmpty() ? null
                     : decision.getColumnScope().getSummary());
             logRow.setBusinessKey(businessKey);
-            logRow.setCreateTime(LocalDateTime.now());
             logMapper.save(logRow);
         } catch (Exception e) {
             log.error("数据权限决策留痕失败（不阻断读路径，D7）：account={}, resource={}",

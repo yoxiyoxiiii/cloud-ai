@@ -239,6 +239,6 @@
         INSERT INTO sys_leave (id, title, leave_type, start_date, end_date, reason,
                                apply_user, approver, create_by, create_time, update_by, update_time)
         VALUES (#{id}, #{title}, #{leaveType}, #{startDate}, #{endDate}, #{reason},
-                #{applyUser}, #{approver}, #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+                #{applyUser}, #{approver}, #{createBy}, NOW(), #{updateBy}, NOW())
     </insert>
 </mapper>

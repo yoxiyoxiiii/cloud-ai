@@ -59,7 +59,7 @@ class ApprovalCompleteTxExecutorTest {
         verify(taskService).addComment(eq("t-1"), eq("pid-1"), eq("ok"));
         verify(taskService).complete(eq("t-1"), eq(Map.of("approve", Boolean.TRUE)));
         verify(approvalMapper).updateStatusById(eq(12L), eq(StatusEnum.APPROVED.getCode()),
-                eq("pid-1"), eq("admin"), any());
+                eq("pid-1"), eq("admin"));
         // tx_log 审计回执（缺失即回滚——starter listener 契约）
         assertThat(ctx.getBusinessType()).isEqualTo("leave");
         assertThat(ctx.getBusinessKey()).isEqualTo("7");
@@ -75,7 +75,7 @@ class ApprovalCompleteTxExecutorTest {
         assertThat(out).isEqualTo(StatusEnum.REJECTED.getCode());
         verify(taskService).complete(eq("t-1"), eq(Map.of("approve", Boolean.FALSE)));
         verify(approvalMapper).updateStatusById(eq(12L), eq(StatusEnum.REJECTED.getCode()),
-                eq("pid-1"), eq("admin"), any());
+                eq("pid-1"), eq("admin"));
     }
 
     @Test
@@ -88,7 +88,7 @@ class ApprovalCompleteTxExecutorTest {
                 .isInstanceOf(IllegalStateException.class);
         // 回写已发生但随整体事务回滚消失——抛出即回滚信号
         verify(approvalMapper).updateStatusById(eq(12L), eq(StatusEnum.REJECTED.getCode()),
-                eq("pid-1"), eq("admin"), any());
+                eq("pid-1"), eq("admin"));
     }
 
     @Test
@@ -99,7 +99,7 @@ class ApprovalCompleteTxExecutorTest {
         assertThatThrownBy(() -> executor.executeInTx(payload(),
                 context(command("true", StatusEnum.APPROVED.getCode()))))
                 .isInstanceOf(IllegalStateException.class);
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
+        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -109,7 +109,7 @@ class ApprovalCompleteTxExecutorTest {
         assertThatThrownBy(() -> executor.executeInTx(payload(),
                 context(command("true", StatusEnum.APPROVED.getCode()))))
                 .isInstanceOf(IllegalStateException.class);
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
+        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any());
     }
 
     @Test

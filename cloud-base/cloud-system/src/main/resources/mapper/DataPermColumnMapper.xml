@@ -58,7 +58,7 @@
         VALUES
         <foreach collection="list" item="item" separator=",">
             (#{item.resource}, #{item.subjectType}, #{item.subjectId}, #{item.columnKey}, #{item.action},
-             #{item.createBy}, #{item.createTime}, #{item.updateBy}, #{item.updateTime})
+             #{item.createBy}, NOW(), #{item.updateBy}, NOW())
         </foreach>
     </insert>
 

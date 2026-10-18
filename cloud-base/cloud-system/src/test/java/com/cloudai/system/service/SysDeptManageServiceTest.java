@@ -90,13 +90,11 @@ class SysDeptManageServiceTest {
 
         service.save(req);
 
-        // sort/status 缺省 0/正常 + 审计四值显式（无登录上下文 operator=null 合法）
+        // sort/status 缺省 0/正常 + 操作人显式（审计时间由 XML 的 NOW() 落库；无登录上下文 operator=null 合法）
         ArgumentCaptor<SysDept> captor = ArgumentCaptor.forClass(SysDept.class);
         verify(deptMapper).save(captor.capture());
         assertThat(captor.getValue().getSort()).isZero();
         assertThat(captor.getValue().getStatus()).isEqualTo(SysDept.StatusEnum.NORMAL.getCode());
-        assertThat(captor.getValue().getCreateTime()).isNotNull();
-        assertThat(captor.getValue().getUpdateTime()).isNotNull();
     }
 
     // ---- update 禁改上级 1 例 ----
@@ -125,7 +123,7 @@ class SysDeptManageServiceTest {
         BusinessException ex = catchThrowableOfType(() -> service.delete(1L), BusinessException.class);
 
         assertThat(ex.getCode()).isEqualTo(3029);
-        verify(deptMapper, org.mockito.Mockito.never()).deleteById(any(), any(), any());
+        verify(deptMapper, org.mockito.Mockito.never()).deleteById(any(), any());
     }
 
     @Test
@@ -148,7 +146,7 @@ class SysDeptManageServiceTest {
         BusinessException ex = catchThrowableOfType(() -> service.delete(5L), BusinessException.class);
 
         assertThat(ex.getCode()).isEqualTo(3030);
-        verify(deptMapper, org.mockito.Mockito.never()).deleteById(any(), any(), any());
+        verify(deptMapper, org.mockito.Mockito.never()).deleteById(any(), any());
     }
 
     @Test
@@ -168,7 +166,7 @@ class SysDeptManageServiceTest {
 
         service.delete(5L);
 
-        verify(deptMapper).deleteById(eq(5L), any(), any());
+        verify(deptMapper).deleteById(eq(5L), any());
     }
 
     // ---- 脚手架 ----

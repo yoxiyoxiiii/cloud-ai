@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.system.entity.SysRole;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -36,8 +35,7 @@ public interface SysRoleMapper {
     /** 动态更新（仅非空列，等价原 updateById NOT_NULL 策略） */
     int update(SysRole role);
 
-    /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
+    /** 逻辑删除：UPDATE deleted=1 并留更新审计（update_time 取 NOW()） */
     int deleteById(@Param("id") Long id,
-                   @Param("updateBy") String updateBy,
-                   @Param("updateTime") LocalDateTime updateTime);
+                   @Param("updateBy") String updateBy);
 }

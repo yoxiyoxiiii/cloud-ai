@@ -13,7 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -92,7 +91,6 @@ public class SysDeptManageService {
         dept.setSort(req.getSort());
         dept.setStatus(req.getStatus());
         dept.setUpdateBy(SecurityUtils.currentAccount());
-        dept.setUpdateTime(LocalDateTime.now());
         try {
             deptMapper.update(dept);
         } catch (DuplicateKeyException e) {
@@ -114,7 +112,7 @@ public class SysDeptManageService {
         if (userMapper.countByDeptId(id) > 0) {
             throw new BusinessException(ERR_DEPT_OCCUPIED, "部门下存在子部门或在职用户，禁止删除");
         }
-        deptMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        deptMapper.deleteById(id, SecurityUtils.currentAccount());
     }
 
     private void requireParentExists(Long parentId) {
@@ -132,13 +130,10 @@ public class SysDeptManageService {
         return dept;
     }
 
-    /** 手写 SQL 无自动填充：审计四值显式构造，插入时 update 值 = create 值 */
+    /** 手写 SQL 无自动填充：操作人显式构造；审计时间由 XML 的 NOW() 落库（插入时 create=update 同值） */
     private void auditCreate(SysDept dept) {
         String operator = SecurityUtils.currentAccount();
-        LocalDateTime now = LocalDateTime.now();
         dept.setCreateBy(operator);
-        dept.setCreateTime(now);
         dept.setUpdateBy(operator);
-        dept.setUpdateTime(now);
     }
 }

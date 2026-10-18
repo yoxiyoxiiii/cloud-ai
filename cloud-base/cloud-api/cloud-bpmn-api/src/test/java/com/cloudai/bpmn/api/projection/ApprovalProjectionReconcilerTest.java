@@ -73,7 +73,7 @@ class ApprovalProjectionReconcilerTest {
         verify(approvalClient, times(2)).statusList(captor.capture());
         assertThat(captor.getAllValues()).extracting(ApprovalStatusQueryInnerRequest::getBusinessKeys)
                 .containsExactly(List.of("101", "102"), List.of("103"));
-        verify(projectionDao, times(3)).applyReconcile(any(ReconcileDiff.class), anyString(), any());
+        verify(projectionDao, times(3)).applyReconcile(any(ReconcileDiff.class), anyString());
     }
 
     @Test
@@ -85,7 +85,7 @@ class ApprovalProjectionReconcilerTest {
         reconciler.reconcileActive();
 
         ArgumentCaptor<ReconcileDiff> diff = ArgumentCaptor.forClass(ReconcileDiff.class);
-        verify(projectionDao).applyReconcile(diff.capture(), eq("approval-reconcile"), any());
+        verify(projectionDao).applyReconcile(diff.capture(), eq("approval-reconcile"));
         assertThat(diff.getValue().businessType()).isEqualTo("leave");
         assertThat(diff.getValue().businessKey()).isEqualTo("101");
         assertThat(diff.getValue().approvalStatus()).isEqualTo(2);
@@ -102,7 +102,7 @@ class ApprovalProjectionReconcilerTest {
 
         reconciler.reconcileActive();
 
-        verify(projectionDao, never()).applyReconcile(any(), anyString(), any());
+        verify(projectionDao, never()).applyReconcile(any(), anyString());
     }
 
     @Test
@@ -121,7 +121,7 @@ class ApprovalProjectionReconcilerTest {
         when(approvalClient.statusList(any())).thenReturn(R.fail(1002, "cloud-bpmn 服务不可用"));
 
         assertThatCode(() -> reconciler.reconcileActive()).doesNotThrowAnyException();
-        verify(projectionDao, never()).applyReconcile(any(), anyString(), any());
+        verify(projectionDao, never()).applyReconcile(any(), anyString());
     }
 
     // ---- 按需对账（撤销链路）：批切分 + best-effort ----

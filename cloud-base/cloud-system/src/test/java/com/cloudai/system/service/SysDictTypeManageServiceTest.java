@@ -140,7 +140,7 @@ class SysDictTypeManageServiceTest {
         assertThatThrownBy(() -> service.delete(9L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("字典类型不存在");
-        verify(dictTypeMapper, never()).deleteById(anyLong(), anyString(), any());
+        verify(dictTypeMapper, never()).deleteById(anyLong(), anyString());
     }
 
     @Test
@@ -150,7 +150,7 @@ class SysDictTypeManageServiceTest {
         assertThatThrownBy(() -> service.delete(1L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("先删除字典项");
-        verify(dictTypeMapper, never()).deleteById(anyLong(), anyString(), any());
+        verify(dictTypeMapper, never()).deleteById(anyLong(), anyString());
     }
 
     @Test
@@ -159,7 +159,7 @@ class SysDictTypeManageServiceTest {
         when(dictTypeMapper.findById(1L)).thenReturn(new SysDictType());
         when(dictDataMapper.countByTypeId(1L)).thenReturn(0L);
         service.delete(1L);
-        verify(dictTypeMapper).deleteById(eq(1L), eq("admin"), any());
+        verify(dictTypeMapper).deleteById(eq(1L), eq("admin"));
     }
 
     // ---- 翻译缓存失效挂钩（设计 §4.2）----
@@ -255,6 +255,6 @@ class SysDictTypeManageServiceTest {
                 .hasMessageContaining("内置字典类型禁止删除")
                 .extracting("code")
                 .isEqualTo(3015);
-        verify(dictTypeMapper, never()).deleteById(anyLong(), anyString(), any());
+        verify(dictTypeMapper, never()).deleteById(anyLong(), anyString());
     }
 }

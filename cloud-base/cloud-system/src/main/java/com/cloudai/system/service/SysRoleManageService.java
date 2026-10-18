@@ -18,7 +18,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -47,13 +46,10 @@ public class SysRoleManageService {
     public Long save(SysRole role) {
         assertRoleKeyValid(role.getRoleKey());
         assertRoleKeyFree(role.getRoleKey(), null);
-        // 手写 SQL 无 MetaObjectHandler 自动填充：审计四值显式传入，插入时 update 值 = create 值
+        // 手写 SQL 无 MetaObjectHandler 自动填充：操作人显式传入；审计时间由 XML 的 NOW() 落库（插入时 create=update 同值）
         String operator = SecurityUtils.currentAccount();
-        LocalDateTime now = LocalDateTime.now();
         role.setCreateBy(operator);
-        role.setCreateTime(now);
         role.setUpdateBy(operator);
-        role.setUpdateTime(now);
         try {
             roleMapper.save(role);
         } catch (org.springframework.dao.DuplicateKeyException e) {
@@ -74,7 +70,6 @@ public class SysRoleManageService {
             assertRoleKeyFree(role.getRoleKey(), role.getId());
         }
         role.setUpdateBy(SecurityUtils.currentAccount());
-        role.setUpdateTime(LocalDateTime.now());
         try {
             roleMapper.update(role);
         } catch (org.springframework.dao.DuplicateKeyException e) {
@@ -104,7 +99,7 @@ public class SysRoleManageService {
         if (Integer.valueOf(SysRole.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
             throw new BusinessException(ERR_BUILTIN, "内置角色禁止删除");
         }
-        roleMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        roleMapper.deleteById(id, SecurityUtils.currentAccount());
         roleMenuMapper.deleteByRoleId(id);
         userRoleMapper.deleteByRoleId(id);
     }
@@ -123,7 +118,6 @@ public class SysRoleManageService {
                         SysRoleMenu rm = new SysRoleMenu();
                         rm.setRoleId(roleId);
                         rm.setMenuId(menuId);
-                        rm.setCreateTime(LocalDateTime.now());
                         return rm;
                     }).toList();
             if (!list.isEmpty()) {

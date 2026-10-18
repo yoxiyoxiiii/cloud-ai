@@ -10,7 +10,6 @@ import com.cloudai.common.core.exception.ErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -95,9 +94,8 @@ public class ApprovalProjectionReconciler {
         for (Map.Entry<String, List<ProjectionRow>> group : byType.entrySet()) {
             List<String> keys = group.getValue().stream().map(ProjectionRow::businessKey).toList();
             Map<String, InnerApprovalStatusVo> truth = fetchPlatformStatus(group.getKey(), keys);
-            LocalDateTime now = LocalDateTime.now();
             for (ProjectionRow row : group.getValue()) {
-                applyTruth(row, truth.get(row.businessKey()), now);
+                applyTruth(row, truth.get(row.businessKey()));
             }
         }
     }
@@ -124,8 +122,9 @@ public class ApprovalProjectionReconciler {
         return byKey;
     }
 
-    /** 真相回写：平台无单跳过（不建行不推进）；有单则 diff（SQL 条件写幂等，已收敛零更新） */
-    private void applyTruth(ProjectionRow row, InnerApprovalStatusVo truth, LocalDateTime now) {
+    /** 真相回写：平台无单跳过（不建行不推进）；有单则 diff（SQL 条件写幂等，已收敛零更新；
+     *  update_time 由 SQL NOW() 落库） */
+    private void applyTruth(ProjectionRow row, InnerApprovalStatusVo truth) {
         if (truth == null || truth.getStatus() == null || truth.getApprovalId() == null) {
             return;
         }
@@ -137,6 +136,6 @@ public class ApprovalProjectionReconciler {
         }
         Long approvalId = Long.valueOf(truth.getApprovalId());
         projectionDao.applyReconcile(new ReconcileDiff(row.businessType(), row.businessKey(),
-                platformStatus, approvalId, truth.getProcessInstanceId()), AUDIT_OPERATOR, now);
+                platformStatus, approvalId, truth.getProcessInstanceId()), AUDIT_OPERATOR);
     }
 }

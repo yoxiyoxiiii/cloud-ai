@@ -112,7 +112,7 @@
         INSERT INTO sys_user (account, nickname, dept_id, password, status,
                               create_by, create_time, update_by, update_time)
         VALUES (#{account}, #{nickname}, #{deptId}, #{password}, #{status},
-                #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+                #{createBy}, NOW(), #{updateBy}, NOW())
     </insert>
 
     <!-- 动态列等价原 updateById 的 NOT_NULL 字段策略：null 列不改库值
@@ -132,7 +132,7 @@
             <if test="updateBy != null">
                 update_by = #{updateBy},
             </if>
-            update_time = #{updateTime},
+            update_time = NOW(),
         </set>
         WHERE id = #{id} AND deleted = 0
     </update>
@@ -140,7 +140,7 @@
     <update id="updatePassword">
         UPDATE sys_user
            SET password = #{password},
-               update_time = #{updateTime}
+               update_time = NOW()
                <if test="updateBy != null">
                    , update_by = #{updateBy}
                </if>
@@ -150,7 +150,7 @@
     <update id="deleteById">
         UPDATE sys_user
            SET deleted = 1,
-               update_time = #{updateTime}
+               update_time = NOW()
                <if test="updateBy != null">
                    , update_by = #{updateBy}
                </if>

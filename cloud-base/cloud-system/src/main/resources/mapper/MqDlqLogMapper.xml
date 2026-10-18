@@ -44,18 +44,19 @@
         INSERT INTO mq_dlq_log (msg_id, tx_no, born_topic, born_group, watch_group, tag, msg_key, body,
                                 reconsume_times, born_time, dlq_time, status, resend_count, create_time)
         VALUES (#{msgId}, #{txNo}, #{bornTopic}, #{bornGroup}, #{watchGroup}, #{tag}, #{msgKey}, #{body},
-                #{reconsumeTimes}, #{bornTime}, #{dlqTime}, #{status}, #{resendCount}, #{createTime})
+                #{reconsumeTimes}, #{bornTime}, #{dlqTime}, #{status}, #{resendCount}, NOW())
     </insert>
 
-    <!-- 重投成功行流转（设计 D7 步骤③）：resend_count 自增计数（读改写原子），last_resend_time=处置时间 -->
+    <!-- 重投成功行流转（设计 D7 步骤③）：resend_count 自增计数（读改写原子），last_resend_time=处置时间；
+         处置时刻三列（last_resend_time/operate_time/update_time）同语句 NOW() 同值 -->
     <update id="updateResend">
         UPDATE mq_dlq_log
            SET status = 1,
                resend_count = resend_count + 1,
-               last_resend_time = #{operateTime},
+               last_resend_time = NOW(),
                operate_account = #{operateAccount},
-               operate_time = #{operateTime},
-               update_time = #{operateTime}
+               operate_time = NOW(),
+               update_time = NOW()
          WHERE id = #{id}
     </update>
 
@@ -64,8 +65,8 @@
         UPDATE mq_dlq_log
            SET status = #{status},
                operate_account = #{operateAccount},
-               operate_time = #{operateTime},
-               update_time = #{operateTime}
+               operate_time = NOW(),
+               update_time = NOW()
          WHERE id = #{id}
     </update>
 
@@ -75,8 +76,8 @@
            SET status = 0,
                resend_count = 0,
                operate_account = #{operateAccount},
-               operate_time = #{operateTime},
-               update_time = #{operateTime}
+               operate_time = NOW(),
+               update_time = NOW()
          WHERE id = #{id}
     </update>
 

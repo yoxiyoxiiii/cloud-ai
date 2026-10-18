@@ -7,8 +7,6 @@ import org.springframework.jdbc.core.RowMapper;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Timestamp;
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -26,11 +24,12 @@ public class ApprovalProjectionDao {
     private final JdbcTemplate jdbcTemplate;
 
     /** CREATE_RESULT/SUCCESS upsert（设计 D4 表行 1）：INSERT 分支 create_result=1/approval_status=0；
-     *  ON DUPLICATE 只补 approval_id/process_instance_id/create_result=1 + 审计——不含 approval_status */
+     *  ON DUPLICATE 只补 approval_id/process_instance_id/create_result=1 + 审计——不含 approval_status；
+     *  update_time 取数据库时钟 NOW()（ON DUPLICATE 引用插入值，同值传导） */
     static final String SQL_APPLY_CREATE_SUCCESS =
             "INSERT INTO approval_projection (business_type, business_key, approval_id, process_instance_id, "
                     + "create_result, approval_status, create_by, update_by, update_time) "
-                    + "VALUES (?, ?, ?, ?, 1, 0, ?, ?, ?) "
+                    + "VALUES (?, ?, ?, ?, 1, 0, ?, ?, NOW()) "
                     + "ON DUPLICATE KEY UPDATE "
                     + "approval_id = VALUES(approval_id), "
                     + "process_instance_id = VALUES(process_instance_id), "
@@ -39,36 +38,39 @@ public class ApprovalProjectionDao {
                     + "update_time = VALUES(update_time)";
 
     /** CREATE_RESULT/FAILED upsert（设计 D4 表行 2）：INSERT 分支 create_result=2/approval_status=0/
-     *  approval_id=NULL；ON DUPLICATE 只写 create_result=2 + 审计——不含 approval_status/approval_id */
+     *  approval_id=NULL；ON DUPLICATE 只写 create_result=2 + 审计——不含 approval_status/approval_id；
+     *  update_time 取数据库时钟 NOW() */
     static final String SQL_APPLY_CREATE_FAILED =
             "INSERT INTO approval_projection (business_type, business_key, create_result, approval_status, "
                     + "create_by, update_by, update_time) "
-                    + "VALUES (?, ?, 2, 0, ?, ?, ?) "
+                    + "VALUES (?, ?, 2, 0, ?, ?, NOW()) "
                     + "ON DUPLICATE KEY UPDATE "
                     + "create_result = 2, "
                     + "update_by = VALUES(update_by), "
                     + "update_time = VALUES(update_time)";
 
     /** TERMINAL upsert（设计 D4 表行 3）：INSERT 分支 create_result=0（乱序先到建行，SUCCESS 后到补）；
-     *  ON DUPLICATE 只写 approval_status + 审计——不含 create_result/approval_id/process_instance_id */
+     *  ON DUPLICATE 只写 approval_status + 审计——不含 create_result/approval_id/process_instance_id；
+     *  update_time 取数据库时钟 NOW() */
     static final String SQL_APPLY_TERMINAL =
             "INSERT INTO approval_projection (business_type, business_key, approval_status, "
                     + "create_by, update_by, update_time) "
-                    + "VALUES (?, ?, ?, ?, ?, ?) "
+                    + "VALUES (?, ?, ?, ?, ?, NOW()) "
                     + "ON DUPLICATE KEY UPDATE "
                     + "approval_status = VALUES(approval_status), "
                     + "update_by = VALUES(update_by), "
                     + "update_time = VALUES(update_time)";
 
     /** 对账 diff 回写：approval_status 推进为平台真相 + create_result=0 行补发起成功三件套；
-     *  WHERE 条件写幂等（已收敛行零更新无审计扰动）+ create_result=2 失败行永不触碰（单调不回退） */
+     *  WHERE 条件写幂等（已收敛行零更新无审计扰动）+ create_result=2 失败行永不触碰（单调不回退）；
+     *  update_time 取数据库时钟 NOW() */
     static final String SQL_APPLY_RECONCILE =
             "UPDATE approval_projection "
                     + "SET approval_status = ?, "
                     + "create_result = IF(create_result = 0, 1, create_result), "
                     + "approval_id = IFNULL(approval_id, ?), "
                     + "process_instance_id = IFNULL(process_instance_id, ?), "
-                    + "update_by = ?, update_time = ? "
+                    + "update_by = ?, update_time = NOW() "
                     + "WHERE business_type = ? AND business_key = ? "
                     + "AND create_result <> 2 "
                     + "AND (approval_status <> ? OR create_result = 0)";
@@ -98,30 +100,30 @@ public class ApprovalProjectionDao {
         }
     };
 
-    /** 消费 CREATE_RESULT/SUCCESS 落投影（L2 业务 uk 幂等：ON DUPLICATE 重投同值空效果） */
-    public int applyCreateSuccess(ApprovalEventMessage event, String operator, LocalDateTime updateTime) {
+    /** 消费 CREATE_RESULT/SUCCESS 落投影（L2 业务 uk 幂等：ON DUPLICATE 重投同值空效果；
+     *  update_time 由 SQL NOW() 落库） */
+    public int applyCreateSuccess(ApprovalEventMessage event, String operator) {
         return jdbcTemplate.update(SQL_APPLY_CREATE_SUCCESS, event.getBusinessType(), event.getBusinessKey(),
                 Long.valueOf(event.getApprovalId()), event.getProcessInstanceId(),
-                operator, operator, Timestamp.valueOf(updateTime));
+                operator, operator);
     }
 
     /** 消费 CREATE_RESULT/FAILED 落投影（发起失败行：approval_id 永为 NULL，对外 status=4 由读侧派生） */
-    public int applyCreateFailed(ApprovalEventMessage event, String operator, LocalDateTime updateTime) {
+    public int applyCreateFailed(ApprovalEventMessage event, String operator) {
         return jdbcTemplate.update(SQL_APPLY_CREATE_FAILED, event.getBusinessType(), event.getBusinessKey(),
-                operator, operator, Timestamp.valueOf(updateTime));
+                operator, operator);
     }
 
     /** 消费 TERMINAL 落投影（乱序先到建行 create_result=0；approval_status 单调推进不回退） */
-    public int applyTerminal(ApprovalEventMessage event, int terminalStatus,
-                             String operator, LocalDateTime updateTime) {
+    public int applyTerminal(ApprovalEventMessage event, int terminalStatus, String operator) {
         return jdbcTemplate.update(SQL_APPLY_TERMINAL, event.getBusinessType(), event.getBusinessKey(),
-                terminalStatus, operator, operator, Timestamp.valueOf(updateTime));
+                terminalStatus, operator, operator);
     }
 
     /** 对账 diff 回写（未命中=已收敛/失败行，幂等空更新） */
-    public int applyReconcile(ReconcileDiff diff, String operator, LocalDateTime updateTime) {
+    public int applyReconcile(ReconcileDiff diff, String operator) {
         return jdbcTemplate.update(SQL_APPLY_RECONCILE, diff.approvalStatus(), diff.approvalId(),
-                diff.processInstanceId(), operator, Timestamp.valueOf(updateTime),
+                diff.processInstanceId(), operator,
                 diff.businessType(), diff.businessKey(), diff.approvalStatus());
     }
 

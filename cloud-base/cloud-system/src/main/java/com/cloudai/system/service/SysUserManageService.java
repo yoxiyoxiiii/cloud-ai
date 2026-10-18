@@ -21,7 +21,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Slf4j
@@ -75,13 +74,10 @@ public class SysUserManageService {
         user.setDeptId(requireDeptId(req.getDeptId()));
         user.setPassword(passwordEncoder.encode(req.getPassword()));
         user.setStatus(req.getStatus() == null ? SysUser.StatusEnum.NORMAL.getCode() : req.getStatus());
-        // 手写 SQL 无 MetaObjectHandler 自动填充：审计四值显式传入，插入时 update 值 = create 值
+        // 手写 SQL 无 MetaObjectHandler 自动填充：操作人显式传入；审计时间由 XML 的 NOW() 落库（插入时 create=update 同值）
         String operator = SecurityUtils.currentAccount();
-        LocalDateTime now = LocalDateTime.now();
         user.setCreateBy(operator);
-        user.setCreateTime(now);
         user.setUpdateBy(operator);
-        user.setUpdateTime(now);
         try {
             userMapper.save(user);
         } catch (org.springframework.dao.DuplicateKeyException e) {
@@ -105,7 +101,6 @@ public class SysUserManageService {
         user.setDeptId(requireDeptId(req.getDeptId()));
         user.setStatus(req.getStatus());
         user.setUpdateBy(SecurityUtils.currentAccount());
-        user.setUpdateTime(LocalDateTime.now());
         userMapper.update(user);
         evictUserTransCache();
     }
@@ -117,7 +112,7 @@ public class SysUserManageService {
         if (Integer.valueOf(SysUser.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
             throw new BusinessException(ERR_BUILTIN, "内置用户禁止删除");
         }
-        userMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        userMapper.deleteById(id, SecurityUtils.currentAccount());
         userRoleMapper.deleteByUserId(id);
         evictUserTransCache();
     }
@@ -129,7 +124,7 @@ public class SysUserManageService {
         }
         requireUser(id);
         userMapper.updatePassword(id, passwordEncoder.encode(newPassword),
-                SecurityUtils.currentAccount(), LocalDateTime.now());
+                SecurityUtils.currentAccount());
     }
 
     @Transactional(rollbackFor = Exception.class)
@@ -146,7 +141,6 @@ public class SysUserManageService {
                         SysUserRole ur = new SysUserRole();
                         ur.setUserId(userId);
                         ur.setRoleId(roleId);
-                        ur.setCreateTime(LocalDateTime.now());
                         return ur;
                     }).toList();
             if (!list.isEmpty()) {

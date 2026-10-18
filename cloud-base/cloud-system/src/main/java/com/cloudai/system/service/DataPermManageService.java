@@ -42,7 +42,6 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -515,11 +514,8 @@ public class DataPermManageService {
             rule.setCustomAccounts(customJson);
             rule.setPredicates(predicatesJson);
             String operator = SecurityUtils.currentAccount();
-            LocalDateTime now = LocalDateTime.now();
             rule.setCreateBy(operator);
-            rule.setCreateTime(now);
             rule.setUpdateBy(operator);
-            rule.setUpdateTime(now);
             try {
                 ruleMapper.save(rule);
             } catch (DuplicateKeyException e) {
@@ -534,7 +530,6 @@ public class DataPermManageService {
         rule.setCustomAccounts(customJson);
         rule.setPredicates(predicatesJson);
         rule.setUpdateBy(SecurityUtils.currentAccount());
-        rule.setUpdateTime(LocalDateTime.now());
         ruleMapper.update(rule);
     }
 
@@ -546,7 +541,6 @@ public class DataPermManageService {
             return;
         }
         String operator = SecurityUtils.currentAccount();
-        LocalDateTime now = LocalDateTime.now();
         List<SysDataPermColumn> entities = new ArrayList<>();
         for (DataPermRuleSaveRequest.ColumnRuleItem item : items) {
             SysDataPermColumn col = new SysDataPermColumn();
@@ -556,9 +550,7 @@ public class DataPermManageService {
             col.setColumnKey(item.getColumnKey());
             col.setAction(item.getAction());
             col.setCreateBy(operator);
-            col.setCreateTime(now);
             col.setUpdateBy(operator);
-            col.setUpdateTime(now);
             entities.add(col);
         }
         columnMapper.saveBatch(entities);

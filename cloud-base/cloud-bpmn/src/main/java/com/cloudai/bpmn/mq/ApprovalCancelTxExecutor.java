@@ -10,8 +10,6 @@ import com.cloudai.common.rocketmq.tx.TxLocalExecutor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
-
 /**
  * 撤销终态通知 executor（通道 terminal-cancel，契约 2026-10-09 §1.3 触发点 2）。
  * executeInTx = 4010/4012/4011 复查（发送前置校验后到者防御）+ 删流程实例 + 置已撤销，
@@ -43,7 +41,7 @@ public class ApprovalCancelTxExecutor implements TxLocalExecutor<ApprovalEventMe
         BpmnApproval approval = workflowService.findCancelableApproval(cmd.approvalId(), cmd.operator());
         workflowService.deleteProcessInstance(approval);
         approvalMapper.updateStatusById(cmd.approvalId(), StatusEnum.CANCELLED.getCode(),
-                null, cmd.operator(), LocalDateTime.now());
+                null, cmd.operator());
         ctx.setBusinessRef(payload.getBusinessType(), payload.getBusinessKey());
         return StatusEnum.CANCELLED.getCode();
     }

@@ -9,8 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.common.message.MessageExt;
 import org.apache.rocketmq.spring.annotation.RocketMQMessageListener;
 
-import java.time.LocalDateTime;
-
 /**
  * 审批事件投影消费者——每业务服务唯一「流程状态结果监听对象」（契约 2026-10-09-approval-projection-api
  * §2.2 / 设计 D3）：消费 APPROVAL_EVENT_NOTIFY 三分支 upsert 投影表，业务零感知、零业务 Mapper。
@@ -67,9 +65,9 @@ public class ApprovalProjectionListener extends DedupRocketMQListener {
                 throw new IllegalArgumentException("SUCCESS 事件缺 approvalId: " + event.getBusinessKey());
             }
             // pid 防御容忍 null（列可空，对账 status-list 回补——契约 §2.1 必填由生产端保证）
-            projectionDao.applyCreateSuccess(event, AUDIT_OPERATOR, LocalDateTime.now());
+            projectionDao.applyCreateSuccess(event, AUDIT_OPERATOR);
         } else if (ApprovalMqTopics.RESULT_FAILED.equals(event.getResult())) {
-            projectionDao.applyCreateFailed(event, AUDIT_OPERATOR, LocalDateTime.now());
+            projectionDao.applyCreateFailed(event, AUDIT_OPERATOR);
         } else {
             throw new IllegalArgumentException("未知发起结果: " + event.getResult());
         }
@@ -86,6 +84,6 @@ public class ApprovalProjectionListener extends DedupRocketMQListener {
         if (terminalStatus < 1 || terminalStatus > 3) {
             throw new IllegalArgumentException("终态值越界（投影值域 1-3）: " + terminalStatus);
         }
-        projectionDao.applyTerminal(event, terminalStatus, AUDIT_OPERATOR, LocalDateTime.now());
+        projectionDao.applyTerminal(event, terminalStatus, AUDIT_OPERATOR);
     }
 }

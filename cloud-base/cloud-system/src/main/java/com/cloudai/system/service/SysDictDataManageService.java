@@ -20,7 +20,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -108,7 +107,6 @@ public class SysDictDataManageService {
         data.setSort(req.getSort());
         data.setStatus(req.getStatus());
         data.setUpdateBy(SecurityUtils.currentAccount());
-        data.setUpdateTime(LocalDateTime.now());
         try {
             dictDataMapper.update(data);
         } catch (DuplicateKeyException e) {
@@ -129,7 +127,7 @@ public class SysDictDataManageService {
         if (Integer.valueOf(SysDictData.BuiltinEnum.BUILT_IN.getCode()).equals(current.getIsBuiltin())) {
             throw new BusinessException(ERR_BUILTIN, "内置字典项禁止删除");
         }
-        dictDataMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        dictDataMapper.deleteById(id, SecurityUtils.currentAccount());
         evictDictTransCacheByTypeId(current.getDictTypeId());
     }
 
@@ -171,14 +169,11 @@ public class SysDictDataManageService {
         }
     }
 
-    /** 手写 SQL 无自动填充：审计四值显式构造，插入时 update 值 = create 值 */
+    /** 手写 SQL 无自动填充：操作人显式构造；审计时间由 XML 的 NOW() 落库（插入时 create=update 同值） */
     private void auditCreate(SysDictData data) {
         String operator = SecurityUtils.currentAccount();
-        LocalDateTime now = LocalDateTime.now();
         data.setCreateBy(operator);
-        data.setCreateTime(now);
         data.setUpdateBy(operator);
-        data.setUpdateTime(now);
     }
 
     private SysDictData requireData(Long id) {

@@ -6,13 +6,12 @@ import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.vo.SysUserVo;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
  * 用户表 SQL（XML：mapper/SysUserMapper.xml）。
  * 逻辑删除与审计字段由手写 SQL 显式维护：查询带 deleted=0，删除为 UPDATE deleted=1；
- * INSERT/UPDATE 的审计列（create_by/create_time/update_by/update_time）由 Service 显式传参。
+ * 审计时间列（create_time/update_time）由 SQL NOW() 取数据库时钟，操作人由 Service 显式传参。
  */
 public interface SysUserMapper {
 
@@ -51,11 +50,9 @@ public interface SysUserMapper {
 
     int updatePassword(@Param("id") Long id,
                        @Param("password") String password,
-                       @Param("updateBy") String updateBy,
-                       @Param("updateTime") LocalDateTime updateTime);
+                       @Param("updateBy") String updateBy);
 
-    /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
+    /** 逻辑删除：UPDATE deleted=1 并留更新审计（update_time 取 NOW()） */
     int deleteById(@Param("id") Long id,
-                   @Param("updateBy") String updateBy,
-                   @Param("updateTime") LocalDateTime updateTime);
+                   @Param("updateBy") String updateBy);
 }

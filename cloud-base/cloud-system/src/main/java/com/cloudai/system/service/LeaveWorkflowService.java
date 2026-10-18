@@ -23,7 +23,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.List;
 
@@ -133,7 +132,7 @@ public class LeaveWorkflowService {
         }
     }
 
-    /** 手写 SQL 无自动填充：审计四值显式构造（插入时 update 值 = create 值）；
+    /** 手写 SQL 无自动填充：操作人显式构造，审计时间由 XML 的 NOW() 落库（插入时 create=update 同值）；
      *  id 由调用方 snowflake 预生成显式写入（设计 R2）；纯业务行无状态列（投影派生读） */
     private SysLeave buildLeave(LeaveCreateRequest req, LocalDate[] range, String operator) {
         SysLeave leave = new SysLeave();
@@ -144,11 +143,8 @@ public class LeaveWorkflowService {
         leave.setReason(req.getReason());
         leave.setApplyUser(operator);
         leave.setApprover(req.getApprover());
-        LocalDateTime now = LocalDateTime.now();
         leave.setCreateBy(operator);
-        leave.setCreateTime(now);
         leave.setUpdateBy(operator);
-        leave.setUpdateTime(now);
         return leave;
     }
 

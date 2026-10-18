@@ -76,7 +76,6 @@ class MqDlqWatchListenerTest {
         assertThat(log.getDlqTime()).isNotNull();
         assertThat(log.getStatus()).isEqualTo(MqDlqLog.StatusEnum.PENDING.getCode());
         assertThat(log.getResendCount()).isZero();
-        assertThat(log.getCreateTime()).isNotNull();
     }
 
     @Test

@@ -5,7 +5,6 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.system.entity.SysDictData;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -34,8 +33,7 @@ public interface SysDictDataMapper {
     /** 动态更新（仅非空列，等价 NOT_NULL 字段策略） */
     int update(SysDictData dictData);
 
-    /** 逻辑删除：UPDATE deleted=1 并留更新审计 */
+    /** 逻辑删除：UPDATE deleted=1 并留更新审计（update_time 取 NOW()） */
     int deleteById(@Param("id") Long id,
-                   @Param("updateBy") String updateBy,
-                   @Param("updateTime") LocalDateTime updateTime);
+                   @Param("updateBy") String updateBy);
 }

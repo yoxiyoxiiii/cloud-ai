@@ -196,12 +196,11 @@ class DataPermManageServiceTest {
 
         manageService.saveRule(req);
 
-        // 行规则 insert（档位 + 审计四值）；列规则全删后批插两条
+        // 行规则 insert（档位 + 操作人；审计时间由 XML 的 NOW() 落库）；列规则全删后批插两条
         ArgumentCaptor<SysDataPermRule> ruleCaptor = ArgumentCaptor.forClass(SysDataPermRule.class);
         verify(ruleMapper).save(ruleCaptor.capture());
         assertThat(ruleCaptor.getValue().getRowScope()).isEqualTo(2);
         assertThat(ruleCaptor.getValue().getCustomAccounts()).isNull();
-        assertThat(ruleCaptor.getValue().getCreateTime()).isNotNull();
         verify(columnMapper).deleteBySubject(RESOURCE, 0, 2L);
         ArgumentCaptor<List<SysDataPermColumn>> colCaptor = ArgumentCaptor.captor();
         verify(columnMapper).saveBatch(colCaptor.capture());

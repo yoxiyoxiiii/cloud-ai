@@ -3,7 +3,7 @@
 <mapper namespace="com.cloudai.system.mapper.DataPermLogMapper">
 
     <!-- 只插不删流水表（设计 D7）：无 deleted 列、无 update/delete 路径；
-         create_time 由 DDL DEFAULT CURRENT_TIMESTAMP 兜底，Service 显式传值对齐 -->
+         create_time 由 SQL NOW() 取数据库时钟（DDL 另有 DEFAULT CURRENT_TIMESTAMP 兜底） -->
     <sql id="allColumns">
         id, account, resource, operation, rule_ids, rule_digest,
         scope_summary, column_summary, business_key, create_time
@@ -13,7 +13,7 @@
         INSERT INTO sys_data_perm_log (account, resource, operation, rule_ids, rule_digest,
                                        scope_summary, column_summary, business_key, create_time)
         VALUES (#{account}, #{resource}, #{operation}, #{ruleIds}, #{ruleDigest},
-                #{scopeSummary}, #{columnSummary}, #{businessKey}, #{createTime})
+                #{scopeSummary}, #{columnSummary}, #{businessKey}, NOW())
     </insert>
 
     <!-- 留痕检索：account 等值命中 idx_account_time（等值+时间倒序范围）、resource 命中 idx_resource_time -->

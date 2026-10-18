@@ -18,7 +18,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -89,7 +88,6 @@ public class SysDictTypeManageService {
         type.setDictKey(req.getDictKey());
         type.setStatus(req.getStatus());
         type.setUpdateBy(SecurityUtils.currentAccount());
-        type.setUpdateTime(LocalDateTime.now());
         try {
             dictTypeMapper.update(type);
         } catch (DuplicateKeyException e) {
@@ -114,7 +112,7 @@ public class SysDictTypeManageService {
         if (dataCount > 0) {
             throw new BusinessException(ERR_TYPE_HAS_DATA, "该字典类型下存在字典项，先删除字典项");
         }
-        dictTypeMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        dictTypeMapper.deleteById(id, SecurityUtils.currentAccount());
         evictDictTransCache(type.getDictKey());
     }
 
@@ -147,14 +145,11 @@ public class SysDictTypeManageService {
         }
     }
 
-    /** 手写 SQL 无自动填充：审计四值显式构造，插入时 update 值 = create 值 */
+    /** 手写 SQL 无自动填充：操作人显式构造；审计时间由 XML 的 NOW() 落库（插入时 create=update 同值） */
     private void auditCreate(SysDictType type) {
         String operator = SecurityUtils.currentAccount();
-        LocalDateTime now = LocalDateTime.now();
         type.setCreateBy(operator);
-        type.setCreateTime(now);
         type.setUpdateBy(operator);
-        type.setUpdateTime(now);
     }
 
     private SysDictType requireType(Long id) {

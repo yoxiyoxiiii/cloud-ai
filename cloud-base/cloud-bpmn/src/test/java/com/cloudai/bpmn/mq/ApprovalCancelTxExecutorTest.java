@@ -50,7 +50,7 @@ class ApprovalCancelTxExecutorTest {
         assertThat(out).isEqualTo(StatusEnum.CANCELLED.getCode());
         verify(workflowService).deleteProcessInstance(approval);
         verify(approvalMapper).updateStatusById(eq(5L), eq(StatusEnum.CANCELLED.getCode()),
-                isNull(), eq("userA"), any());
+                isNull(), eq("userA"));
         assertThat(ctx.getBusinessType()).isEqualTo("leave");
         assertThat(ctx.getBusinessKey()).isEqualTo("7");
     }
@@ -65,7 +65,7 @@ class ApprovalCancelTxExecutorTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4011);
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
+        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -80,7 +80,7 @@ class ApprovalCancelTxExecutorTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4011);
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
+        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any());
     }
 
     // ---- 脚手架 ----

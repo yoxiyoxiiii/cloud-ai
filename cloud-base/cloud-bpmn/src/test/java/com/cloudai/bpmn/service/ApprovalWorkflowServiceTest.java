@@ -118,7 +118,7 @@ class ApprovalWorkflowServiceTest {
         assertThat(captor.getValue().getProcessKey()).isEqualTo("leave_approval");
         assertThat(captor.getValue().getProcessInstanceId()).isNull();
         verify(approvalMapper).updateStatusById(eq(12L), eq(StatusEnum.APPROVING.getCode()),
-                eq("pid-1"), eq("userA"), any());
+                eq("pid-1"), eq("userA"));
         // 消费入口不直接发事件——SUCCESS 补偿事件由 ApprovalCreateConsumer 负责（契约 §1.2）
         verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
                 any(), anyString(), any());
@@ -245,7 +245,7 @@ class ApprovalWorkflowServiceTest {
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4017);
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
+        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any());
     }
 
     // ---- listStatusByBusiness ----
@@ -334,7 +334,7 @@ class ApprovalWorkflowServiceTest {
         assertThat(event.getValue().getBusinessKey()).isEqualTo("7");
         // 引擎删实例与置 3 已迁入 executor（本地事务内）——service 不再直接写
         verify(runtimeService, never()).deleteProcessInstance(anyString(), anyString());
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
+        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any());
     }
 
     @Test
@@ -421,7 +421,7 @@ class ApprovalWorkflowServiceTest {
         assertThat(cmd.expectedStatus()).isEqualTo(StatusEnum.APPROVED.getCode());
         // 引擎推进已迁 executor——service 不再直接写引擎/审批表
         verify(taskService, never()).complete(anyString(), anyMap());
-        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any(), any());
+        verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any());
     }
 
     @Test

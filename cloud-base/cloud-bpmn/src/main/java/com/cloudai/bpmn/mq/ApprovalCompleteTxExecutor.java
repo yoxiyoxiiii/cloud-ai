@@ -16,7 +16,6 @@ import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.task.api.Task;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
@@ -104,7 +103,7 @@ public class ApprovalCompleteTxExecutor implements TxLocalExecutor<ApprovalEvent
             return null;
         }
         approvalMapper.updateStatusById(Long.valueOf(historic.getBusinessKey()), newStatus,
-                task.getProcessInstanceId(), opUser, LocalDateTime.now());
+                task.getProcessInstanceId(), opUser);
         return newStatus;
     }
 

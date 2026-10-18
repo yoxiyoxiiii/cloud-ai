@@ -77,7 +77,7 @@
         INSERT INTO sys_data_perm_rule (resource, subject_type, subject_id, row_scope, custom_accounts, predicates,
                                         create_by, create_time, update_by, update_time)
         VALUES (#{resource}, #{subjectType}, #{subjectId}, #{rowScope}, #{customAccounts}, #{predicates},
-                #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+                #{createBy}, NOW(), #{updateBy}, NOW())
     </insert>
 
     <!-- upsert 更新分支：档位与账号集合/条件组整体覆盖 + update 审计两值 -->
@@ -87,7 +87,7 @@
                custom_accounts = #{customAccounts},
                predicates = #{predicates},
                update_by = #{updateBy},
-               update_time = #{updateTime}
+               update_time = NOW()
          WHERE id = #{id}
     </update>
 

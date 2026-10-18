@@ -13,7 +13,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
 
-import java.time.LocalDateTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -62,13 +61,13 @@ class ApprovalProjectionListenerTest {
         listener.onMessage(msg(event("CREATE_RESULT", "SUCCESS", null, "pid-9")));
 
         ArgumentCaptor<ApprovalEventMessage> captor = ArgumentCaptor.forClass(ApprovalEventMessage.class);
-        verify(projectionDao).applyCreateSuccess(captor.capture(), eq("bpmn-event"), any(LocalDateTime.class));
+        verify(projectionDao).applyCreateSuccess(captor.capture(), eq("bpmn-event"));
         assertThat(captor.getValue().getBusinessType()).isEqualTo("leave");
         assertThat(captor.getValue().getBusinessKey()).isEqualTo("5");
         assertThat(captor.getValue().getApprovalId()).isEqualTo("12");
         assertThat(captor.getValue().getProcessInstanceId()).isEqualTo("pid-9");
-        verify(projectionDao, never()).applyCreateFailed(any(), anyString(), any());
-        verify(projectionDao, never()).applyTerminal(any(), anyInt(), anyString(), any());
+        verify(projectionDao, never()).applyCreateFailed(any(), anyString());
+        verify(projectionDao, never()).applyTerminal(any(), anyInt(), anyString());
     }
 
     @Test
@@ -87,15 +86,15 @@ class ApprovalProjectionListenerTest {
     void createResultFailed_upsertsCreateFailedFamily() {
         listener.onMessage(msg(event("CREATE_RESULT", "FAILED", null, null)));
 
-        verify(projectionDao).applyCreateFailed(any(), eq("bpmn-event"), any(LocalDateTime.class));
-        verify(projectionDao, never()).applyCreateSuccess(any(), anyString(), any());
+        verify(projectionDao).applyCreateFailed(any(), eq("bpmn-event"));
+        verify(projectionDao, never()).applyCreateSuccess(any(), anyString());
     }
 
     @Test
     void terminal_writesTerminalStatus() {
         listener.onMessage(msg(event("TERMINAL", null, "3", null)));
 
-        verify(projectionDao).applyTerminal(any(), eq(3), eq("bpmn-event"), any(LocalDateTime.class));
+        verify(projectionDao).applyTerminal(any(), eq(3), eq("bpmn-event"));
     }
 
     @Test
@@ -140,7 +139,7 @@ class ApprovalProjectionListenerTest {
     @Test
     void businessFailure_releasesDedupRowAndRethrows() {
         // doConsume 异常 → 删 dedup 行放行重试（失败不删行=消息被吞丢失，starter L1 契约）
-        when(projectionDao.applyTerminal(any(), anyInt(), anyString(), any()))
+        when(projectionDao.applyTerminal(any(), anyInt(), anyString()))
                 .thenThrow(new RuntimeException("db down"));
 
         assertThatThrownBy(() -> listener.onMessage(msg(event("TERMINAL", null, "1", null))))

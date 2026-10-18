@@ -34,7 +34,6 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -94,7 +93,7 @@ public class ApprovalWorkflowService {
 
         String processInstanceId = startProcess(approval, req.getVariables());
         approvalMapper.updateStatusById(approval.getId(), StatusEnum.APPROVING.getCode(),
-                processInstanceId, req.getApplyUser(), LocalDateTime.now());
+                processInstanceId, req.getApplyUser());
         return buildCreateVo(approval.getId(), processInstanceId);
     }
 
@@ -184,7 +183,7 @@ public class ApprovalWorkflowService {
         }
     }
 
-    /** 手写 SQL 无自动填充：审计四值显式构造（插入时 update 值 = create 值）；
+    /** 手写 SQL 无自动填充：操作人显式构造，审计时间由 XML 的 NOW() 落库（插入时 create=update 同值）；
      *  process_key 从配置快照（防配置后改漂移，设计 D1） */
     private BpmnApproval buildApproval(ApprovalCreateInnerRequest req, BpmnBusinessType config) {
         BpmnApproval approval = new BpmnApproval();
@@ -195,11 +194,8 @@ public class ApprovalWorkflowService {
         approval.setStatus(StatusEnum.APPROVING.getCode());
         approval.setApplyUser(req.getApplyUser());
         approval.setApprover(req.getApprover());
-        LocalDateTime now = LocalDateTime.now();
         approval.setCreateBy(req.getApplyUser());
-        approval.setCreateTime(now);
         approval.setUpdateBy(req.getApplyUser());
-        approval.setUpdateTime(now);
         return approval;
     }
 

@@ -57,7 +57,7 @@
             <if test="status != null">
                 #{status},
             </if>
-            #{createBy}, #{createTime}, #{updateBy}, #{updateTime},
+            #{createBy}, NOW(), #{updateBy}, NOW(),
         </trim>
     </insert>
 
@@ -77,7 +77,7 @@
             <if test="updateBy != null">
                 update_by = #{updateBy},
             </if>
-            update_time = #{updateTime},
+            update_time = NOW(),
         </set>
         WHERE id = #{id} AND deleted = 0
     </update>
@@ -86,7 +86,7 @@
     <update id="deleteById">
         UPDATE sys_dict_type
            SET deleted = 1,
-               update_time = #{updateTime}
+               update_time = NOW()
                <if test="updateBy != null">
                    , update_by = #{updateBy}
                </if>

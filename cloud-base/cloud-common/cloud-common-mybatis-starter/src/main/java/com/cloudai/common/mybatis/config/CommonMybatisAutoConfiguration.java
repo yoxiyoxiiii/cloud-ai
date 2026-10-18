@@ -9,6 +9,8 @@ import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 
+import javax.sql.DataSource;
+
 /**
  * MyBatis-Plus 通用配置：MySQL 分页插件（单页上限 200）+ 审计填充
  */
@@ -28,7 +30,7 @@ public class CommonMybatisAutoConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(MetaObjectHandler.class)
-    public AuditMetaObjectHandler auditMetaObjectHandler() {
-        return new AuditMetaObjectHandler();
+    public AuditMetaObjectHandler auditMetaObjectHandler(DataSource dataSource) {
+        return new AuditMetaObjectHandler(dataSource);
     }
 }

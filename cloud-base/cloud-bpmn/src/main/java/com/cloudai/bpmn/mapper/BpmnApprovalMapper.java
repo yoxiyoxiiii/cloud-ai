@@ -6,13 +6,13 @@ import com.cloudai.bpmn.entity.BpmnApproval;
 import com.cloudai.system.api.dataperm.RowFilter;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
  * 通用审批单表 SQL（XML：mapper/BpmnApprovalMapper.xml）。
  * 逻辑删除与审计字段由手写 SQL 显式维护：查询带 deleted=0（本表无删除端点，删除语句不存在——审批留档语义，
- * 行永不删故 uk_business 无墓碑占键问题）；INSERT/UPDATE 的审计列由 Service 显式传参。
+ * 行永不删故 uk_business 无墓碑占键问题）；审计时间列（create_time/update_time）由 SQL NOW() 取数据库时钟，
+ * 操作人由 Service 显式传参。
  */
 public interface BpmnApprovalMapper {
 
@@ -35,10 +35,9 @@ public interface BpmnApprovalMapper {
 
     int save(BpmnApproval approval);
 
-    /** 状态回写：status + process_instance_id + 更新审计两值（发起回填/办理回写/撤销共用） */
+    /** 状态回写：status + process_instance_id + 操作人（update_time 取 NOW()；发起回填/办理回写/撤销共用） */
     int updateStatusById(@Param("id") Long id,
                          @Param("status") Integer status,
                          @Param("processInstanceId") String processInstanceId,
-                         @Param("updateBy") String updateBy,
-                         @Param("updateTime") LocalDateTime updateTime);
+                         @Param("updateBy") String updateBy);
 }

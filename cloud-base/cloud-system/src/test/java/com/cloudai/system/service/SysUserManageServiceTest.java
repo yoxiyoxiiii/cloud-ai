@@ -89,7 +89,7 @@ class SysUserManageServiceTest {
         loginAs("admin");
         when(userMapper.findById(1L)).thenReturn(new SysUser());
         service.delete(1L);
-        verify(userMapper).deleteById(eq(1L), eq("admin"), any());
+        verify(userMapper).deleteById(eq(1L), eq("admin"));
         verify(translationCacheService).deleteUsers();
     }
 
@@ -99,7 +99,7 @@ class SysUserManageServiceTest {
         when(userMapper.findById(1L)).thenReturn(new SysUser());
         when(passwordEncoder.encode("newpass123")).thenReturn("hashed");
         service.resetPassword(1L, "newpass123");
-        verify(userMapper).updatePassword(eq(1L), eq("hashed"), eq("admin"), any());
+        verify(userMapper).updatePassword(eq(1L), eq("hashed"), eq("admin"));
         verify(translationCacheService, never()).deleteUsers();
     }
 
@@ -132,7 +132,7 @@ class SysUserManageServiceTest {
                 .hasMessageContaining("内置用户禁止删除")
                 .extracting("code")
                 .isEqualTo(3017);
-        verify(userMapper, never()).deleteById(any(), any(), any());
+        verify(userMapper, never()).deleteById(any(), any());
     }
 
     @Test
@@ -188,6 +188,6 @@ class SysUserManageServiceTest {
         when(userMapper.findById(1L)).thenReturn(builtinUser());
         when(passwordEncoder.encode("newpass123")).thenReturn("hashed");
         service.resetPassword(1L, "newpass123");
-        verify(userMapper).updatePassword(eq(1L), eq("hashed"), eq("admin"), any());
+        verify(userMapper).updatePassword(eq(1L), eq("hashed"), eq("admin"));
     }
 }

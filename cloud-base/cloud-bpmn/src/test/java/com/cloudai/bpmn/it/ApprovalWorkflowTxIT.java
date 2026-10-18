@@ -45,7 +45,7 @@ class ApprovalWorkflowTxIT {
     @Test
     void createApproval_rollsBackApprovalRowAndEngineInstanceTogether() {
         doThrow(new IllegalStateException("boom after engine start"))
-                .when(approvalMapper).updateStatusById(anyLong(), anyInt(), any(), any(), any());
+                .when(approvalMapper).updateStatusById(anyLong(), anyInt(), any(), any());
 
         assertThatThrownBy(() -> workflowService.createApproval(request()))
                 .isInstanceOf(IllegalStateException.class);

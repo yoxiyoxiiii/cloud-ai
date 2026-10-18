@@ -60,7 +60,6 @@ public abstract class AbstractMqDlqWatchListener implements RocketMQListener<Mes
         log.setDlqTime(toLocalDateTime(msg.getStoreTimestamp()));
         log.setStatus(MqDlqLog.StatusEnum.PENDING.getCode());
         log.setResendCount(0);
-        log.setCreateTime(LocalDateTime.now());
         return log;
     }
 

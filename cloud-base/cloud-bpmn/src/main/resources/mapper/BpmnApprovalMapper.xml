@@ -241,16 +241,16 @@
                                    create_by, create_time, update_by, update_time)
         VALUES (#{businessType}, #{businessKey}, #{title}, #{processKey}, #{status},
                 #{applyUser}, #{approver}, #{processInstanceId},
-                #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+                #{createBy}, NOW(), #{updateBy}, NOW())
     </insert>
 
-    <!-- 状态回写：status + process_instance_id + 更新审计两值（发起回填/办理回写/撤销共用；
+    <!-- 状态回写：status + process_instance_id + 操作人（update_time 取 NOW()；发起回填/办理回写/撤销共用；
          撤销传 processInstanceId=null 清空实例关联，契约 §3.1 processInstanceId 撤销后 null） -->
     <update id="updateStatusById">
         UPDATE bpmn_approval
            SET status = #{status},
                process_instance_id = #{processInstanceId},
-               update_time = #{updateTime}
+               update_time = NOW()
                <if test="updateBy != null">
                    , update_by = #{updateBy}
                </if>

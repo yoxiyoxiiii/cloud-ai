@@ -23,7 +23,6 @@ import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -85,9 +84,8 @@ public class MqDlqLogService {
             throw new BusinessException(ERR_DLQ_STATUS_NOT_ALLOWED, "死信状态不允许该操作: 终态不可重投");
         }
         if (dlq.getResendCount() >= properties.getResendMax()) {
-            LocalDateTime now = LocalDateTime.now();
             dlqLogMapper.updateStatus(id, MqDlqLog.StatusEnum.ABANDONED.getCode(),
-                    SecurityUtils.currentAccount(), now);
+                    SecurityUtils.currentAccount());
             throw new BusinessException(ERR_RESEND_LIMIT_EXCEEDED, "重投次数已达上限，已置为已放弃");
         }
         consumeDedupDao.delete(dlq.getBornGroup(), dlq.getMsgKey());
@@ -97,8 +95,7 @@ public class MqDlqLogService {
             log.error("死信重投发送失败: id={}, topic={}, msgKey={}", id, dlq.getBornTopic(), dlq.getMsgKey(), e);
             throw new BusinessException(ERR_RESEND_SEND_FAILED, "消息重投发送失败");
         }
-        LocalDateTime now = LocalDateTime.now();
-        dlqLogMapper.updateResend(id, SecurityUtils.currentAccount(), now);
+        dlqLogMapper.updateResend(id, SecurityUtils.currentAccount());
     }
 
     /** 人工忽略：仅待处理（0）可忽略——已重投行语义互斥（设计 D6）；终态留痕 */
@@ -108,7 +105,7 @@ public class MqDlqLogService {
             throw new BusinessException(ERR_DLQ_STATUS_NOT_ALLOWED, "死信状态不允许该操作: 仅待处理可忽略");
         }
         dlqLogMapper.updateStatus(id, MqDlqLog.StatusEnum.IGNORED.getCode(),
-                SecurityUtils.currentAccount(), LocalDateTime.now());
+                SecurityUtils.currentAccount());
     }
 
     /** 解除终态（admin，设计 D8）：已忽略/已放弃 → 待处理，resend_count 清零（覆盖误忽略恢复） */
@@ -118,7 +115,7 @@ public class MqDlqLogService {
                 && dlq.getStatus() != MqDlqLog.StatusEnum.ABANDONED.getCode()) {
             throw new BusinessException(ERR_DLQ_STATUS_NOT_ALLOWED, "死信状态不允许该操作: 仅终态可重置");
         }
-        dlqLogMapper.updateReset(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        dlqLogMapper.updateReset(id, SecurityUtils.currentAccount());
     }
 
     /** 重发原 topic：destination=tag 非空拼 topic:tag；msg_key≠msg_id 即原始 KEYS 才恢复 header；

@@ -158,7 +158,7 @@ class SysMenuManageServiceTest {
                 .hasMessageContaining("内置菜单禁止删除")
                 .extracting("code")
                 .isEqualTo(3014);
-        verify(menuMapper, never()).deleteById(any(), any(), any());
+        verify(menuMapper, never()).deleteById(any(), any());
         verify(roleMenuMapper, never()).deleteByMenuId(anyLong());
     }
 
@@ -169,7 +169,7 @@ class SysMenuManageServiceTest {
         when(menuMapper.findById(50L)).thenReturn(menu(50L, 10L));
         when(menuMapper.countByParentId(50L)).thenReturn(0L);
         service.delete(50L);
-        verify(menuMapper).deleteById(eq(50L), eq("admin"), any());
+        verify(menuMapper).deleteById(eq(50L), eq("admin"));
         verify(roleMenuMapper).deleteByMenuId(50L);
     }
 }

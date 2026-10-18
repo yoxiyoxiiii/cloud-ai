@@ -11,7 +11,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
@@ -43,13 +42,10 @@ public class SysMenuManageService {
             throw new BusinessException("菜单名称不能为空");
         }
         validateParent(menu.getParentId(), null);
-        // 手写 SQL 无 MetaObjectHandler 自动填充：审计四值显式传入，插入时 update 值 = create 值
+        // 手写 SQL 无 MetaObjectHandler 自动填充：操作人显式传入；审计时间由 XML 的 NOW() 落库（插入时 create=update 同值）
         String operator = SecurityUtils.currentAccount();
-        LocalDateTime now = LocalDateTime.now();
         menu.setCreateBy(operator);
-        menu.setCreateTime(now);
         menu.setUpdateBy(operator);
-        menu.setUpdateTime(now);
         menuMapper.save(menu);
         return menu.getId();
     }
@@ -66,7 +62,6 @@ public class SysMenuManageService {
         }
         validateParent(menu.getParentId(), menu.getId());
         menu.setUpdateBy(SecurityUtils.currentAccount());
-        menu.setUpdateTime(LocalDateTime.now());
         menuMapper.update(menu);
     }
 
@@ -110,7 +105,7 @@ public class SysMenuManageService {
         if (childCount > 0) {
             throw new BusinessException(3005, "存在子菜单，先删除子级");
         }
-        menuMapper.deleteById(id, SecurityUtils.currentAccount(), LocalDateTime.now());
+        menuMapper.deleteById(id, SecurityUtils.currentAccount());
         roleMenuMapper.deleteByMenuId(id);
     }
 

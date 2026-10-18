@@ -10,14 +10,23 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.within;
 
 class AuditMetaObjectHandlerTest {
 
-    private final AuditMetaObjectHandler handler = new AuditMetaObjectHandler();
+    /** 固定探针：数据库时钟比 Java 时钟快 2 小时（模拟跨库时钟偏移） */
+    private static LocalDateTime probeTimePlusTwoHours() {
+        return LocalDateTime.now().plusHours(2);
+    }
+
+    private final AuditMetaObjectHandler handler =
+            new AuditMetaObjectHandler(AuditMetaObjectHandlerTest::probeTimePlusTwoHours, 60_000L);
 
     @Data
     static class OrderEntity extends BaseEntity {
@@ -100,5 +109,38 @@ class AuditMetaObjectHandlerTest {
         OrderEntity entity = new OrderEntity();
         handler.insertFill(SystemMetaObject.forObject(entity));
         assertThat(entity.getCreateBy()).isNull();
+    }
+
+    @Test
+    void dbNow_appliesProbeOffset() {
+        LocalDateTime dbNow = handler.dbNow();
+        // 探针返回 Java 钟 + 2h，偏移应传导到 dbNow（留 1 分钟容差吸收执行耗时）
+        assertThat(dbNow).isCloseTo(LocalDateTime.now().plusHours(2), within(1, ChronoUnit.MINUTES));
+    }
+
+    @Test
+    void dbNow_ttlWindowProbesOnlyOnce() {
+        AtomicInteger probeCount = new AtomicInteger();
+        AuditMetaObjectHandler counting =
+                new AuditMetaObjectHandler(() -> {
+                    probeCount.incrementAndGet();
+                    return LocalDateTime.now();
+                }, 60_000L);
+        counting.dbNow();
+        counting.dbNow();
+        counting.dbNow();
+        // TTL 窗口内复用同一偏移样本，只探一次库
+        assertThat(probeCount.get()).isEqualTo(1);
+    }
+
+    @Test
+    void dbNow_probeFailureFallsBackToJavaClock() {
+        AuditMetaObjectHandler failing =
+                new AuditMetaObjectHandler(() -> {
+                    throw new IllegalStateException("db unreachable");
+                }, 60_000L);
+        LocalDateTime dbNow = failing.dbNow();
+        // 探针失败不抛异常，回退 Java 进程时间
+        assertThat(dbNow).isCloseTo(LocalDateTime.now(), within(1, ChronoUnit.MINUTES));
     }
 }

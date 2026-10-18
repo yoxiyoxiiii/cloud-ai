@@ -142,7 +142,7 @@ class SysDictDataManageServiceTest {
         assertThatThrownBy(() -> service.delete(9L))
                 .isInstanceOf(BusinessException.class)
                 .hasMessageContaining("字典项不存在");
-        verify(dictDataMapper, never()).deleteById(anyLong(), anyString(), any());
+        verify(dictDataMapper, never()).deleteById(anyLong(), anyString());
     }
 
     // ---- 翻译缓存失效挂钩（设计 §4.2）----
@@ -254,6 +254,6 @@ class SysDictDataManageServiceTest {
                 .hasMessageContaining("内置字典项禁止删除")
                 .extracting("code")
                 .isEqualTo(3016);
-        verify(dictDataMapper, never()).deleteById(anyLong(), anyString(), any());
+        verify(dictDataMapper, never()).deleteById(anyLong(), anyString());
     }
 }
