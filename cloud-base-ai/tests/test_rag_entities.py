@@ -97,3 +97,26 @@ def test_grant_subject_type_enum():
     assert AiKbGrant.SubjectTypeEnum.of(9) is None
     # 字段类型保持 int 映射（禁存枚举实例）
     assert AiKbGrant.SubjectTypeEnum.ROLE.value == 0
+
+
+# ---------- AiChatSession（2026-10-19 会话管理轮） ----------
+
+
+def test_chat_session_table_and_columns_match_ddl():
+    from cloud_base_ai.rag.entities import AiChatSession
+    assert AiChatSession.__tablename__ == "ai_chat_session"
+    cols = {c.name for c in inspect(AiChatSession).columns}
+    assert cols == {"id", "user_id", "title",
+                    "create_by", "create_time", "update_by", "update_time", "deleted"}
+
+
+def test_chat_session_index_and_default_title():
+    from cloud_base_ai.rag.entities import AiChatSession
+    assert any(ix.name == "idx_user" for ix in AiChatSession.__table__.indexes)
+    # 无唯一键：会话是私有资源，重名无害无查重需求（与 kb 的 uk_name 对照）
+    constraints = [c for c in AiChatSession.__table__.constraints
+                   if isinstance(c, UniqueConstraint)]
+    assert constraints == []
+    title_col = AiChatSession.__table__.columns["title"]
+    assert AiChatSession.DEFAULT_TITLE == "新对话"
+    assert title_col.server_default is not None  # DB DEFAULT 生成初值（refresh 回填）

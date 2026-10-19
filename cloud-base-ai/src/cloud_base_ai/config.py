@@ -114,7 +114,9 @@ class RedisSettings(BaseModel):
     """
 
     hosts: str = "127.0.0.1"
-    port: int = 6379
+    # 7000 = redis-cluster 容器（单节点集群，AI 消息存储）；6379 单机容器归 Java 侧会话，
+    # 两者并存互不影响
+    port: int = 7000
     password: str = ""
 
 

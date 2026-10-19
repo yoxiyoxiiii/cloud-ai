@@ -1,7 +1,9 @@
-"""service 编排断言（B7 / spec D10/D11）：monkeypatch get_chat_model 假 model，零网络。
+"""service 编排断言（2026-10-19 会话管理轮：chat 挂接会话 + 会话 CRUD 编排）。
 
-覆盖：历史截断取尾 history_limit 条 / chat_answer 返回 VO / LLM 异常 → 5001 且
-log.error 记根因 / 工厂 5002 透传不重复转译 / 流式空 content chunk 不 yield。
+chat 链 monkeypatch get_chat_model 假 model + message_store 内存替身，零网络；
+DB 走 SQLite 内存替身（make_service_session_factory）。覆盖：5012/5013/身份缺失三态、
+标题首问生成与默认名不改、双清顺序 Redis 先于软删、问先落答收口落、LLM 失败问悬置、
+流中断半截答保留、历史服务端拼装取尾。
 """
 
 import asyncio
@@ -19,15 +21,9 @@ from cloud_base_ai.db.base import set_current_account
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.rag import service
 from cloud_base_ai.rag.dao import delete_kb_by_id, find_kb_by_name
-from cloud_base_ai.rag.schemas import CreateKBReq, RagChatDto, RagChatMessage
-from cloud_base_ai.rag.service import chat_answer, stream_chat_answer
+from cloud_base_ai.rag.schemas import ChatSendReq, CreateKBReq, RagChatMessage
 from cloud_base_ai.security import Identity, set_current_identity
 from tests.db_testing import make_service_session_factory
-
-
-def dto_of(n: int) -> RagChatDto:
-    # n 条 user 消息，content 带序号——截断后可断言"取尾"语义
-    return RagChatDto(messages=[RagChatMessage(role="user", content=f"m{i}") for i in range(n)])
 
 
 class FakeModel:
@@ -53,6 +49,26 @@ class FakeModel:
             yield item
 
 
+class FakeMessageStore:
+    """message_store 模块替身：内存按会话分组；calls 记录调用序（落档/双清顺序断言锚）。"""
+
+    def __init__(self) -> None:
+        self.data: dict[int, list[RagChatMessage]] = {}
+        self.calls: list[tuple[str, int]] = []
+
+    def append_message(self, session_id: int, role: str, content: str) -> None:
+        self.calls.append(("append", session_id))
+        self.data.setdefault(session_id, []).append(RagChatMessage(role=role, content=content))
+
+    def list_messages(self, session_id: int, limit: int | None = None) -> list[RagChatMessage]:
+        msgs = self.data.get(session_id, [])
+        return list(msgs[-limit:]) if limit is not None else list(msgs)
+
+    def delete_messages(self, session_id: int) -> None:
+        self.calls.append(("delete", session_id))
+        self.data.pop(session_id, None)
+
+
 @pytest.fixture(autouse=True)
 def default_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(service, "get_settings", lambda: Settings(_env_file=None))
@@ -62,82 +78,358 @@ def install_model(monkeypatch: pytest.MonkeyPatch, model: FakeModel) -> None:
     monkeypatch.setattr(service, "get_chat_model", lambda: model)
 
 
-def test_history_truncated_to_tail_20(monkeypatch: pytest.MonkeyPatch) -> None:
-    model = FakeModel()
-    install_model(monkeypatch, model)
-    asyncio.run(chat_answer(dto_of(21)))
-    assert len(model.captured[0]) == 20
-    assert model.captured[0][0].content == "m1"  # 取尾：丢 m0，保 m1..m20
-    assert model.captured[0][-1].content == "m20"
-    assert all(isinstance(m, HumanMessage) for m in model.captured[0])
+def install_store(monkeypatch: pytest.MonkeyPatch) -> FakeMessageStore:
+    store = FakeMessageStore()
+    monkeypatch.setattr(service, "message_store", store)
+    return store
 
 
-def test_history_no_truncation_under_limit(monkeypatch: pytest.MonkeyPatch) -> None:
-    model = FakeModel()
-    install_model(monkeypatch, model)
-    asyncio.run(chat_answer(dto_of(3)))
-    assert len(model.captured[0]) == 3
+# ---------- chat 编排（会话挂接：校验/落档/历史拼装/收口） ----------
+
+pytestmark = pytest.mark.anyio
 
 
-def test_chat_answer_vo_fields(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 先清 LLM__MODEL 再断言默认值：uv run 会把项目 .env 注入进程 env，本地换模型
-    # （如 glm 系列）会让「默认 model」断言随环境翻转——同 test_settings 的 delenv 先例。
-    monkeypatch.delenv("CLOUD_BASE_AI_LLM__MODEL", raising=False)
-    install_model(monkeypatch, FakeModel(content="你好，我是助手"))
-    vo = asyncio.run(chat_answer(dto_of(1)))
-    assert vo.answer == "你好，我是助手"
-    assert vo.model == "deepseek-flash"  # 配置即事实（Settings.llm.model 默认）
+@pytest.fixture(autouse=True)
+def _reset_account():
+    set_current_account(None)
+    set_current_identity(None)
+    yield
+    set_current_account(None)
+    set_current_identity(None)
 
 
-def test_llm_failure_translates_5001_with_log(monkeypatch: pytest.MonkeyPatch,
-                                              caplog: pytest.LogCaptureFixture) -> None:
-    install_model(monkeypatch, FakeModel(ainvoke_error=RuntimeError("connect timeout")))
-    with caplog.at_level(logging.ERROR, logger="cloud_base_ai.rag.service"):
+def _login_chat_identity(user_id: int | None = 952) -> None:
+    """模拟 require_perms 已解析的身份（chat 域只需 user_id；perms 与编排无关）。"""
+    set_current_identity(Identity(user_id=user_id, account="e2e_user",
+                                  perms=("ai:chat:list",), role_ids=(), dept_ids=()))
+
+
+async def _seed_session(factory, user_id: int = 952) -> int:
+    """直接走 dao 造一条会话（不经 service.create_session，保持用例聚焦被测编排）。"""
+    from cloud_base_ai.rag.dao import save_session
+    from cloud_base_ai.rag.entities import AiChatSession
+    async with factory() as s:
+        async with s.begin():
+            row = await save_session(s, AiChatSession(user_id=user_id))
+            return row.id
+
+
+async def _prepare_chat_env(monkeypatch: pytest.MonkeyPatch, factory,
+                            user_id: int | None = 952,
+                            owner_id: int = 952) -> tuple[FakeMessageStore, int]:
+    """接线 DB factory、种子一条归属 owner_id 的会话、登录 user_id 身份、装
+    message_store 替身；返回 (store, session_id)。LLM 替身由用例自行 install。"""
+    monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+    session_id = await _seed_session(factory, owner_id)
+    _login_chat_identity(user_id)
+    return install_store(monkeypatch), session_id
+
+
+def _req(session_id: int, question: str = "你好") -> ChatSendReq:
+    return ChatSendReq(session_id=session_id, question=question)
+
+
+async def test_chat_session_missing_5012(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        store, _ = await _prepare_chat_env(monkeypatch, factory)
+        install_model(monkeypatch, FakeModel())
         with pytest.raises(BusinessException) as ei:
-            asyncio.run(chat_answer(dto_of(1)))
+            await service.chat_answer(_req(99999))
+    assert ei.value.code == 5012
+    assert ei.value.msg == "会话不存在"
+    assert store.calls == []  # 校验先于任何写：不存在的会话零落档
+
+
+async def test_chat_session_not_owner_5013(monkeypatch: pytest.MonkeyPatch) -> None:
+    """会话存在但归属他人 → 5013，且问不落（归属校验先于一切消息读写）。"""
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory, user_id=777)
+        install_model(monkeypatch, FakeModel())
+        with pytest.raises(BusinessException) as ei:
+            await service.chat_answer(_req(session_id))
+    assert ei.value.code == 5013
+    assert ei.value.msg == "无权访问该会话"
+    assert store.calls == []
+
+
+async def test_chat_identity_missing_5013(monkeypatch: pytest.MonkeyPatch) -> None:
+    """身份头缺失（user_id None）= 归属永不匹配 → 5013（与列表端点空集语义刻意不同）。"""
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory, user_id=None)
+        install_model(monkeypatch, FakeModel())
+        with pytest.raises(BusinessException) as ei:
+            await service.chat_answer(_req(session_id))
+    assert ei.value.code == 5013
+    assert store.calls == []
+
+
+async def test_chat_answer_question_first_answer_last(monkeypatch: pytest.MonkeyPatch) -> None:
+    """问先落、答收口落：store 落档序 [user, assistant]，VO 字段齐全。"""
+    monkeypatch.delenv("CLOUD_BASE_AI_LLM__MODEL", raising=False)  # 默认 model 断言防 .env 翻转
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+        install_model(monkeypatch, FakeModel(content="你好，我是助手"))
+        vo = await service.chat_answer(_req(session_id))
+    assert vo.answer == "你好，我是助手"
+    assert vo.model == "deepseek-flash"
+    roles = [(m.role, m.content) for m in store.data[session_id]]
+    assert roles == [("user", "你好"), ("assistant", "你好，我是助手")]
+
+
+async def test_chat_history_from_store_tail_with_question(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """历史服务端拼装：送 LLM 的是尾 history_limit 条（含刚落的问，问在末位）。"""
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+        for i in range(25):  # 预置 25 条历史，history_limit 默认 20 → 落问后取尾 20
+            store.append_message(session_id, "user", f"m{i:02d}")
+        model = FakeModel()
+        install_model(monkeypatch, model)
+        await service.chat_answer(_req(session_id, "latest question"))
+    captured = model.captured[0]
+    assert len(captured) == 20  # 取尾：25 条旧 + 1 问 → 尾 20（丢最旧 6 条）
+    assert captured[-1].content == "latest question"  # 刚落的问在末位
+    assert all(isinstance(m, HumanMessage) for m in captured)
+
+
+async def test_chat_first_question_renames_title(monkeypatch: pytest.MonkeyPatch) -> None:
+    """首问改题：默认「新对话」被问句前 16 字符替换；第二问不再覆盖。"""
+    from cloud_base_ai.rag.dao import find_session_by_id
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+        install_model(monkeypatch, FakeModel())
+        long_question = "这是一个非常非常非常长的问题句子用来验证标题截断逻辑"
+        await service.chat_answer(_req(session_id, long_question))
+        async with factory() as s:
+            async with s.begin():
+                row = await find_session_by_id(s, session_id)
+                assert row.title == long_question[:16]  # 前 16 字符
+        await service.chat_answer(_req(session_id, "第二问换标题吗"))
+        async with factory() as s:
+            async with s.begin():
+                row = await find_session_by_id(s, session_id)
+                assert row.title == long_question[:16]  # 已有自定义标题不再改
+
+
+async def test_chat_llm_failure_question_kept_no_answer(
+        monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """LLM 失败：问悬置（忠实记录问过没答成），无答行；5001 + log.error 记根因。"""
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+        install_model(monkeypatch, FakeModel(ainvoke_error=RuntimeError("connect timeout")))
+        with caplog.at_level(logging.ERROR, logger="cloud_base_ai.rag.service"):
+            with pytest.raises(BusinessException) as ei:
+                await service.chat_answer(_req(session_id))
     assert ei.value.code == 5001
-    assert ei.value.msg == "LLM 调用失败，请稍后重试"
-    assert "connect timeout" in caplog.text  # log.error 记根因（规范：catch 必 log）
+    assert "connect timeout" in caplog.text
+    roles = [m.role for m in store.data[session_id]]
+    assert roles == ["user"]  # 问保留、零答行
 
 
-def test_5002_passthrough_not_retranslated(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_chat_5002_passthrough_not_retranslated(monkeypatch: pytest.MonkeyPatch) -> None:
     def raise_5002() -> Any:
         raise BusinessException("LLM 未配置（CLOUD_BASE_AI_LLM__API_KEY）", 5002)
     monkeypatch.setattr(service, "get_chat_model", raise_5002)
-    with pytest.raises(BusinessException) as ei:
-        asyncio.run(chat_answer(dto_of(1)))
+    async with make_service_session_factory() as factory:
+        _, session_id = await _prepare_chat_env(monkeypatch, factory)
+        with pytest.raises(BusinessException) as ei:
+            await service.chat_answer(_req(session_id))
     assert ei.value.code == 5002  # 透传，未被转译成 5001
 
 
-def test_stream_yields_only_non_empty_str(monkeypatch: pytest.MonkeyPatch) -> None:
-    chunks = [SimpleNamespace(content="你"),
-              SimpleNamespace(content=""),      # 空串跳过
-              SimpleNamespace(content=None),    # None 跳过
-              SimpleNamespace(content="好"),
-              SimpleNamespace(content=42)]      # 非 str 跳过
-    install_model(monkeypatch, FakeModel(stream_items=chunks))
+async def test_stream_answer_persisted_on_complete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """流式正常完成：增量逐 token yield，收口一次落整答。"""
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+        chunks = [SimpleNamespace(content="你"),
+                  SimpleNamespace(content=""),      # 空串跳过
+                  SimpleNamespace(content=None),    # None 跳过
+                  SimpleNamespace(content="好"),
+                  SimpleNamespace(content=42)]      # 非 str 跳过
+        install_model(monkeypatch, FakeModel(stream_items=chunks))
+        prepared = await service.prepare_chat(_req(session_id))
+        tokens = [t async for t in service.stream_chat_answer(prepared)]
+    assert tokens == ["你", "好"]
+    assert store.data[session_id][-1] == RagChatMessage(role="assistant", content="你好")
 
-    async def collect() -> list[str]:
-        return [t async for t in stream_chat_answer(dto_of(1))]
-    assert asyncio.run(collect()) == ["你", "好"]
+
+async def test_stream_partial_answer_kept_on_consumer_close(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """流中断（消费者提前关闭 = 用户停止生成）：半截答照落——回显所见即所得。"""
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+        install_model(monkeypatch, FakeModel(stream_items=[
+            SimpleNamespace(content="partial"), SimpleNamespace(content=" tail")]))
+        prepared = await service.prepare_chat(_req(session_id))
+
+        gen = service.stream_chat_answer(prepared)
+        seen: list[str] = []
+        async for token in gen:
+            seen.append(token)
+            break  # 拿到首 token 即停止消费（模拟停止生成）
+        await gen.aclose()  # router 侧显式 aclosing 的等价物：关闭传播进 service generator
+    assert seen == ["partial"]
+    assert store.data[session_id][-1] == RagChatMessage(role="assistant", content="partial")
 
 
-def test_stream_llm_failure_translates_5001(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_stream_llm_failure_partial_answer_and_5001(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLM 流中途异常：已生成半截答照落 + 转 5001 上抛。"""
     async def boom_stream(messages: list[Any]) -> Any:
         yield SimpleNamespace(content="partial")
         raise RuntimeError("upstream reset")
     model = SimpleNamespace(astream=boom_stream)
     monkeypatch.setattr(service, "get_chat_model", lambda: model)
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+        prepared = await service.prepare_chat(_req(session_id))
 
-    async def collect() -> list[str]:
-        out: list[str] = []
-        try:
-            async for t in stream_chat_answer(dto_of(1)):
-                out.append(t)
-        except BusinessException as e:
-            out.append(f"<{e.code}:{e.msg}>")
-        return out
-    assert asyncio.run(collect()) == ["partial", "<5001:LLM 调用失败，请稍后重试>"]
+        async def collect() -> list[str]:
+            out: list[str] = []
+            try:
+                async for t in service.stream_chat_answer(prepared):
+                    out.append(t)
+            except BusinessException as e:
+                out.append(f"<{e.code}:{e.msg}>")
+            return out
+        result = await collect()
+    assert result == ["partial", "<5001:LLM 调用失败，请稍后重试>"]
+    assert store.data[session_id][-1] == RagChatMessage(role="assistant", content="partial")
+
+
+# ---------- 会话 CRUD 编排（契约 §2/§3/§4/§5） ----------
+
+
+async def test_create_session_identity_missing_1001(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _login_chat_identity(user_id=None)
+        with pytest.raises(BusinessException) as ei:
+            await service.create_session()
+    assert ei.value.code == 1001
+    assert "X-User-Id" in ei.value.msg
+
+
+async def test_create_session_returns_default_title(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _login_chat_identity(user_id=952)
+        vo = await service.create_session()
+    assert vo.id > 0
+    assert vo.title == "新对话"
+    assert vo.create_time is not None
+
+
+async def test_page_list_sessions_owner_scope_id_desc(monkeypatch: pytest.MonkeyPatch) -> None:
+    """列表仅本人、id 倒序；他人会话与软删不可见。"""
+    from cloud_base_ai.rag.dao import delete_session_by_id
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        first = await _seed_session(factory, user_id=952)
+        second = await _seed_session(factory, user_id=952)
+        await _seed_session(factory, user_id=777)  # 他人会话
+        gone = await _seed_session(factory, user_id=952)
+        async with factory() as s:
+            async with s.begin():
+                await delete_session_by_id(s, gone)
+        _login_chat_identity(user_id=952)
+        result = await service.page_list_sessions(page=1, size=10)
+    assert result.total == 2
+    assert [v.id for v in result.rows] == [second, first]  # id 倒序、软删不可见
+
+
+async def test_page_list_sessions_identity_missing_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """身份头缺失 = 空集（total:0, rows:[]），非错误——与 chat 域 5013 刻意不同。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _login_chat_identity(user_id=None)
+        result = await service.page_list_sessions(page=1, size=10)
+    assert result.total == 0 and result.rows == []
+
+
+async def test_list_session_messages_ascending_vo(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+        store.append_message(session_id, "user", "问一")
+        store.append_message(session_id, "assistant", "答一")
+        store.append_message(session_id, "user", "问二")
+        vo = await service.list_session_messages(session_id)
+    assert [(m.role, m.content) for m in vo.messages] == [
+        ("user", "问一"), ("assistant", "答一"), ("user", "问二")]
+
+
+async def test_list_session_messages_empty_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """空会话（建了没问）：messages 空数组。"""
+    async with make_service_session_factory() as factory:
+        _, session_id = await _prepare_chat_env(monkeypatch, factory)
+        vo = await service.list_session_messages(session_id)
+    assert vo.messages == []
+
+
+async def test_list_session_messages_not_owner_5013(monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        _, session_id = await _prepare_chat_env(monkeypatch, factory, user_id=777)
+        with pytest.raises(BusinessException) as ei:
+            await service.list_session_messages(session_id)
+    assert ei.value.code == 5013
+
+
+async def test_delete_session_double_clear_redis_first(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """双清：Redis DEL 先于 MySQL 软删（顺序保障最坏中间态可重删收敛、无孤儿键）。"""
+    from cloud_base_ai.rag import dao as rag_dao
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+        store.append_message(session_id, "user", "hi")
+        store.calls.clear()  # 排掉种子里程，只看删除路径的动作序
+        real_soft_delete = rag_dao.delete_session_by_id
+
+        async def spy_soft_delete(session, sid: int) -> int:
+            store.calls.append(("soft_delete", sid))
+            return await real_soft_delete(session, sid)
+        monkeypatch.setattr(service.dao, "delete_session_by_id", spy_soft_delete)
+        await service.delete_session(session_id)
+    assert store.calls == [("delete", session_id), ("soft_delete", session_id)]
+    assert session_id not in store.data  # 消息键已物理清
+
+
+async def test_delete_session_twice_5012(monkeypatch: pytest.MonkeyPatch) -> None:
+    """二次删除：活记录视角无此会话 → 5012。"""
+    async with make_service_session_factory() as factory:
+        _, session_id = await _prepare_chat_env(monkeypatch, factory)
+        await service.delete_session(session_id)
+        with pytest.raises(BusinessException) as ei:
+            await service.delete_session(session_id)
+    assert ei.value.code == 5012
+
+
+async def test_delete_session_redis_failure_mysql_untouched(
+        monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """Redis DEL 失败：log.error 后原样上抛（全局 500），MySQL 未动——软删未发生可重试。"""
+    from cloud_base_ai.rag.dao import find_session_by_id
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory)
+
+        def boom_delete(sid: int) -> None:
+            raise RuntimeError("redis down")
+        monkeypatch.setattr(store, "delete_messages", boom_delete)
+        with caplog.at_level(logging.ERROR, logger="cloud_base_ai.rag.service"):
+            with pytest.raises(RuntimeError, match="redis down"):
+                await service.delete_session(session_id)
+        assert "redis down" in caplog.text
+        async with factory() as s:
+            async with s.begin():
+                assert await find_session_by_id(s, session_id) is not None  # 行仍活
+
+
+async def test_delete_session_not_owner_5013(monkeypatch: pytest.MonkeyPatch) -> None:
+    """删除他人会话 → 5013，双清零动作（Redis/MySQL 均未触碰）。"""
+    async with make_service_session_factory() as factory:
+        store, session_id = await _prepare_chat_env(monkeypatch, factory, user_id=777)
+        with pytest.raises(BusinessException) as ei:
+            await service.delete_session(session_id)
+    assert ei.value.code == 5013
+    assert store.calls == []
 
 
 # ---------- create_kb 编排（2026-10-14 create_kb 轮：SQLite 内存替身，查重/审计/事务块/5003 转译） ----------

@@ -155,3 +155,36 @@ class AiKbGrant(Base):
         server_default=text("CURRENT_TIMESTAMP"),
         comment="授权时间（DB 时钟生成，应用层插入不传时间值）",
     )
+
+
+class AiChatSession(Base, AuditMixin, SoftDeleteMixin):
+    """AI 对话会话（元数据真相源；消息在 Redis Cluster，键 rag:messages:{id}）。
+
+    薄元数据表：只有归属、标题与审计/软删列——无消息计数、无最后活跃时间冗余列
+    （消息计数 Redis llen 可得且当前无消费方；冗余列=双存储对账义务）。无唯一键：
+    会话是私有资源，重名无害、无查重需求。
+    """
+
+    __tablename__ = "ai_chat_session"
+    __table_args__ = (
+        Index("idx_user", "user_id", "deleted"),
+        {"comment": "AI对话会话（元数据真相源；消息在 Redis Cluster，键 rag:messages:{id}）"},
+    )
+
+    # 创建时默认标题；首问后服务端取问句前 16 字符替换（仅当仍为本值时）
+    DEFAULT_TITLE = "新对话"
+
+    # MySQL=BIGINT（DDL 口径）；sqlite 变体 Integer——SQLite 仅 INTEGER PRIMARY KEY 走
+    # rowid 自增，BIGINT 主键插入会报 NOT NULL 约束（内存替身数据库的行为差异收敛点）
+    id: Mapped[int] = mapped_column(
+        BigInteger().with_variant(Integer, "sqlite"),
+        primary_key=True, autoincrement=True, comment="会话ID（主键）",
+    )
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False,
+        comment="归属用户ID（sys_user.id，网关 X-User-Id 注入；主数据在 cloud_system 库，弱引用不建外键）",
+    )
+    title: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default=text("'新对话'"),
+        comment='会话标题（默认"新对话"；首问由服务端取前16字符更新）',
+    )

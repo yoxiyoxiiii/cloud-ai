@@ -22,10 +22,12 @@ from cloud_base_ai.rag.dao import (
     delete_kb_by_id,
     delete_kb_file_by_id,
     delete_kb_files_by_kb,
+    delete_session_by_id,
     find_chunk_by_id,
     find_kb_by_id,
     find_kb_by_name,
     find_kb_file_by_id,
+    find_session_by_id,
     list_child_ids_by_file,
     list_chunks_by_file,
     list_chunks_by_ids,
@@ -36,16 +38,20 @@ from cloud_base_ai.rag.dao import (
     page_list_chunks,
     page_list_kb_files,
     page_list_kbs,
+    page_list_sessions,
     save_chunk,
     save_chunks,
     save_kb,
     save_kb_file,
     save_kb_grants,
+    save_session,
     update_chunk,
     update_kb,
     update_kb_file,
+    update_session,
 )
 from cloud_base_ai.rag.entities import (
+    AiChatSession,
     AiKbChunk,
     AiKbGrant,
     AiKnowledgeBase,
@@ -661,3 +667,82 @@ async def test_transaction_block_rollback():
                 raise RuntimeError("boom")
         assert await count_kbs(s) == 1
         assert (await find_kb_by_name(s, "rolled-back")) is None
+
+
+# ---------- AiChatSession（2026-10-19 会话管理轮：五动词/软删/审计/分页） ----------
+
+
+def _chat_session(user_id: int = 952, title: str | None = None) -> AiChatSession:
+    """title 不传 = 走 DB DEFAULT 生成默认「新对话」的插入路径。"""
+    if title is None:
+        return AiChatSession(user_id=user_id)
+    return AiChatSession(user_id=user_id, title=title)
+
+
+async def test_save_session_fills_audit_and_default_title():
+    async with make_db_session() as s:
+        async with s.begin():
+            row = await save_session(s, _chat_session())
+        assert row.id is not None
+        assert row.title == AiChatSession.DEFAULT_TITLE  # server_default 回填（refresh）
+        assert row.create_time is not None
+        assert row.update_time == row.create_time  # 插入四值：update_*=create_*
+
+
+async def test_save_session_audit_with_account():
+    set_current_account("e2e_admin")
+    async with make_db_session() as s:
+        async with s.begin():
+            row = await save_session(s, _chat_session())
+        assert row.create_by == "e2e_admin"
+
+
+async def test_find_session_by_id_hit_miss_and_soft_deleted():
+    async with make_db_session() as s:
+        async with s.begin():
+            row = await save_session(s, _chat_session())
+            session_id = row.id
+            assert (await find_session_by_id(s, session_id)) is not None
+            assert (await find_session_by_id(s, 99999)) is None
+        async with s.begin():
+            assert await delete_session_by_id(s, session_id) == 1
+        async with s.begin():
+            # 软删不可见（读收进 begin 块：裸读会 autobegin 悬挂事务）
+            assert (await find_session_by_id(s, session_id)) is None
+
+
+async def test_page_list_sessions_user_scope_id_desc_and_clamp():
+    """列表口径：仅本人（user_id 过滤）、id 倒序（新建居首）、越界钳制兜底。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            first = await save_session(s, _chat_session(user_id=952))
+            second = await save_session(s, _chat_session(user_id=952))
+            await save_session(s, _chat_session(user_id=777))  # 他人会话
+        rows, total = await page_list_sessions(s, user_id=952, page=1, size=10)
+        assert total == 2
+        assert [r.id for r in rows] == [second.id, first.id]  # id 倒序
+        clamped_rows, clamped_total = await page_list_sessions(s, user_id=952, page=0, size=0)
+        assert clamped_total == 2 and len(clamped_rows) == 1  # size 钳到 1
+        other_rows, other_total = await page_list_sessions(s, user_id=777, page=1, size=10)
+        assert other_total == 1  # user_id 隔离
+
+
+async def test_update_session_title_and_audit():
+    set_current_account("e2e_ops")
+    async with make_db_session() as s:
+        async with s.begin():
+            row = await save_session(s, _chat_session())
+            row.title = "首问改题后的标题"
+            await update_session(s, row)
+        found = await find_session_by_id(s, row.id)
+        assert found.title == "首问改题后的标题"
+        assert found.update_by == "e2e_ops"  # 审计两值
+
+
+async def test_delete_session_by_id_twice_zero():
+    async with make_db_session() as s:
+        async with s.begin():
+            row = await save_session(s, _chat_session())
+        async with s.begin():
+            assert await delete_session_by_id(s, row.id) == 1
+            assert await delete_session_by_id(s, row.id) == 0  # 二次删为 0

@@ -8,22 +8,41 @@ AI 对话轮（2026-10-13）首个实现：字段名与契约 2026-10-13-ai-rag-
 from datetime import datetime
 from typing import Annotated, Generic, Literal, TypeVar
 
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, field_validator
 
 T = TypeVar("T")
 
 
 class RagChatMessage(BaseModel):
-    """对话历史单条（说话方 + 文本；含本次提问，按时间升序）。"""
+    """对话消息单条（说话方 + 文本；含本次提问，按时间升序）。
+
+    2026-10-19 会话管理轮起降级为消息载荷模型：Redis 消息键的存取单位（对话入参
+    已换轨 ChatSendReq，历史由服务端拼装单源）。
+    """
 
     role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=4000)
 
 
-class RagChatDto(BaseModel):
-    """对话端点入参（流式/非流式两端点完全相同的 body）。"""
+class ChatSendReq(BaseModel):
+    """对话端点入参（契约 2026-10-19-ai-chat-session-api.md §6，流式/非流式完全相同）。
 
-    messages: list[RagChatMessage] = Field(min_length=1, max_length=50)
+    历史不再上送——服务端按会话拼装（单源）；旧形态 {"messages":[…]} 在本模型下
+    缺必填字段 → 既有 1001 通道拒绝（pydantic 忽略未知字段，不会误收）。
+    session_id strict=True：数字串 "12" 拒收（沿 kb-perm 契约 strict 先例）。
+    """
+
+    session_id: int = Field(description="目标会话ID（创建会话端点所得）", ge=1, strict=True)
+    question: str = Field(description="本次提问（strip 后非空）", min_length=1, max_length=4000)
+
+    @field_validator("question")
+    @classmethod
+    def _strip_non_empty(cls, v: str) -> str:
+        """纯空白拒绝（1001）；规范化为 strip 后值——问落档与首问改题同源。"""
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("question 不能为纯空白")
+        return stripped
 
 
 class RagChatAnswerVo(BaseModel):
@@ -98,6 +117,32 @@ class AiPageResult(BaseModel, Generic[T]):
 
     total: int
     rows: list[T]
+
+
+# ---------- 会话管理（2026-10-19 会话管理轮，契约 2026-10-19-ai-chat-session-api.md §2/§3/§5） ----------
+
+
+class ChatSessionVo(VoTimeMixin):
+    """会话行 VO（创建返回与列表行同构）：id 倒序列表、标题默认「新对话」。"""
+
+    id: int
+    title: str
+    create_time: datetime | None
+
+
+class SessionMessageVo(BaseModel):
+    """回显消息单条（契约 §5）：role 枚举 user|assistant；流式中断的半截答照实回显
+    （所见即所得）。"""
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class SessionMessagesVo(BaseModel):
+    """消息回显出参（契约 §5）：时间升序（旧→新）全量返回，不设分页（单会话 ≤100 条，
+    分页化与上限放开一并移交）。"""
+
+    messages: list[SessionMessageVo]
 
 
 class KbPermsVo(BaseModel):

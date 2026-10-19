@@ -1,9 +1,9 @@
 """RAG 域业务编排：router → service → 管线组件（分层依赖单向）。
 
-AI 对话轮（2026-10-13）查询链首个实例（无检索的退化 RAG = 纯生成，spec §3）：
-service 负责历史截断（尾 history_limit 条，D10）、LLM 调用编排与异常转译——
-LLM 异常 catch 必须 log.error 记根因后转 5001（规范第 3 条；msg 不含 key 与上游原文），
-工厂 5002（未配置）透传不重复转译；帧收口在 router（D12）。
+对话链（2026-10-13 首轮 + 2026-10-19 会话管理轮挂接）：service 负责会话校验/归属、
+问与答的落档编排（Redis message_store）、历史由服务端拼装（尾 history_limit 条单源）、
+LLM 调用编排与异常转译——LLM 异常 catch 必须 log.error 记根因后转 5001（规范第 3 条；
+msg 不含 key 与上游原文），工厂 5002（未配置）透传不重复转译；帧收口在 router。
 """
 
 import logging
@@ -24,19 +24,29 @@ from cloud_base_ai.config import get_settings
 from cloud_base_ai.db.tx import current_session, transactional
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.models.model_factory import get_chat_model
-from cloud_base_ai.rag import dao, chunking, vectorstore
-from cloud_base_ai.rag.entities import AiKnowledgeBase, AiKbChunk, AiKbGrant, AiKnowledgeBaseFiles
+from cloud_base_ai.rag import dao, chunking, message_store, vectorstore
+from cloud_base_ai.rag.entities import (
+    AiChatSession,
+    AiKnowledgeBase,
+    AiKbChunk,
+    AiKbGrant,
+    AiKnowledgeBaseFiles,
+)
 from cloud_base_ai.rag.generation import to_lc_messages
 from cloud_base_ai.rag.schemas import (
     AiPageResult,
+    ChatSendReq,
+    ChatSessionVo,
     CreateKBReq,
     KbFileVo,
     KbPermsSaveReq,
     KbPermsVo,
     KbVo,
     RagChatAnswerVo,
-    RagChatDto,
+    RagChatMessage,
     ReembeddingReq,
+    SessionMessageVo,
+    SessionMessagesVo,
     UpdateKBReq,
 )
 from cloud_base_ai.security import current_identity, is_mgmt_exemption
@@ -58,50 +68,199 @@ CODE_FILE_ORIGINAL_READ_FAILED: int = 5007
 MSG_FILE_ORIGINAL_READ_FAILED: str = "文件原件读取失败，请删除后重新上传"
 CODE_VECTOR_PURGE_FAILED: int = 5008
 MSG_VECTOR_PURGE_FAILED: str = "向量清理失败，请重试"
-# 5011 接在 AI 段 5009/5010（MCP 客户端通道）之后；5012 为 AI 段下一可用号
+# 5011 接在 AI 段 5009/5010（MCP 客户端通道）之后
 CODE_KB_NO_ACCESS: int = 5011
 MSG_KB_NO_ACCESS: str = "无权访问该知识库"
+# 5012/5013 接在 5011 之后（会话归属校验）；AI 段下一可用 5014
+CODE_SESSION_NOT_EXISTS: int = 5012
+MSG_SESSION_NOT_EXISTS: str = "会话不存在"
+CODE_SESSION_NO_ACCESS: int = 5013
+MSG_SESSION_NO_ACCESS: str = "无权访问该会话"
+# 创建会话时身份缺失（X-User-Id 缺失/非整数）无法落归属——复用通用参数错误码 1001
+CODE_SESSION_IDENTITY_MISSING: int = 1001
+MSG_SESSION_IDENTITY_MISSING: str = "缺少用户身份（X-User-Id），无法创建会话"
 CODE_CHUNK_PARAM_INVALID: int = 1001
 MSG_CHUNK_PARAM_INVALID: str = "分片重叠必须小于分片大小"
 # 父块分片大小固定 500 不开放（文件表无父块快照列——开放需 DDL，欠账登记 docs/handoff/ai.md）
 PARENT_CHUNK_SIZE_FIXED: int = 500
+# 首问改题的标题截断长度（沿用前端既有 slice(0,16) 口径，生成责任收敛服务端保证多端一致）
+TITLE_MAX_CHARS: int = 16
 
 
-async def chat_answer(dto: RagChatDto) -> RagChatAnswerVo:
-    """非流式对话：ainvoke 一次成型，返回完整回答 VO（model = 配置的模型名，配置即事实）。"""
+class PreparedChat(NamedTuple):
+    """对话前置阶段产出：目标会话 id 与送 LLM 的尾段历史（含刚落的问）。"""
+
+    session_id: int
+    history: list[RagChatMessage]
+
+
+async def prepare_chat(req: ChatSendReq) -> PreparedChat:
+    """对话前置阶段（流式/非流式共用）：校验会话 → 问落档 → 首问改题 → 读尾段历史。
+
+    校验严格先于任何写（先写 Redis 再校验 = 可向他人会话键注入消息的越权面）；
+    5012/5013 在此抛出——流式端点于 StreamingResponse 构造前调用本方法，错误形态
+    是 R JSON 而非 SSE 帧。改题放问之后（问确实发生了才改），改题失败不回滚问
+    （最坏 = 标题停留默认值，下一问补齐）。
+    """
+    await _load_owned_session(req.session_id)
+    message_store.append_message(req.session_id, "user", req.question)
+    await _rename_on_first_question(req.session_id, req.question)
+    history_limit = get_settings().llm.history_limit
+    history = message_store.list_messages(req.session_id, limit=history_limit)
+    return PreparedChat(session_id=req.session_id, history=history)
+
+
+async def chat_answer(req: ChatSendReq) -> RagChatAnswerVo:
+    """非流式对话：前置（prepare_chat）→ ainvoke 一次成型 → 答收口落档 → 返回 VO。
+
+    LLM 调用不持有事务（沿既有口径）；答在收口时落档——正常完成、LLM 失败、
+    用户停止三条路径统一（LLM 零 token 失败则无答行，问悬置保留）。
+    """
+    prepared = await prepare_chat(req)
     cfg = get_settings().llm
-    messages = to_lc_messages(dto.messages[-cfg.history_limit:])
     try:
         model = get_chat_model()
-        result = await model.ainvoke(messages)
+        result = await model.ainvoke(to_lc_messages(prepared.history))
     except BusinessException:
         raise  # 工厂 5002 透传，不重复转译
     except Exception as e:
         logger.error("LLM ainvoke failed: %s: %s", type(e).__name__, e)
         raise BusinessException(MSG_LLM_CALL_FAILED, CODE_LLM_CALL_FAILED) from e
     # deepseek-flash 走标准 content 通道（str）；str() 兜底防御非文本 content 形态
-    return RagChatAnswerVo(answer=str(result.content), model=cfg.model)
+    answer = str(result.content)
+    _persist_answer(prepared.session_id, answer)
+    return RagChatAnswerVo(answer=answer, model=cfg.model)
 
 
-async def stream_chat_answer(dto: RagChatDto) -> AsyncIterator[str]:
+async def stream_chat_answer(prepared: PreparedChat) -> AsyncIterator[str]:
     """流式对话 async generator：逐 AIMessageChunk yield 增量文本（content 非空 str 才 yield）。
 
-    异常向消费方（router event generator）传播：5002 透传、其余转 5001——
-    帧化与 [DONE] 收口由 router 统一处理（D12），本层只保证异常语义。
+    try/finally 收口统一落答：正常结束、LLM 异常、消费方提前关闭（用户停止生成，
+    router 侧显式 aclosing 保证关闭传播到本层）三条路径都经过 finally——已生成的
+    半截答照落（回显所见即所得）。异常向 router event generator 传播：5002 透传、
+    其余转 5001；帧化与 [DONE] 收口由 router 统一处理。
     """
-    cfg = get_settings().llm
-    messages = to_lc_messages(dto.messages[-cfg.history_limit:])
+    parts: list[str] = []
     try:
         model = get_chat_model()
-        async for chunk in model.astream(messages):
+        async for chunk in model.astream(to_lc_messages(prepared.history)):
             content = chunk.content
             if isinstance(content, str) and content:
+                parts.append(content)
                 yield content
     except BusinessException:
         raise  # 工厂 5002 透传，不重复转译
     except Exception as e:
         logger.error("LLM astream failed: %s: %s", type(e).__name__, e)
         raise BusinessException(MSG_LLM_CALL_FAILED, CODE_LLM_CALL_FAILED) from e
+    finally:
+        _persist_answer(prepared.session_id, "".join(parts))
+
+
+def _persist_answer(session_id: int, answer: str) -> None:
+    """答收口落档：空文本不落（LLM 零 token 失败无答行，问悬置）；Redis 写失败
+    log.error 后原样上抛走全局 500（不吞不转 5001——5001 语义是 LLM 调用失败）。"""
+    if not answer:
+        return
+    try:
+        message_store.append_message(session_id, "assistant", answer)
+    except Exception as e:
+        logger.error("answer persist failed, session_id=%s: %s: %s",
+                     session_id, type(e).__name__, e)
+        raise
+
+
+# ---------- 会话管理（2026-10-19 会话管理轮，契约 2026-10-19-ai-chat-session-api.md §2-§5） ----------
+
+
+@transactional
+async def create_session() -> ChatSessionVo:
+    """创建会话（契约 §2）：归属取网关注入的 X-User-Id，标题默认「新对话」（DB DEFAULT
+    生成，save 后 refresh 回填）。身份缺失（X-User-Id 缺失/非整数）无法落归属 → 1001。"""
+    identity = current_identity()
+    if identity is None or identity.user_id is None:
+        raise BusinessException(MSG_SESSION_IDENTITY_MISSING, CODE_SESSION_IDENTITY_MISSING)
+    session = current_session()
+    row = await dao.save_session(session, AiChatSession(user_id=identity.user_id))
+    return ChatSessionVo(id=row.id, title=row.title, create_time=row.create_time)
+
+
+@transactional
+async def page_list_sessions(page: int, size: int) -> AiPageResult[ChatSessionVo]:
+    """当前用户的会话分页（契约 §3）：仅本人、id 倒序（新建居首）、软删不可见。
+
+    身份头缺失 = 空集语义（total:0, rows:[]，不算错误——网关全链下 X-User-Id 恒在，
+    此差异只影响本地直连调试）。
+    """
+    identity = current_identity()
+    if identity is None or identity.user_id is None:
+        return AiPageResult(total=0, rows=[])
+    session = current_session()
+    rows, total = await dao.page_list_sessions(session, identity.user_id, page, size)
+    vos = [ChatSessionVo(id=row.id, title=row.title, create_time=row.create_time)
+           for row in rows]
+    return AiPageResult(total=total, rows=vos)
+
+
+async def list_session_messages(session_id: int) -> SessionMessagesVo:
+    """消息回显（契约 §5）：归属校验先行（5012/5013），再读 Redis 消息（升序全量）。"""
+    await _load_owned_session(session_id)
+    msgs = message_store.list_messages(session_id)
+    messages = [SessionMessageVo(role=m.role, content=m.content) for m in msgs]
+    return SessionMessagesVo(messages=messages)
+
+
+async def delete_session(session_id: int) -> None:
+    """删除会话双清（契约 §4）：校验归属 → 先物理删 Redis 消息键，后 MySQL 软删。
+
+    先 Redis 后 MySQL 的顺序依据（设计 §3.3）：Redis 先删、MySQL 提交失败 = 会话还在
+    消息空（DEL 幂等，重删即愈）；反向则留下永不过期的孤儿键且重删被 5012 拒、无法
+    自愈。Redis 删失败原样上抛走全局 500——MySQL 未动，可原样重试。
+    """
+    await _load_owned_session(session_id)
+    try:
+        message_store.delete_messages(session_id)
+    except Exception as e:
+        logger.error("delete_session redis del failed, session_id=%s: %s: %s",
+                     session_id, type(e).__name__, e)
+        raise
+    await _soft_delete_session(session_id)
+
+
+@transactional
+async def _soft_delete_session(session_id: int) -> None:
+    """双清的 MySQL 段：软删 + 审计两值；rowcount=0 为并发窗口兜底（校验后被并发删除）。"""
+    session = current_session()
+    rowcount = await dao.delete_session_by_id(session, session_id)
+    if rowcount == 0:
+        raise BusinessException(MSG_SESSION_NOT_EXISTS, CODE_SESSION_NOT_EXISTS)
+
+
+@transactional
+async def _load_owned_session(session_id: int) -> AiChatSession:
+    """会话存在性与归属校验（MySQL 唯一真相源；Redis 键只在通过后才被触碰）：
+    无活记录（含软删、二次删除）→ 5012；存在但归属非本人（含身份头缺失——归属永不
+    匹配）→ 5013。归属校验先于一切消息读写。"""
+    session = current_session()
+    row = await dao.find_session_by_id(session, session_id)
+    if row is None:
+        raise BusinessException(MSG_SESSION_NOT_EXISTS, CODE_SESSION_NOT_EXISTS)
+    identity = current_identity()
+    if identity is None or row.user_id != identity.user_id:
+        raise BusinessException(MSG_SESSION_NO_ACCESS, CODE_SESSION_NO_ACCESS)
+    return row
+
+
+@transactional
+async def _rename_on_first_question(session_id: int, question: str) -> None:
+    """首问改题：仅当标题仍为默认「新对话」时，取问句（strip 后）前 16 字符更新——
+    问确实发生了才改；已有自定义标题（第二问起）不再覆盖。"""
+    session = current_session()
+    row = await dao.find_session_by_id(session, session_id)
+    if row is None or row.title != AiChatSession.DEFAULT_TITLE:
+        return
+    row.title = question[:TITLE_MAX_CHARS]
+    await dao.update_session(session, row)
 
 
 @transactional

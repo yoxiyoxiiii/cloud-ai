@@ -21,7 +21,7 @@ def main() -> int:
 
     info = client.info("cluster")
     print(f"[cluster] cluster_enabled={info.get('cluster_enabled')} "
-          f"known_nodes={client.cluster_info().get('known_nodes')}")
+          f"known_nodes={client.cluster_info().get('cluster_known_nodes')}")
 
     client.set("smoke:redis:key", "ok", ex=60)
     got = client.get("smoke:redis:key")

@@ -1,23 +1,23 @@
-"""RagChat DTO 校验矩阵（B7 / spec D10）：role 枚举 / content 边界 / 条数边界。
+"""对话/会话 pydantic 模型校验矩阵（2026-10-19 会话管理轮起 ChatSendReq 换轨）。
 
 校验失败即 RequestValidationError → 既有 handler 转 R{code:1001}（router 测试覆盖
 端点形态；本文件聚焦 pydantic 模型边界本身）。
 """
 
+import json
+from datetime import datetime
+
 import pytest
 from pydantic import ValidationError
 
-from cloud_base_ai.rag.schemas import RagChatAnswerVo, RagChatDto, RagChatMessage
-
-
-def msg(role: str = "user", content: str = "hi") -> dict[str, str]:
-    return {"role": role, "content": content}
-
-
-def test_valid_minimal() -> None:
-    dto = RagChatDto(messages=[msg()])
-    assert dto.messages[0].role == "user"
-    assert dto.messages[0].content == "hi"
+from cloud_base_ai.rag.schemas import (
+    ChatSendReq,
+    ChatSessionVo,
+    RagChatAnswerVo,
+    RagChatMessage,
+    SessionMessageVo,
+    SessionMessagesVo,
+)
 
 
 def test_role_enum() -> None:
@@ -34,12 +34,38 @@ def test_content_bounds() -> None:
         RagChatMessage(role="user", content="a" * 4001)
 
 
-def test_messages_count_bounds() -> None:
-    assert RagChatDto(messages=[msg() for _ in range(50)])  # 上限含边界
+def test_chatsendreq_valid_minimal() -> None:
+    req = ChatSendReq(session_id=12, question="你好")
+    assert req.session_id == 12 and req.question == "你好"
+
+
+def test_chatsendreq_session_id_strict() -> None:
+    """session_id 必须 JSON number：数字串 "12" 拒收（沿 kb-perm 契约 strict 先例）。"""
     with pytest.raises(ValidationError):
-        RagChatDto(messages=[])  # 1..50：空列表非法
+        ChatSendReq(session_id="12", question="hi")
+
+
+def test_chatsendreq_session_id_bounds_and_missing() -> None:
     with pytest.raises(ValidationError):
-        RagChatDto(messages=[msg() for _ in range(51)])
+        ChatSendReq(session_id=0, question="hi")  # ge=1 下界
+    with pytest.raises(ValidationError):
+        ChatSendReq(question="hi")  # 缺必填
+
+
+def test_chatsendreq_question_bounds() -> None:
+    assert ChatSendReq(session_id=1, question="a" * 4000)  # 上限含边界
+    with pytest.raises(ValidationError):
+        ChatSendReq(session_id=1, question="")  # 空串
+    with pytest.raises(ValidationError):
+        ChatSendReq(session_id=1, question="a" * 4001)  # 4001 字
+
+
+def test_chatsendreq_question_blank_rejected_and_stripped() -> None:
+    """纯空白拒（1001）；非纯空白规范化为 strip 后值（问落档与改题同源）。"""
+    with pytest.raises(ValidationError):
+        ChatSendReq(session_id=1, question="   \n\t ")
+    req = ChatSendReq(session_id=1, question="  你好  ")
+    assert req.question == "你好"
 
 
 def test_answer_vo_fields() -> None:
@@ -48,10 +74,28 @@ def test_answer_vo_fields() -> None:
     assert vo.model == "deepseek-flash"
 
 
-# ---------- 知识库管理面出参 VO（2026-10-15 管理轮，契约 2026-10-14-ai-kb-api.md §4/§5） ----------
+# ---------- 会话管理 VO（2026-10-19 会话管理轮，契约 §2/§3/§5） ----------
 
-import json
-from datetime import datetime
+
+def test_chatsessionvo_time_formatted() -> None:
+    vo = ChatSessionVo(id=12, title="新对话", create_time=datetime(2026, 10, 19, 10, 30, 0))
+    data = json.loads(vo.model_dump_json())
+    assert data == {"id": 12, "title": "新对话", "create_time": "2026-10-19 10:30:00"}
+
+
+def test_sessionmessagesvo_shape() -> None:
+    vo = SessionMessagesVo(messages=[
+        SessionMessageVo(role="user", content="你好"),
+        SessionMessageVo(role="assistant", content="你好！有什么可以帮你？"),
+    ])
+    data = json.loads(vo.model_dump_json())
+    assert data["messages"][0] == {"role": "user", "content": "你好"}
+    assert data["messages"][1]["role"] == "assistant"
+    # 空会话：messages 空数组（非 null）
+    assert json.loads(SessionMessagesVo(messages=[]).model_dump_json()) == {"messages": []}
+
+
+# ---------- 知识库管理面出参 VO（2026-10-15 管理轮，契约 2026-10-14-ai-kb-api.md §4/§5） ----------
 
 from cloud_base_ai.rag.schemas import (
     AiPageResult,

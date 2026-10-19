@@ -990,7 +990,7 @@ export interface MqDlqPageQuery {
 export const MQ_DLQ_BORN_GROUP_OPTIONS: string[] = ['g_bpmn_approval_create', 'g_system_approval_event']
 
 
-/** ===== AI 对话（契约 2026-10-13-ai-rag-chat-api）===== */
+/** ===== AI 对话（契约 2026-10-13-ai-rag-chat-api；对话入参已换轨，见下方会话契约 §6）===== */
 export interface RagChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -999,6 +999,46 @@ export interface RagChatMessage {
 export interface RagChatAnswerVo {
   answer: string
   model: string
+}
+
+/* ===== AI 对话会话管理（契约 2026-10-19-ai-chat-session-api）
+   会话三端点 + 消息回显 + 对话两端点入参换轨；全端点复用 perms ai:chat:list（契约 §1）。
+   AI 域出参口径同 kb 契约 §1：字段 snake_case、id/total 为 JSON number */
+
+/** 会话 VO（契约 §2/§3，创建返回与列表行同构）：title 创建恒「新对话」，首问由服务端更新为问句前 16 字符 */
+export interface ChatSessionVo {
+  /** 会话 id（AI 域口径：JSON number，chat/回显/删除的引用键） */
+  id: number
+  title: string
+  /** 创建时间 yyyy-MM-dd HH:mm:ss 字符串直显 */
+  create_time: string
+}
+
+/** 回显消息（契约 §5）：该会话全部保留消息（≤100 条，时间升序旧→新）；流式中断的半截答照实回显 */
+export interface SessionMessageVo {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+/** 消息回显出参（契约 §5）：全量返回不设分页（上限放开移交后续轮） */
+export interface SessionMessagesVo {
+  messages: SessionMessageVo[]
+}
+
+/** 会话分页入参（契约 §3）：AI 域参数名 page/size；越界后端钳制不报错 */
+export interface ChatSessionPageQuery {
+  /** 页码（1 起） */
+  page: number
+  /** 每页条数（1..200） */
+  size: number
+}
+
+/** 对话两端点入参（契约 §6 breaking 换轨）：历史不再上送——由服务端拼装落档（单源）；旧形态 {messages} 得 1001 */
+export interface ChatSendPayload {
+  /** 目标会话 id（必须 JSON number——数字串后端 strict 拒收 1001） */
+  session_id: number
+  /** 本次提问（1..4000 字符，strip 后非空） */
+  question: string
 }
 
 /* ===== AI 知识库管理（契约 2026-10-14-ai-kb-api）

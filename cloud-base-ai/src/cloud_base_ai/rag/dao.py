@@ -24,6 +24,7 @@ from cloud_base_ai.db.base import (
     fill_update_audit,
 )
 from cloud_base_ai.rag.entities import (
+    AiChatSession,
     AiKbChunk,
     AiKbGrant,
     AiKnowledgeBase,
@@ -543,5 +544,80 @@ async def delete_grants_by_kb(session: AsyncSession, kb_id: int) -> int:
     """物理删除某知识库的全部授权行（知识库删除级联段；命中 uk_kb_subject 前缀）；
     返回影响行数。"""
     stmt = delete(AiKbGrant).where(AiKbGrant.kb_id == kb_id).execution_options(synchronize_session=False)
+    result = await session.execute(stmt)
+    return result.rowcount
+
+
+# ---------- AiChatSession（会话元数据：归属校验/列表/首问改题/软删） ----------
+
+
+async def save_session(session: AsyncSession, chat_session: AiChatSession) -> AiChatSession:
+    """新增会话：审计四值 → add+flush（id 回填）→ refresh（回填 title 的 server_default
+    生成值——async 下 flush 后直接访问 server 生成列会隐式 SELECT 报 MissingGreenlet，
+    refresh 是显式合法路径）。"""
+    fill_create_audit(chat_session)
+    session.add(chat_session)
+    await session.flush()
+    await session.refresh(chat_session)
+    return chat_session
+
+
+async def find_session_by_id(session: AsyncSession, session_id: int) -> AiChatSession | None:
+    """按主键查活会话（软删不可见）——存在性与归属校验的唯一数据源。"""
+    stmt = select(AiChatSession).where(
+        AiChatSession.id == session_id,
+        AiChatSession.deleted == SoftDeleteMixin.DeletedEnum.NORMAL,
+    )
+    return (await session.execute(stmt)).scalar_one_or_none()
+
+
+async def page_list_sessions(
+    session: AsyncSession, user_id: int, page: int, size: int
+) -> tuple[Sequence[AiChatSession], int]:
+    """分页查某用户的活会话（命中 idx_user(user_id, deleted)；二级索引隐式追加主键 id，
+    等值前缀后沿 id 逆序扫描免 filesort；total 与 rows 同条件）。"""
+    page, size = _clamp_page(page, size)
+    conds = [
+        AiChatSession.user_id == user_id,
+        AiChatSession.deleted == SoftDeleteMixin.DeletedEnum.NORMAL,
+    ]
+    total = (
+        await session.execute(select(func.count()).select_from(AiChatSession).where(*conds))
+    ).scalar_one()
+    rows = (
+        await session.execute(
+            select(AiChatSession)
+            .where(*conds)
+            .order_by(AiChatSession.id.desc())
+            .limit(size)
+            .offset((page - 1) * size)
+        )
+    ).scalars().all()
+    return rows, total
+
+
+async def update_session(session: AsyncSession, chat_session: AiChatSession) -> AiChatSession:
+    """修改会话（首问改题路径）：审计两值 → merge → flush。"""
+    fill_update_audit(chat_session)
+    merged = await session.merge(chat_session)
+    await session.flush()
+    return merged
+
+
+async def delete_session_by_id(session: AsyncSession, session_id: int) -> int:
+    """软删会话：UPDATE SET deleted=1 + 审计两值；返回影响行数（二次删为 0）。"""
+    stmt = (
+        update(AiChatSession)
+        .where(
+            AiChatSession.id == session_id,
+            AiChatSession.deleted == SoftDeleteMixin.DeletedEnum.NORMAL,
+        )
+        .values(
+            deleted=SoftDeleteMixin.DeletedEnum.DELETED,
+            update_by=current_account(),
+            update_time=datetime.now(),
+        )
+        .execution_options(synchronize_session=False)
+    )
     result = await session.execute(stmt)
     return result.rowcount

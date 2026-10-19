@@ -1,9 +1,14 @@
-"""router 端点断言（B7 / spec D5/D6/D12 + 契约 §2/§3）：TestClient 全 mock 零网络。
+"""router 端点断言（会话契约 2026-10-19-ai-chat-session-api.md 全 6 端点 + kb 契约）：
+TestClient 全 mock 零网络。
 
-覆盖：403（无/错 perms，R JSON 非 SSE 帧）/1001（非法入参）/多 perms 含空格放行 /
-非流式 R.ok 结构 / 流式帧序全文精确断言（中文 ensure_ascii=False 直读）/ 5001 与
-未知异常 msg 帧 + [DONE] 绝不裸断流 / 真实 5002（无 key）msg 帧全链路。
+对话两端点（§6 换轨后）：403（无/错 perms，R JSON 非 SSE 帧）/ 1001（含旧形态
+{"messages":[…]} 拒绝）/ 多 perms 含空格放行 / 非流式 R.ok 结构 / 流式帧序全文精确
+断言 / 5001 与未知异常 msg 帧 + [DONE] 绝不裸断流 / prepare_chat 期 5012/5013 以
+R JSON 拒绝（非 SSE 帧，§6 SSE 错误层次）/ 真实 5002（无 key）msg 帧全链路。
+会话四端点（§2-§5）：403 / 1001 / 5012/5013/1001 透传 / 结构与参数透传断言。
 """
+
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI
@@ -18,10 +23,11 @@ from cloud_base_ai.rag.router import kb_read_router
 from cloud_base_ai.rag.router import kb_router
 from cloud_base_ai.rag.router import kb_update_router
 from cloud_base_ai.rag.router import router as rag_router
+from cloud_base_ai.rag.router import session_router
 from cloud_base_ai.rag.schemas import AiPageResult, KbFileVo, KbVo, RagChatAnswerVo
 
 PERMS: dict[str, str] = {"X-User-Perms": "ai:chat:list"}
-BODY: dict[str, list[dict[str, str]]] = {"messages": [{"role": "user", "content": "hi"}]}
+BODY: dict[str, object] = {"session_id": 12, "question": "hi"}
 DONE: str = "data: [DONE]\n\n"
 
 
@@ -30,6 +36,7 @@ def client() -> TestClient:
     app = FastAPI()  # 无 lifespan（不触发 Nacos 注册）
     register_exception_handlers(app)
     app.include_router(rag_router)
+    app.include_router(session_router)  # 会话管理四端点（2026-10-19 会话管理轮）
     app.include_router(kb_router)  # 知识库管理面写端点（2026-10-14 create_kb 轮）
     app.include_router(kb_read_router)  # 知识库管理面读端点（2026-10-15 管理轮）
     app.include_router(kb_update_router)  # 知识库编辑端点（2026-10-15 列表管理轮）
@@ -38,13 +45,20 @@ def client() -> TestClient:
 
 
 def mock_answer(monkeypatch: pytest.MonkeyPatch, answer: str) -> None:
-    async def fake_answer(dto: object) -> RagChatAnswerVo:
+    async def fake_answer(req: object) -> RagChatAnswerVo:
         return RagChatAnswerVo(answer=answer, model="deepseek-flash")
     monkeypatch.setattr(router_module, "chat_answer", fake_answer)
 
 
+def mock_prepare(monkeypatch: pytest.MonkeyPatch, session_id: int = 12) -> None:
+    """替身对话前置阶段：流式端点在 StreamingResponse 构造前调用它（真身连 DB/Redis）。"""
+    async def fake_prepare(req: object):
+        return SimpleNamespace(session_id=session_id, history=[])
+    monkeypatch.setattr(router_module, "prepare_chat", fake_prepare)
+
+
 def mock_stream(monkeypatch: pytest.MonkeyPatch, tokens: list[str]) -> None:
-    async def fake_stream(dto: object):
+    async def fake_stream(prepared: object):
         for t in tokens:
             yield t
     monkeypatch.setattr(router_module, "stream_chat_answer", fake_stream)
@@ -52,7 +66,7 @@ def mock_stream(monkeypatch: pytest.MonkeyPatch, tokens: list[str]) -> None:
 
 def mock_stream_error(monkeypatch: pytest.MonkeyPatch, first: str | None,
                       exc: Exception) -> None:
-    async def fake_stream(dto: object):
+    async def fake_stream(prepared: object):
         if first is not None:
             yield first
         raise exc
@@ -76,15 +90,15 @@ def test_wrong_perms_403(client: TestClient) -> None:
 
 def test_multi_perms_with_spaces_passes_then_1001(client: TestClient) -> None:
     # 依赖先于 body 校验求解：得到 1001 即证明含空格多 perms 已放行（否则 403）
-    resp = client.post("/rag/chat", json={"messages": []},
+    resp = client.post("/rag/chat", json={"session_id": 12},
                        headers={"X-User-Perms": "x, ai:chat:list , y"})
     assert resp.status_code == 200
     body = resp.json()
     assert body["code"] == 1001
-    assert "messages" in body["msg"]
+    assert "question" in body["msg"]  # 缺必填 question
 
 
-# ---------- 非流式端点（契约 §2） ----------
+# ---------- 非流式端点（契约 §6 换轨后） ----------
 
 def test_chat_ok_structure(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     mock_answer(monkeypatch, "你好，我是DeepSeek助手")
@@ -98,16 +112,40 @@ def test_chat_ok_structure(client: TestClient, monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_chat_business_error_5002(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_answer(dto: object) -> RagChatAnswerVo:
+    async def fake_answer(req: object) -> RagChatAnswerVo:
         raise BusinessException("LLM 未配置（CLOUD_BASE_AI_LLM__API_KEY）", 5002)
     monkeypatch.setattr(router_module, "chat_answer", fake_answer)
     body = client.post("/rag/chat", json=BODY, headers=PERMS).json()
     assert body["code"] == 5002  # 非流式端点有完整 code 消费位
 
 
-# ---------- 流式端点（契约 §3） ----------
+def test_chat_old_messages_form_rejected_1001(client: TestClient) -> None:
+    """换轨断言（契约 §6 breaking）：旧形态 {"messages":[…]} 缺必填字段 → 1001。"""
+    resp = client.post("/rag/chat",
+                       json={"messages": [{"role": "user", "content": "hi"}]},
+                       headers=PERMS)
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["code"] == 1001
+
+
+def test_chat_session_id_string_rejected_1001(client: TestClient) -> None:
+    """session_id 必须 JSON number：数字串 "12" 拒收（契约 §6 strict）。"""
+    resp = client.post("/rag/chat", json={"session_id": "12", "question": "hi"},
+                       headers=PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_chat_blank_question_rejected_1001(client: TestClient) -> None:
+    resp = client.post("/rag/chat", json={"session_id": 12, "question": "   "},
+                       headers=PERMS)
+    assert resp.json()["code"] == 1001
+
+
+# ---------- 流式端点（契约 §6 换轨后，SSE 帧协议零变更） ----------
 
 def test_stream_frames_exact(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_prepare(monkeypatch)
     mock_stream(monkeypatch, ["你", "好"])
     resp = client.post("/rag/chat/stream", json=BODY, headers=PERMS)
     assert resp.status_code == 200
@@ -117,7 +155,24 @@ def test_stream_frames_exact(client: TestClient, monkeypatch: pytest.MonkeyPatch
     assert resp.text == 'data: {"content": "你"}\n\ndata: {"content": "好"}\n\n' + DONE
 
 
+def test_stream_prepare_receives_parsed_req(client: TestClient,
+                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    """入参换轨透传断言：prepare_chat 收到 pydantic 解析后的 ChatSendReq（strip 生效）。"""
+    captured: dict[str, object] = {}
+
+    async def fake_prepare(req: object):
+        captured.update(session_id=req.session_id, question=req.question)
+        return SimpleNamespace(session_id=req.session_id, history=[])
+    monkeypatch.setattr(router_module, "prepare_chat", fake_prepare)
+    mock_stream(monkeypatch, ["ok"])
+    resp = client.post("/rag/chat/stream",
+                       json={"session_id": 12, "question": "  hi  "}, headers=PERMS)
+    assert resp.status_code == 200
+    assert captured == {"session_id": 12, "question": "hi"}  # strip 后值入 service
+
+
 def test_stream_llm_5001_msg_frame(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    mock_prepare(monkeypatch)
     mock_stream_error(monkeypatch, "你",
                       BusinessException("LLM 调用失败，请稍后重试", 5001))
     resp = client.post("/rag/chat/stream", json=BODY, headers=PERMS)
@@ -127,7 +182,8 @@ def test_stream_llm_5001_msg_frame(client: TestClient, monkeypatch: pytest.Monke
 
 def test_stream_unexpected_error_frame(client: TestClient,
                                        monkeypatch: pytest.MonkeyPatch) -> None:
-    # 首 token 前即失败：0 个 token 帧 + msg 帧 + [DONE]（D12 catch 全量红线）
+    # 首 token 前即失败：0 个 token 帧 + msg 帧 + [DONE]（catch 全量红线）
+    mock_prepare(monkeypatch)
     mock_stream_error(monkeypatch, None, RuntimeError("secret upstream detail"))
     resp = client.post("/rag/chat/stream", json=BODY, headers=PERMS)
     # 未知异常：msg 帧文案固定，不泄内部细节；绝不裸断流（[DONE] 收口）
@@ -139,7 +195,7 @@ def test_stream_no_perms_is_r_json_not_sse(client: TestClient) -> None:
     assert resp.status_code == 200
     assert "text/event-stream" not in resp.headers.get("content-type", "")
     body = resp.json()
-    assert body["code"] == 403  # R JSON（D6 层次差异），非 SSE 帧
+    assert body["code"] == 403  # R JSON（层次差异），非 SSE 帧
 
 
 def test_stream_invalid_body_1001(client: TestClient) -> None:
@@ -148,14 +204,41 @@ def test_stream_invalid_body_1001(client: TestClient) -> None:
     assert body["code"] == 1001
 
 
+def test_stream_prepare_5012_is_r_json_not_sse(client: TestClient,
+                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    """SSE 错误层次（契约 §6）：流开始前的 5012 以 R JSON 拒绝，非 SSE 帧。"""
+    async def fake_prepare(req: object):
+        raise BusinessException("会话不存在", 5012)
+    monkeypatch.setattr(router_module, "prepare_chat", fake_prepare)
+    resp = client.post("/rag/chat/stream", json=BODY, headers=PERMS)
+    assert resp.status_code == 200
+    assert "text/event-stream" not in resp.headers.get("content-type", "")
+    body = resp.json()
+    assert body["code"] == 5012
+    assert body["msg"] == "会话不存在"
+
+
+def test_stream_prepare_5013_is_r_json_not_sse(client: TestClient,
+                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_prepare(req: object):
+        raise BusinessException("无权访问该会话", 5013)
+    monkeypatch.setattr(router_module, "prepare_chat", fake_prepare)
+    resp = client.post("/rag/chat/stream", json=BODY, headers=PERMS)
+    body = resp.json()
+    assert body["code"] == 5013
+    assert "text/event-stream" not in resp.headers.get("content-type", "")
+
+
 def test_stream_real_5002_no_key_frame(client: TestClient,
                                        monkeypatch: pytest.MonkeyPatch) -> None:
-    # 不 mock service：走真实 service → generation 工厂。钉 generation 侧 Settings 为空 key
-    # （防验收期真实 .env/env 使本用例变真网络调用），工厂 5002 → service 透传 → msg 帧。
+    # 前置阶段 mock（真身连 DB/Redis），LLM 段不 mock：走真实 service generator →
+    # generation 工厂。钉 generation 侧 Settings 为空 key（防验收期真实 .env/env 使
+    # 本用例变真网络调用），工厂 5002 → service 透传 → msg 帧。
     from cloud_base_ai.config import LLMSettings, Settings
     from cloud_base_ai.models import model_factory
     from cloud_base_ai.rag import service
     from cloud_base_ai.models.model_factory import get_chat_model
+    mock_prepare(monkeypatch)
     monkeypatch.setattr(service, "get_settings",
                         lambda: Settings(_env_file=None, llm=LLMSettings()))
     monkeypatch.setattr(model_factory, "get_settings",
@@ -164,6 +247,170 @@ def test_stream_real_5002_no_key_frame(client: TestClient,
     resp = client.post("/rag/chat/stream", json=BODY, headers=PERMS)
     assert resp.text == 'data: {"msg": "LLM 未配置（CLOUD_BASE_AI_LLM__API_KEY）"}\n\n' + DONE
     get_chat_model.cache_clear()
+
+
+# ---------- 会话四端点（2026-10-19 会话管理轮，契约 §2-§5） ----------
+
+from datetime import datetime
+
+from cloud_base_ai.rag.schemas import ChatSessionVo, SessionMessageVo, SessionMessagesVo
+
+
+def fake_session_vo(session_id: int = 12) -> ChatSessionVo:
+    return ChatSessionVo(id=session_id, title="新对话",
+                         create_time=datetime(2026, 10, 19, 10, 30, 0))
+
+
+def test_session_create_no_perms_403(client: TestClient) -> None:
+    resp = client.post("/rag/chat/sessions")
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["code"] == 403
+    assert body["msg"] == "无操作权限"
+
+
+def test_session_create_ok_structure(client: TestClient,
+                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_create() -> ChatSessionVo:
+        return fake_session_vo(12)
+    monkeypatch.setattr(service_module, "create_session", fake_create)
+    resp = client.post("/rag/chat/sessions", headers=PERMS)
+    body = resp.json()
+    assert body["code"] == 200 and body["msg"] == "操作成功"
+    assert body["data"] == {"id": 12, "title": "新对话",
+                            "create_time": "2026-10-19 10:30:00"}
+
+
+def test_session_create_identity_missing_1001(client: TestClient,
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_create() -> ChatSessionVo:
+        raise BusinessException("缺少用户身份（X-User-Id），无法创建会话", 1001)
+    monkeypatch.setattr(service_module, "create_session", fake_create)
+    resp = client.post("/rag/chat/sessions", headers=PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_session_list_no_perms_403(client: TestClient) -> None:
+    resp = client.get("/rag/chat/sessions/list")
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["code"] == 403 and body["msg"] == "无操作权限"
+
+
+def test_session_list_ok_structure_and_query_passthrough(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_page(page: int, size: int) -> AiPageResult[ChatSessionVo]:
+        captured.update(page=page, size=size)
+        return AiPageResult(total=2, rows=[fake_session_vo(13), fake_session_vo(12)])
+    monkeypatch.setattr(service_module, "page_list_sessions", fake_page)
+    resp = client.get("/rag/chat/sessions/list", params={"page": 2, "size": 5},
+                      headers=PERMS)
+    body = resp.json()
+    assert body["code"] == 200
+    assert captured == {"page": 2, "size": 5}  # query 透传 service
+    assert isinstance(body["data"]["total"], int)  # JSON number（非 string）
+    assert body["data"]["rows"][0]["id"] == 13
+    assert body["data"]["rows"][0]["title"] == "新对话"
+
+
+def test_session_list_defaults_page1_size10(client: TestClient,
+                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_page(page: int, size: int) -> AiPageResult[ChatSessionVo]:
+        captured.update(page=page, size=size)
+        return AiPageResult(total=0, rows=[])
+    monkeypatch.setattr(service_module, "page_list_sessions", fake_page)
+    resp = client.get("/rag/chat/sessions/list", headers=PERMS)
+    assert resp.json()["code"] == 200
+    assert captured == {"page": 1, "size": 10}  # 缺省 page=1 size=10
+    assert resp.json()["data"] == {"total": 0, "rows": []}  # 空集语义同形
+
+
+def test_session_list_page_not_int_1001(client: TestClient) -> None:
+    resp = client.get("/rag/chat/sessions/list", params={"page": "abc"}, headers=PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_session_delete_no_perms_403(client: TestClient) -> None:
+    resp = client.delete("/rag/chat/sessions/12")
+    body = resp.json()
+    assert body["code"] == 403 and body["msg"] == "无操作权限"
+
+
+def test_session_delete_session_id_not_int_1001(client: TestClient) -> None:
+    resp = client.delete("/rag/chat/sessions/abc", headers=PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_session_delete_ok_data_null_and_path_passthrough(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, int] = {}
+
+    async def fake_delete(session_id: int) -> None:
+        captured["session_id"] = session_id
+    monkeypatch.setattr(service_module, "delete_session", fake_delete)
+    resp = client.delete("/rag/chat/sessions/12", headers=PERMS)
+    body = resp.json()
+    assert body["code"] == 200 and body["msg"] == "操作成功"
+    assert body["data"] is None  # R<null>：data 恒 null
+    assert captured == {"session_id": 12}  # 路径参数透传 service
+
+
+def test_session_delete_missing_5012_passthrough(client: TestClient,
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_delete(session_id: int) -> None:
+        raise BusinessException("会话不存在", 5012)
+    monkeypatch.setattr(service_module, "delete_session", fake_delete)
+    resp = client.delete("/rag/chat/sessions/999", headers=PERMS)
+    assert resp.json()["code"] == 5012
+
+
+def test_session_delete_not_owner_5013_passthrough(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_delete(session_id: int) -> None:
+        raise BusinessException("无权访问该会话", 5013)
+    monkeypatch.setattr(service_module, "delete_session", fake_delete)
+    resp = client.delete("/rag/chat/sessions/12", headers=PERMS)
+    assert resp.json()["code"] == 5013
+
+
+def test_session_messages_no_perms_403(client: TestClient) -> None:
+    resp = client.get("/rag/chat/sessions/12/messages")
+    body = resp.json()
+    assert body["code"] == 403 and body["msg"] == "无操作权限"
+
+
+def test_session_messages_session_id_not_int_1001(client: TestClient) -> None:
+    resp = client.get("/rag/chat/sessions/abc/messages", headers=PERMS)
+    assert resp.json()["code"] == 1001
+
+
+def test_session_messages_ok_ascending(client: TestClient,
+                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_messages(session_id: int) -> SessionMessagesVo:
+        return SessionMessagesVo(messages=[
+            SessionMessageVo(role="user", content="你好"),
+            SessionMessageVo(role="assistant", content="你好！有什么可以帮你？"),
+        ])
+    monkeypatch.setattr(service_module, "list_session_messages", fake_messages)
+    resp = client.get("/rag/chat/sessions/12/messages", headers=PERMS)
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["data"]["messages"] == [
+        {"role": "user", "content": "你好"},
+        {"role": "assistant", "content": "你好！有什么可以帮你？"}]
+
+
+def test_session_messages_not_owner_5013_passthrough(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_messages(session_id: int) -> SessionMessagesVo:
+        raise BusinessException("无权访问该会话", 5013)
+    monkeypatch.setattr(service_module, "list_session_messages", fake_messages)
+    resp = client.get("/rag/chat/sessions/12/messages", headers=PERMS)
+    assert resp.json()["code"] == 5013
 
 
 # ---------- 知识库创建端点（2026-10-14，契约 2026-10-14-ai-kb-api.md） ----------

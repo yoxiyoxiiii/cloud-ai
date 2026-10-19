@@ -1,6 +1,7 @@
 /**
  * AI 接口（cloud-base-ai，网关前缀 /ai）：
- * 对话 = 契约 2026-10-13-ai-rag-chat-api；知识库管理 = 契约 2026-10-14-ai-kb-api；
+ * 对话与会话管理 = 契约 2026-10-13-ai-rag-chat-api + 2026-10-19-ai-chat-session-api；
+ * 知识库管理 = 契约 2026-10-14-ai-kb-api；
  * 知识库授权 = 契约 2026-10-18-kb-permission-api。
  * 流式端点 /ai/rag/chat/stream 不在本文件——axios/XHR 无法流式读取，见 utils/sse.ts。
  * AI 域出参口径（kb 契约 §1）：字段 snake_case、id/total 为 JSON number（非 Java 域
@@ -9,6 +10,9 @@
 import { request } from '../utils/request'
 import type {
   AiPageResult,
+  ChatSendPayload,
+  ChatSessionPageQuery,
+  ChatSessionVo,
   CreateKbPayload,
   KbFileVo,
   KbPageQuery,
@@ -16,19 +20,65 @@ import type {
   KbPermsVo,
   KbVo,
   RagChatAnswerVo,
-  RagChatMessage,
   ReembedPayload,
+  SessionMessagesVo,
   UpdateKbPayload,
 } from '../types/api'
 
-/** AI 对话·非流式（契约 2026-10-13-ai-rag-chat-api §1，perms ai:chat:list）：LLM 耗时远超默认 15s，单请求放大超时 */
-export function chatRag(messages: RagChatMessage[]): Promise<RagChatAnswerVo> {
+/**
+ * AI 对话·非流式（契约 2026-10-19-ai-chat-session-api §6 breaking 换轨，perms ai:chat:list）：
+ * 入参从历史数组改为 {session_id, question}——历史由服务端拼装落档（单源），旧形态得 1001；
+ * 会话不存在 5012 / 非本人 5013 拦截器统一 toast；LLM 耗时远超默认 15s，单请求放大超时
+ */
+export function chatRag(payload: ChatSendPayload): Promise<RagChatAnswerVo> {
   return request<RagChatAnswerVo>({
     url: '/ai/rag/chat',
     method: 'post',
-    data: { messages },
+    data: payload,
     timeout: 120000,
   })
+}
+
+/**
+ * 创建会话（契约 2026-10-19-ai-chat-session-api §2，perms ai:chat:list）：无 body；
+ * 返回新会话（title 恒「新对话」，首问后由服务端更新为问句前 16 字符）；
+ * 建了不问的空会话只占元数据行。错误分支（403/1001/500）拦截器统一 toast
+ */
+export function createChatSession(): Promise<ChatSessionVo> {
+  return request<ChatSessionVo>({ url: '/ai/rag/chat/sessions', method: 'post' })
+}
+
+/**
+ * 会话分页（契约 §3，perms ai:chat:list）：仅当前登录用户本人会话，id 倒序（新建居首），
+ * 软删不可见；身份头缺失 = 空集（非错误）。错误分支（403/500）拦截器统一 toast
+ */
+export function pageChatSessions(query: ChatSessionPageQuery): Promise<AiPageResult<ChatSessionVo>> {
+  return request<AiPageResult<ChatSessionVo>>({
+    url: '/ai/rag/chat/sessions/list',
+    method: 'get',
+    params: query,
+  })
+}
+
+/**
+ * 删除会话（契约 §4，perms ai:chat:list）：软删会话 + 物理清消息（双清，不可恢复）；
+ * 5012 会话不存在（含二次删）/ 5013 非本人。skipErrorMessage：唯一消费方会话页对 5012
+ * （他端已删场景）做静默收敛，其余错误由页面自行 toast——错误提示责任在调用方
+ */
+export function deleteChatSession(sessionId: number): Promise<null> {
+  return request<null>({
+    url: `/ai/rag/chat/sessions/${sessionId}`,
+    method: 'delete',
+    skipErrorMessage: true,
+  })
+}
+
+/**
+ * 消息回显（契约 §5，perms ai:chat:list）：该会话全部保留消息（≤100 条，时间升序），
+ * 切换会话/刷新后重建消息区；5012/5013/1001 拦截器统一 toast
+ */
+export function listSessionMessages(sessionId: number): Promise<SessionMessagesVo> {
+  return request<SessionMessagesVo>({ url: `/ai/rag/chat/sessions/${sessionId}/messages`, method: 'get' })
 }
 
 /**

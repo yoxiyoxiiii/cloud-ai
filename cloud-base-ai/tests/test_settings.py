@@ -182,14 +182,15 @@ def test_mcp_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_redis_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    """redis 段默认值：单起始节点本机 6379，无密码。集群模式无 db 键
-    （redis-py 8.1.0 集群模式传 db 直接抛 RedisClusterException，客户端只支持 db 0）。
+    """redis 段默认值：单起始节点本机 7000（redis-cluster 单节点集群容器），无密码。
+    集群模式无 db 键（redis-py 8.1.0 集群模式传 db 直接抛 RedisClusterException，
+    客户端只支持 db 0）。
     """
     for key in ("HOSTS", "PORT", "PASSWORD"):
         monkeypatch.delenv(f"CLOUD_BASE_AI_REDIS__{key}", raising=False)
     s = Settings(_env_file=None)
     assert s.redis.hosts == "127.0.0.1"
-    assert s.redis.port == 6379
+    assert s.redis.port == 7000
     assert s.redis.password == ""
 
 
