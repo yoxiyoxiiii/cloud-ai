@@ -13,6 +13,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * 资源端安全自动配置（仅 servlet 生效；网关是 WebFlux 自动退避）。
  * URL 级不做拦截（外部访问由网关白名单把门），方法级用 @PreAuthorize；
  * 未加注解的接口=匿名可达。@PreAuthorize 拒绝时 HTTP 200 + body code=403（全局约定）。
+ * @author jy-root
  */
 @AutoConfiguration
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)
@@ -42,7 +44,7 @@ public class CommonSecurityAutoConfiguration {
     @ConditionalOnMissingBean(name = "cloudSecurityFilterChain")
     public SecurityFilterChain cloudSecurityFilterChain(HttpSecurity http, HeaderAuthFilter headerAuthFilter)
             throws Exception {
-        http.csrf(csrf -> csrf.disable())
+        http.csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth.anyRequest().permitAll())
                 .addFilterBefore(headerAuthFilter, UsernamePasswordAuthenticationFilter.class);
