@@ -13,6 +13,7 @@ CREATE TABLE ai_knowledge_base
     file_count       INT         NOT NULL DEFAULT 0 COMMENT '文档数量',
     file_chunk_count INT         NOT NULL DEFAULT 0 COMMENT '文档分片总数',
     description      VARCHAR(512) NULL COMMENT '描述信息',
+    collection_name  VARCHAR(64) NOT NULL DEFAULT '' COMMENT 'Milvus集合名（服务端派生kb_{id}，一库一集合；换embedding维度时改本列切kb_{id}_v2新集合后重嵌入）',
     create_by        VARCHAR(30) NULL COMMENT '创建人',
     create_time      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     update_by        VARCHAR(30) NULL COMMENT '更新人',

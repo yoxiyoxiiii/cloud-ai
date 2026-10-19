@@ -463,6 +463,7 @@ async def test_create_kb_returns_id_and_audits(monkeypatch: pytest.MonkeyPatch) 
         assert isinstance(kb_id, int) and kb_id > 0
         found = await find_kb_by_name(factory(), "e2e_kb_1")
         assert found is not None and found.create_by == "e2e_admin"  # contextvar → 审计
+        assert found.collection_name == f"kb_{kb_id}"  # 集合绑定列随事务提交回填
 
 
 async def test_create_kb_duplicate_active_name_5003(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -513,10 +514,12 @@ from cloud_base_ai.rag.schemas import AiPageResult, KbFileVo, KbVo, UpdateKBReq
 
 
 async def _seed_kb(factory, name: str, description: str | None) -> int:
-    """直接走 dao 造一条知识库（不经 service.create_kb，保持用例聚焦被测编排）。"""
+    """直接走 dao 造一条知识库（不经 service.create_kb，保持用例聚焦被测编排）；
+    集合绑定列按服务端派生公式回填（模拟 DDL 全量回填后的行形态）。"""
     async with factory() as s:
         async with s.begin():
             kb = await save_kb(s, AiKnowledgeBase(name=name, description=description))
+            kb.collection_name = service.derive_collection_name(kb.id)
             return kb.id
 
 
@@ -659,22 +662,73 @@ async def test_update_kb_success_overwrites_both_fields(monkeypatch: pytest.Monk
             assert (await find_kb_by_name(s, "e2e_kb_old")) is None  # 旧名不再占用
 
 
-# ---------- 删除编排（2026-10-15 列表管理轮，契约 §6：三表级联软删同一事务） ----------
+# ---------- 删除编排（契约 §6：三存储全清——MinIO 前缀清 + Milvus drop + MySQL 级联软删） ----------
 
 
-async def test_delete_kb_missing_5004(monkeypatch: pytest.MonkeyPatch) -> None:
+def _install_delete_fakes(monkeypatch: pytest.MonkeyPatch, storage: "FakeStorage",
+                          drop: "FakeVectorDrop",
+                          events: list[tuple[str, object]]) -> None:
+    """装删库链外部替身（存储前缀清 / 集合 drop）+ MySQL 软删 spy；events 记三步顺序。"""
+    monkeypatch.setattr(service, "get_storage", lambda: storage)
+    real_remove = storage.remove_prefix
+
+    def spy_remove(prefix: str) -> int:
+        events.append(("minio", prefix))
+        return real_remove(prefix)
+    storage.remove_prefix = spy_remove
+
+    real_drop = drop
+
+    def spy_drop(collection_name: str) -> None:
+        events.append(("milvus", collection_name))
+        real_drop(collection_name)
+    monkeypatch.setattr(service.vectorstore, "drop_collection", spy_drop)
+
+    real_soft_delete = rag_dao.delete_kb_by_id
+
+    async def spy_soft_delete(session, kb_id: int) -> int:
+        rowcount = await real_soft_delete(session, kb_id)
+        events.append(("mysql", kb_id))
+        return rowcount
+    monkeypatch.setattr(service.dao, "delete_kb_by_id", spy_soft_delete)
+
+
+async def test_delete_kb_missing_5004_zero_external(monkeypatch: pytest.MonkeyPatch) -> None:
+    """库不存在 → 5004，零外部调用（MinIO 前缀清与 Milvus drop 均未触达）。"""
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        storage, drop = FakeStorage(), FakeVectorDrop()
+        events: list[tuple[str, object]] = []
+        _install_delete_fakes(monkeypatch, storage, drop, events)
         with pytest.raises(BusinessException) as ei:
             await service.delete_kb(9999)
         assert ei.value.code == 5004
         assert "不存在" in ei.value.msg
+        assert events == []  # 零外部调用
+
+
+async def test_delete_kb_three_step_order_and_names(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """三清顺序：MinIO 前缀清 → Milvus drop → MySQL 软删；前缀串与 drop 集合名对齐
+    库 id 与行内绑定列。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        storage, drop = FakeStorage(), FakeVectorDrop()
+        events: list[tuple[str, object]] = []
+        _install_delete_fakes(monkeypatch, storage, drop, events)
+        kb_id = await _seed_kb(factory, "e2e_kb_three_clear", "d")
+        await service.delete_kb(kb_id)
+    assert [e[0] for e in events] == ["minio", "milvus", "mysql"]  # 先外部清后软删
+    assert events[0][1] == f"kb/{kb_id}/"  # MinIO 前缀 = kb/{kb_id}/
+    assert events[1][1] == f"kb_{kb_id}"  # drop 名 = 行内绑定列值（非历史共用名）
+    assert events[1][1] != "test123"
 
 
 async def test_delete_kb_cascade_three_tables(monkeypatch: pytest.MonkeyPatch) -> None:
     """happy path：KB/文件/chunk 三表行 deleted 全置 1（带审计），活记录视角 find 全不可见。"""
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _install_delete_fakes(monkeypatch, FakeStorage(), FakeVectorDrop(), [])
         set_current_account("e2e_admin")
         kb_id = await _seed_kb(factory, "e2e_kb_cascade", "d")
         file_id = await _seed_file(factory, kb_id, "e2e_a.pdf")
@@ -702,10 +756,71 @@ async def test_delete_kb_cascade_three_tables(monkeypatch: pytest.MonkeyPatch) -
                 assert await find_chunk_by_id(s, chunk_id) is None
 
 
-async def test_delete_kb_twice_5004(monkeypatch: pytest.MonkeyPatch) -> None:
-    """二次删除同一 id：软删后不可见即 5004。"""
+async def test_delete_kb_drop_failed_5008_mysql_untouched(
+        monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """Milvus drop 失败 → 5008 且 MySQL 零软删（行仍活，原样重删即重试）。"""
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        events: list[tuple[str, object]] = []
+        _install_delete_fakes(
+            monkeypatch, FakeStorage(), FakeVectorDrop(drop_error=RuntimeError("milvus down")),
+            events)
+        kb_id = await _seed_kb(factory, "e2e_kb_drop_fail", "d")
+        with caplog.at_level(logging.ERROR, logger="cloud_base_ai.rag.service"):
+            with pytest.raises(BusinessException) as ei:
+                await service.delete_kb(kb_id)
+        assert ei.value.code == 5008
+        assert ei.value.msg == "向量清理失败，请重试"
+        assert "milvus down" in caplog.text
+        assert [e[0] for e in events] == ["minio", "milvus"]  # MySQL 软删未发生
+        async with factory() as s:
+            async with s.begin():
+                assert await find_kb_by_id(s, kb_id) is not None  # 行仍活
+
+
+async def test_delete_kb_minio_failed_raw_exception_milvus_mysql_untouched(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """MinIO 前缀清失败 → 异常裸上抛（不转码、走全局 500），Milvus 与 MySQL 均未动。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        events: list[tuple[str, object]] = []
+        _install_delete_fakes(
+            monkeypatch, FakeStorage(remove_prefix_error=S3Error(
+                None, "InternalError", "internal error", "/kb-bucket", "e2e-req", "e2e-host")),
+            FakeVectorDrop(), events)
+        kb_id = await _seed_kb(factory, "e2e_kb_minio_fail", "d")
+        with pytest.raises(S3Error):
+            await service.delete_kb(kb_id)
+        assert [e[0] for e in events] == ["minio"]  # drop 与软删均未发生
+        async with factory() as s:
+            async with s.begin():
+                assert await find_kb_by_id(s, kb_id) is not None  # 行仍活
+
+
+async def test_delete_kb_soft_delete_rowcount_zero_5004(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """级联软删 rowcount=0（校验后被并发删除的极端窗口）→ 5004 回滚本级联；
+    外部清已先行（顺序设计使重删可完整重试）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        events: list[tuple[str, object]] = []
+        _install_delete_fakes(monkeypatch, FakeStorage(), FakeVectorDrop(), events)
+        kb_id = await _seed_kb(factory, "e2e_kb_rowcount0", "d")
+
+        async def zero_delete(session, kb_id_: int) -> int:
+            return 0
+        monkeypatch.setattr(service.dao, "delete_kb_by_id", zero_delete)
+        with pytest.raises(BusinessException) as ei:
+            await service.delete_kb(kb_id)
+        assert ei.value.code == 5004
+        assert [e[0] for e in events] == ["minio", "milvus"]  # 外部清先完成
+
+
+async def test_delete_kb_twice_5004(monkeypatch: pytest.MonkeyPatch) -> None:
+    """二次删除同一 id：软删后不可见即 5004（drop 幂等重删安全由 has 判断兜底）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _install_delete_fakes(monkeypatch, FakeStorage(), FakeVectorDrop(), [])
         kb_id = await _seed_kb(factory, "e2e_kb_twice", "d")
         await service.delete_kb(kb_id)
         with pytest.raises(BusinessException) as ei:
@@ -977,6 +1092,7 @@ async def test_page_list_kb_files_missing_5004_before_5011(monkeypatch: pytest.M
 async def test_delete_kb_cascades_grants_physical(monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        _install_delete_fakes(monkeypatch, FakeStorage(), FakeVectorDrop(), [])
         kb_id = await _seed_kb(factory, "e2e_kb_cascade_grant", "d")
         other_id = await _seed_kb(factory, "e2e_kb_cascade_other", "d")
         await _seed_grants(factory, kb_id, role_ids=(2,), dept_ids=(3,))
@@ -996,15 +1112,18 @@ from langchain_core.documents import Document
 
 
 class FakeStorage:
-    """MinioStorage 替身：记录 ensure_bucket/put_bytes/get_bytes 调用；错误注入。"""
+    """MinioStorage 替身：记录 ensure_bucket/put_bytes/get_bytes/remove_prefix 调用；错误注入。"""
 
     def __init__(self, put_error: Exception | None = None,
-                 get_bytes_error: Exception | None = None) -> None:
+                 get_bytes_error: Exception | None = None,
+                 remove_prefix_error: Exception | None = None) -> None:
         self.put_error = put_error
         self.get_bytes_error = get_bytes_error
+        self.remove_prefix_error = remove_prefix_error
         self.ensure_bucket_calls = 0
         self.put_calls: list[tuple[str, bytes, str]] = []
         self.get_bytes_calls: list[str] = []
+        self.remove_prefix_calls: list[str] = []
 
     def ensure_bucket(self) -> None:
         self.ensure_bucket_calls += 1
@@ -1021,16 +1140,40 @@ class FakeStorage:
         self.get_bytes_calls.append(object_name)
         return b"%PDF-1.4 e2e original bytes"
 
+    def remove_prefix(self, prefix: str) -> int:
+        if self.remove_prefix_error is not None:
+            raise self.remove_prefix_error
+        self.remove_prefix_calls.append(prefix)
+        return 0
+
+
+class FakeVectorDrop:
+    """vectorstore.drop_collection 替身：记录收到的集合名；错误注入（5008 断言用）。"""
+
+    def __init__(self, drop_error: Exception | None = None) -> None:
+        self.drop_error = drop_error
+        self.dropped: list[str] = []
+
+    def __call__(self, collection_name: str) -> None:
+        if self.drop_error is not None:
+            raise self.drop_error
+        self.dropped.append(collection_name)
+
 
 class FakeMilvus:
-    """Milvus 替身：记录 add_documents/delete 入参；delete 返回值可配置（5008 断言用）。"""
+    """Milvus 替身：记录 add_documents/delete 入参与收到的集合名；错误/返回值可注入。"""
 
-    def __init__(self, delete_result: bool = True) -> None:
+    def __init__(self, delete_result: bool = True,
+                 add_error: Exception | None = None) -> None:
         self.added: list[tuple[list, list]] = []
         self.delete_calls: list[list[str]] = []
         self.delete_result = delete_result
+        self.add_error = add_error
+        self.collection_names: list[str] = []
 
     def add_documents(self, documents: list, ids: list) -> None:
+        if self.add_error is not None:
+            raise self.add_error
         self.added.append((documents, ids))
 
     def delete(self, ids: list[str] | None = None, **_kwargs: object) -> bool:
@@ -1044,10 +1187,12 @@ def _fake_upload(filename: str, data: bytes, content_type: str | None) -> Simple
 
 
 async def _run_upload(monkeypatch: pytest.MonkeyPatch, storage: FakeStorage,
-                      saved: dict, upload: SimpleNamespace) -> int:
+                      saved: dict, upload: SimpleNamespace,
+                      milvus: FakeMilvus | None = None) -> tuple[int, int, FakeMilvus]:
     """装好上传链全部替身（存储/解析/切分/落库/向量）后跑一次 upload_file_by_kb。
 
-    落库实体经 saved 字典捕获（save_kb_file/save_chunks 不写真库）；KB 行走真实 dao。
+    落库实体经 saved 字典捕获（save_kb_file/save_chunks 不写真库）；KB 行走真实 dao；
+    get_milvus 替身记录收到的集合名（绑定列消费断言锚）。返回 (结果, kb_id, milvus)。
     """
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
@@ -1072,9 +1217,13 @@ async def _run_upload(monkeypatch: pytest.MonkeyPatch, storage: FakeStorage,
 
         monkeypatch.setattr(service.dao, "save_kb_file", fake_save_kb_file)
         monkeypatch.setattr(service.dao, "save_chunks", fake_save_chunks)
-        fake_milvus = FakeMilvus()
-        monkeypatch.setattr(service.vectorstore, "get_milvus", lambda name: fake_milvus)
-        return await service.upload_file_by_kb(kb_id, upload), kb_id
+        fake_milvus = milvus if milvus is not None else FakeMilvus()
+
+        def fake_get_milvus(name: str) -> FakeMilvus:
+            fake_milvus.collection_names.append(name)
+            return fake_milvus
+        monkeypatch.setattr(service.vectorstore, "get_milvus", fake_get_milvus)
+        return await service.upload_file_by_kb(kb_id, upload), kb_id, fake_milvus
 
 
 async def test_upload_stores_original_to_minio(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1083,7 +1232,7 @@ async def test_upload_stores_original_to_minio(monkeypatch: pytest.MonkeyPatch) 
     saved: dict = {}
     file_bytes = b"%PDF-1.4 e2e upload bytes"
     upload = _fake_upload("e2e_doc.pdf", file_bytes, "application/pdf")
-    _, kb_id = await _run_upload(monkeypatch, storage, saved, upload)
+    _, kb_id, milvus = await _run_upload(monkeypatch, storage, saved, upload)
 
     assert storage.ensure_bucket_calls == 1
     assert len(storage.put_calls) == 1
@@ -1094,10 +1243,13 @@ async def test_upload_stores_original_to_minio(monkeypatch: pytest.MonkeyPatch) 
     assert object_name.startswith(f"kb/{kb_id}/")
     assert object_name.endswith(".pdf")  # 后缀取自原文件名
     assert saved["chunks"] and saved["chunks"][0].file_id == 501  # chunk 关联文件行
+    # 向量集合名取库行绑定列（共用集合字面量已消灭）：等于派生公式、非历史共用名
+    assert milvus.collection_names == [f"kb_{kb_id}"]
+    assert milvus.collection_names[0] != "test123"
 
 
 async def test_upload_minio_failure_zero_db_writes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """对象存储写失败：异常上抛（事务回滚），此时零 DB 写——save_kb_file 未被调用。"""
+    """对象存储写失败：异常上抛（事务外、零 DB 写）——save_kb_file 未被调用（两阶段语义保持）。"""
     storage = FakeStorage(put_error=RuntimeError("minio down"))
     saved: dict = {}
     upload = _fake_upload("e2e_doc.pdf", b"%PDF-1.4 e2e", "application/pdf")
@@ -1117,6 +1269,39 @@ async def test_upload_content_type_none_defaults(monkeypatch: pytest.MonkeyPatch
     assert storage.put_calls[0][2] == "application/octet-stream"
 
 
+async def test_upload_kb_missing_5004_zero_external(monkeypatch: pytest.MonkeyPatch) -> None:
+    """库不存在 → 5004，零外部调用（MinIO 未写、Milvus 未触达）。"""
+    storage = FakeStorage()
+    milvus = FakeMilvus()
+    upload = _fake_upload("e2e_doc.pdf", b"%PDF-1.4 e2e", "application/pdf")
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        monkeypatch.setattr(service, "get_storage", lambda: storage)
+        monkeypatch.setattr(service.vectorstore, "get_milvus", lambda name: milvus)
+        with pytest.raises(BusinessException) as ei:
+            await service.upload_file_by_kb(99999, upload)
+    assert ei.value.code == 5004
+    assert storage.put_calls == [] and milvus.added == []
+
+
+async def test_upload_vector_write_failed_5014_file_registered(
+        monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """向量写失败 → 5014，且文件行/块行已在库（MySQL 已提交的两阶段形态）；
+    msg 引导重嵌入而非重试上传。"""
+    storage = FakeStorage()
+    saved: dict = {}
+    upload = _fake_upload("e2e_doc.pdf", b"%PDF-1.4 e2e", "application/pdf")
+    with caplog.at_level(logging.ERROR, logger="cloud_base_ai.rag.service"):
+        with pytest.raises(BusinessException) as ei:
+            await _run_upload(monkeypatch, storage, saved, upload,
+                              milvus=FakeMilvus(add_error=RuntimeError("milvus down")))
+    assert ei.value.code == 5014
+    assert ei.value.msg == "向量写入失败，请对该文件执行重新向量化"
+    assert "milvus down" in caplog.text  # log.error 先记根因
+    assert "kb_file" in saved and "chunks" in saved  # 文件行与块行已登记（重嵌入可修复）
+    assert len(storage.put_calls) == 1  # 原件已上 MinIO
+
+
 # ---------- 重新向量化编排（契约 §8：置换编排/快照默认/错误分支） ----------
 
 from minio.error import S3Error
@@ -1132,10 +1317,12 @@ _REEMBED_CHILD = Document(page_content="e2e child text",
 
 async def _seed_reembed_file(factory, file_path: str = "kb/1/e2e_doc.pdf",
                              chunk_size: int = 128, chunk_overlap: int = 20) -> tuple[int, int]:
-    """造一库一文件行（file_path 缺省为 MinIO 对象键形态，参数快照缺省 128/20）。"""
+    """造一库一文件行（file_path 缺省为 MinIO 对象键形态，参数快照缺省 128/20）；
+    库行集合绑定列按服务端派生公式回填（真实库经 DDL 回填，替身对齐）。"""
     async with factory() as s:
         async with s.begin():
             kb = await save_kb(s, AiKnowledgeBase(name="e2e_kb_reembed", description="d"))
+            kb.collection_name = service.derive_collection_name(kb.id)
             row = await save_kb_file(s, AiKnowledgeBaseFiles(
                 kb_id=kb.id, file_path=file_path, file_name="e2e_doc.pdf",
                 file_chunk_count=1, file_chunk_size=chunk_size,
@@ -1162,17 +1349,22 @@ async def _seed_gen_chunk(factory, kb_id: int, file_id: int, tag: str) -> tuple[
 
 def _install_reembed_fakes(monkeypatch: pytest.MonkeyPatch, storage: FakeStorage,
                            milvus: FakeMilvus, split_kwargs: dict | None = None) -> None:
-    """装好重嵌入链全部替身（存储/解析/分片/向量）；DB 走真实 dao（SQLite）。"""
+    """装好重嵌入链全部替身（存储/解析/分片/向量，get_milvus 记录集合名）；
+    DB 走真实 dao（SQLite）。"""
 
     def fake_split(**kwargs: object) -> tuple[list[Document], list[Document]]:
         if split_kwargs is not None:
             split_kwargs.update(kwargs)
         return [_REEMBED_PARENT], [_REEMBED_CHILD]
 
+    def fake_get_milvus(name: str) -> FakeMilvus:
+        milvus.collection_names.append(name)
+        return milvus
+
     monkeypatch.setattr(service, "get_storage", lambda: storage)
     monkeypatch.setattr(service.pdfmuse, "to_text", lambda data: "e2e parsed text")
     monkeypatch.setattr(service.chunking, "parent_child_split_file", fake_split)
-    monkeypatch.setattr(service.vectorstore, "get_milvus", lambda name: milvus)
+    monkeypatch.setattr(service.vectorstore, "get_milvus", fake_get_milvus)
 
 
 async def test_reembedding_file_missing_5005(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1302,6 +1494,9 @@ async def test_reembedding_swaps_chunks_and_vectors(
         _install_reembed_fakes(monkeypatch, FakeStorage(), milvus)
         await service.reembedding(
             ReembeddingReq(file_id=file_id, chunk_size=200, chunk_overlap=30))
+        # 向量写入库行绑定的集合（共用集合字面量已消灭）：等于派生公式、非历史共用名
+        assert milvus.collection_names == [f"kb_{kb_id}"]
+        assert milvus.collection_names[0] != "test123"
         # 向量断言：add 收新代 id（字符串化）；delete 收历代清单（软删 gen1 + 刚置换的 gen2）
         assert len(milvus.added) == 1
         added_ids = milvus.added[0][1]

@@ -53,6 +53,18 @@ class MinioStorage:
         """删除对象；不存在时 S3Error 上抛，由调用方决定是否忽略。"""
         self._client.remove_object(self._bucket, object_name)
 
+    def remove_prefix(self, prefix: str) -> int:
+        """按前缀清空对象，返回删除数：list_objects(recursive=True) 遍历逐个 remove_object。
+
+        空前缀/前缀无对象 = 空迭代零操作（幂等，删库整段重试安全——外部清先于
+        MySQL 软删，重删时此步空清无害）。
+        """
+        removed = 0
+        for obj in self._client.list_objects(self._bucket, prefix=prefix, recursive=True):
+            self._client.remove_object(self._bucket, obj.object_name)
+            removed += 1
+        return removed
+
     def presigned_get_url(self, object_name: str, expires_seconds: int = 3600) -> str:
         """预签名下载直链（默认 1 小时；免凭证临时访问）。"""
         return self._client.presigned_get_object(

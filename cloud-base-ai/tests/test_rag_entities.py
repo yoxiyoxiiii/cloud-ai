@@ -19,6 +19,7 @@ def test_kb_columns_match_ddl():
     cols = {c.name for c in inspect(AiKnowledgeBase).columns}
     assert cols == {
         "id", "name", "file_count", "file_chunk_count", "description",
+        "collection_name",
         "create_by", "create_time", "update_by", "update_time", "deleted",
     }
 

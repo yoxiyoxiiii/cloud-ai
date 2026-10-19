@@ -71,11 +71,14 @@ MSG_VECTOR_PURGE_FAILED: str = "向量清理失败，请重试"
 # 5011 接在 AI 段 5009/5010（MCP 客户端通道）之后
 CODE_KB_NO_ACCESS: int = 5011
 MSG_KB_NO_ACCESS: str = "无权访问该知识库"
-# 5012/5013 接在 5011 之后（会话归属校验）；AI 段下一可用 5014
+# 5012/5013 接在 5011 之后（会话归属校验）
 CODE_SESSION_NOT_EXISTS: int = 5012
 MSG_SESSION_NOT_EXISTS: str = "会话不存在"
 CODE_SESSION_NO_ACCESS: int = 5013
 MSG_SESSION_NO_ACCESS: str = "无权访问该会话"
+# 5014 接在 5013 之后（上传链向量写失败）；AI 段下一可用 5015
+CODE_VECTOR_WRITE_FAILED: int = 5014
+MSG_VECTOR_WRITE_FAILED: str = "向量写入失败，请对该文件执行重新向量化"
 # 创建会话时身份缺失（X-User-Id 缺失/非整数）无法落归属——复用通用参数错误码 1001
 CODE_SESSION_IDENTITY_MISSING: int = 1001
 MSG_SESSION_IDENTITY_MISSING: str = "缺少用户身份（X-User-Id），无法创建会话"
@@ -85,6 +88,13 @@ MSG_CHUNK_PARAM_INVALID: str = "分片重叠必须小于分片大小"
 PARENT_CHUNK_SIZE_FIXED: int = 500
 # 首问改题的标题截断长度（沿用前端既有 slice(0,16) 口径，生成责任收敛服务端保证多端一致）
 TITLE_MAX_CHARS: int = 16
+
+
+def derive_collection_name(kb_id: int) -> str:
+    """Milvus 集合名派生（命名规则唯一实现处，禁散落 f"kb_{id}" 魔法串）：
+    一库一集合；换 embedding 维度时改库行 collection_name 指向 kb_{id}_v2
+    新集合后逐文件重嵌入即完成蓝绿切换，本函数只管初代命名。"""
+    return f"kb_{kb_id}"
 
 
 class PreparedChat(NamedTuple):
@@ -284,6 +294,8 @@ async def create_kb(req: CreateKBReq) -> int:
     except IntegrityError as e:
         logger.error("create_kb duplicate name (uk_name): %s: %s", type(e).__name__, e)
         raise BusinessException(MSG_KB_NAME_EXISTS, CODE_KB_NAME_EXISTS) from e
+    # 两步式：集合名含自增 id，须等 save_kb flush 回填后才可知；赋值随事务提交持久化
+    kb.collection_name = derive_collection_name(kb.id)
     return kb.id
 
 
@@ -334,13 +346,20 @@ async def update_kb(kb_id: int, req: UpdateKBReq) -> None:
 
 
 @transactional
-async def delete_kb(kb_id: int) -> None:
-    """删除知识库（契约 §6）：chunk → 文件行 → 授权行 → KB 级联删除，同一事务；
-    授权表是纯关系表（物理删除），其余三表软删。无「库下有文件阻止删除」前置约束；
-    物理向量不动（孤儿向量治理记账 docs/handoff/ai.md，检索轮做 collection 隔离时统一清理）。"""
+async def _load_kb_collection(kb_id: int) -> str:
+    """删库阶段一（读事务）：库存在性校验（5004），返回绑定集合名纯值。"""
     session = current_session()
-    if await dao.find_kb_by_id(session, kb_id) is None:
+    kb = await dao.find_kb_by_id(session, kb_id)
+    if kb is None:
         raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
+    return kb.collection_name
+
+
+@transactional
+async def _soft_delete_kb_cascade(kb_id: int) -> None:
+    """删库阶段四（写事务）：chunk → 文件行 → 授权行 → KB 级联删除，同一事务；
+    授权表是纯关系表（物理删除），其余三表软删。无「库下有文件阻止删除」前置约束。"""
+    session = current_session()
     await dao.delete_chunks_by_kb(session, kb_id)
     await dao.delete_kb_files_by_kb(session, kb_id)
     await dao.delete_grants_by_kb(session, kb_id)
@@ -348,6 +367,27 @@ async def delete_kb(kb_id: int) -> None:
     if rowcount == 0:
         # 并发窗口兜底：校验存在后被并发删除；raise 回滚本事务级联（对方事务已删，无害）
         raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
+
+
+async def delete_kb(kb_id: int) -> None:
+    """删除知识库（契约 §6，三存储全清编排）：MinIO 前缀清原件 → Milvus drop 该库
+    集合 → MySQL 四级联（软删 + 授权物理删）。
+
+    先外部清后软删：任一外部步失败时 MySQL 未动，原样重删即完整重试（若先软删再清
+    外部，重试会被 5004 挡死只能靠对账兜底）。各步幂等：MinIO 空前缀=空操作、drop
+    内部先 has 判断、软删条件写二次删 0 行兜底。MinIO 清失败裸上抛走全局 500（与
+    上传链 MinIO 失败对称，可整段重试）；Milvus drop 失败转 5008。中间态收敛：drop
+    成功后软删提交失败的极端窗口 = 集合没了、行还活——该库再上传时集合懒建自愈。
+    """
+    collection_name = await _load_kb_collection(kb_id)
+    await run_in_threadpool(get_storage().remove_prefix, f"kb/{kb_id}/")
+    try:
+        await run_in_threadpool(vectorstore.drop_collection, collection_name)
+    except Exception as e:
+        logger.error("delete_kb drop collection failed, kb_id=%s collection=%s: %s: %s",
+                     kb_id, collection_name, type(e).__name__, e)
+        raise BusinessException(MSG_VECTOR_PURGE_FAILED, CODE_VECTOR_PURGE_FAILED) from e
+    await _soft_delete_kb_cascade(kb_id)
 
 
 @transactional
@@ -424,91 +464,79 @@ async def page_list_kb_files(kb_id: int, page: int, size: int) -> AiPageResult[K
     return AiPageResult(total=total, rows=vos)
 
 
+class UploadContext(NamedTuple):
+    """上传前置阶段产出：目标库 id 与其绑定向量集合名（纯值出事务防惰性加载）。"""
+
+    kb_id: int
+    collection_name: str
+
+
 @transactional
-async def upload_file_by_kb(kb_id: int, file: UploadFile) -> int:
-    """
-    上传文件到知识库
-    :param kb_id: 知识库ID
-    :param file: 文件
-    :return:
-    """
+async def _load_upload_context(kb_id: int) -> UploadContext:
+    """上传阶段一（读事务）：库存在性校验（5004），取绑定集合名纯值。"""
     session = current_session()
-    kb = await dao.find_kb_by_id(session=session, kb_id=kb_id)
+    kb = await dao.find_kb_by_id(session, kb_id)
     if kb is None:
-        # 知识库不存在
         raise BusinessException(MSG_KB_NOT_EXISTS, CODE_KB_NOT_EXISTS)
-    # 知识库存在
-    # 切分文件
+    return UploadContext(kb_id=kb.id, collection_name=kb.collection_name)
+
+
+@transactional
+async def _persist_file_chunks(ctx: UploadContext, file_name: str, object_name: str,
+                               parent_docs: list[Document],
+                               child_docs: list[Document]) -> list[int]:
+    """上传阶段三（写事务）：文件行 + 父子块行同一事务落库，返回子块行 id 清单
+    （向量主键 = 子块行 id 字符串化；纯值出事务防惰性加载）。"""
+    session = current_session()
+    kb_file = await dao.save_kb_file(
+        session, AiKnowledgeBaseFiles(
+            kb_id=ctx.kb_id, file_path=object_name, file_name=file_name,
+            file_chunk_count=len(child_docs), file_chunk_size=128, file_chunk_overlap=20,
+            file_split_type=AiKnowledgeBaseFiles.SplitTypeEnum.PARENT_CHILD.value))
+    chunk_rows = _build_chunk_rows(ctx.kb_id, kb_file.id, parent_docs) \
+        + _build_chunk_rows(ctx.kb_id, kb_file.id, child_docs)
+    saved = await dao.save_chunks(session, chunk_rows)
+    return [row.id for row in saved
+            if row.chunk_type == AiKbChunk.ChunkTypeEnum.CHILD]
+
+
+async def upload_file_by_kb(kb_id: int, file: UploadFile) -> int:
+    """上传文件到知识库（编排方法，不开事务——事务边界在两个阶段方法上）：
+    ① 读上下文（5004）→ ② 解析分片 + MinIO 写原件（事务外，失败零 DB 写）→
+    ③ 文件行+块行落库 → ④ 子块向量写库行绑定的集合（首传懒建集合）。
+
+    阶段④失败转 5014：MySQL 已提交，形态收敛为「文件已登记无向量」——msg 刻意
+    引导对该文件执行重嵌入（按 file_id 幂等置换）而非重试上传（重试会登记第二个
+    文件行、旧行悬死）。向量主键 = 子块行 id 字符串化；Milvus 实例名取行内绑定列，
+    构造期传入（构造后属性赋值不触发字段表重载，见 vectorstore.get_milvus 注释）。
+    """
+    ctx = await _load_upload_context(kb_id)
     file_data: bytes = file.file.read()
     file_content = pdfmuse.to_text(file_data)
-    parent_and_child_docs: tuple[list[Document], list[Document]] = chunking.parent_child_split_file(
-        file_content=file_content,
-        child_chunk_size=128,
-        child_chunk_overlap=20,
-        parent_chunk_size=500)
+    parent_docs, child_docs = chunking.parent_child_split_file(
+        file_content=file_content, child_chunk_size=128, child_chunk_overlap=20,
+        parent_chunk_size=PARENT_CHUNK_SIZE_FIXED)
 
-    parent_doc_list = parent_and_child_docs[0]
-    all_child_doc_list = parent_and_child_docs[1]
-
-    # 文件原件入 MinIO：对象键=kb/{kb_id}/{uuid}{后缀}，即文件表 file_path 的新语义
-    # （旧 uuid 占位自此退役）。SDK 为同步客户端，run_in_threadpool 包装防阻塞事件循环；
-    # 失败语义与 Milvus 同源——异常上抛回滚本事务（此时零 DB 写），后置步骤失败留孤儿对象
-    # （handoff 一致性欠账统一治理）
+    # 文件原件入 MinIO：对象键=kb/{kb_id}/{uuid}{后缀}，即文件表 file_path 的语义。
+    # SDK 为同步客户端，run_in_threadpool 包装防阻塞事件循环；失败零 DB 写（语义保持）
     storage = get_storage()
     suffix = Path(file.filename or "").suffix
-    object_name = f"kb/{kb_id}/{uuid.uuid4().hex}{suffix}"
+    object_name = f"kb/{ctx.kb_id}/{uuid.uuid4().hex}{suffix}"
     await run_in_threadpool(storage.ensure_bucket)
     await run_in_threadpool(
-        storage.put_bytes, object_name, file_data, file.content_type or "application/octet-stream")
+        storage.put_bytes, object_name, file_data,
+        file.content_type or "application/octet-stream")
 
-    # 存储文件信息到文件表
-    ai_knowledge_base_files = await dao.save_kb_file(session=session,
-                                                     kb_file=AiKnowledgeBaseFiles(kb_id=kb_id,
-                                                                                  file_path=object_name,
-                                                                                  file_name=file.filename,
-                                                                                  file_chunk_count=len(
-                                                                                      all_child_doc_list),
-                                                                                  file_chunk_size=128,
-                                                                                  file_chunk_overlap=20,
-                                                                                  file_split_type=AiKnowledgeBaseFiles.SplitTypeEnum.PARENT_CHILD.value
-
-                                                                                  )
-                                                     )
-
-    # 父文档进MYSQL;子文档进度向量数据库
-    ai_kb_chunk_list: list[AiKbChunk] = []
-    for doc in parent_doc_list:
-        ai_kb_chunk = AiKbChunk(kb_id=kb_id,
-                                file_id=ai_knowledge_base_files.id,
-                                chunk_id=doc.metadata["id"],
-                                parent_chunk_id=doc.metadata["parent_id"] or "",
-                                chunk_type=doc.metadata["type"],
-                                seq_no=0,
-                                content=doc.page_content)
-        ai_kb_chunk_list.append(ai_kb_chunk)
-
-    for doc in all_child_doc_list:
-        ai_kb_chunk = AiKbChunk(kb_id=kb_id,
-                                file_id=ai_knowledge_base_files.id,
-                                chunk_id=doc.metadata["id"],
-                                parent_chunk_id=doc.metadata["parent_id"] or "",
-                                chunk_type=doc.metadata["type"],
-                                seq_no=0,
-                                content=doc.page_content)
-        ai_kb_chunk_list.append(ai_kb_chunk)
-
-    # 存入mysql (子/父都存入)
-    save_list: Sequence[AiKbChunk] = await dao.save_chunks(session=session, chunks=ai_kb_chunk_list)
-
-    # 子文档写入到向量数据库中（collection 名随构造传入：构造后属性赋值不触发
-    # 字段表重载，对既有集合插入会剥掉 metadata，见 vectorstore.get_milvus 注释）
-    milvus: Milvus = vectorstore.get_milvus("test123")
-    child_rows = [item for item in save_list
-                  if item.chunk_type == AiKbChunk.ChunkTypeEnum.CHILD]
-
-    milvus.add_documents(all_child_doc_list, ids=[str(item.id) for item in child_rows])
-
-    return kb_id
+    child_ids = await _persist_file_chunks(ctx, file.filename, object_name,
+                                           parent_docs, child_docs)
+    try:
+        milvus: Milvus = vectorstore.get_milvus(ctx.collection_name)
+        milvus.add_documents(child_docs, ids=[str(i) for i in child_ids])
+    except Exception as e:
+        logger.error("upload write vectors failed, kb_id=%s collection=%s: %s: %s",
+                     ctx.kb_id, ctx.collection_name, type(e).__name__, e)
+        raise BusinessException(MSG_VECTOR_WRITE_FAILED, CODE_VECTOR_WRITE_FAILED) from e
+    return ctx.kb_id
 
 
 class ReembeddingContext(NamedTuple):
@@ -520,6 +548,7 @@ class ReembeddingContext(NamedTuple):
 
     file_id: int
     kb_id: int
+    collection_name: str
     file_path: str
     chunk_size: int
     chunk_overlap: int
@@ -548,7 +577,11 @@ async def _load_reembedding_context(req: ReembeddingReq) -> ReembeddingContext:
         raise BusinessException(MSG_CHUNK_PARAM_INVALID, CODE_CHUNK_PARAM_INVALID)
     # 历代清单先于新代 id 生成（阶段二才产生），保证删除清单与新增向量零交集
     old_child_ids = list(await dao.list_child_ids_by_file(session, req.file_id))
+    # 集合名取库行绑定列（文件行活 ⇒ 库必活：删库时文件行已级联软删、5005 在先，
+    # 无需再设 5004 分支——极端数据不一致态由全局 500 兜底）
+    kb_row = await dao.find_kb_by_id(session, file_row.kb_id)
     return ReembeddingContext(file_id=req.file_id, kb_id=file_row.kb_id,
+                              collection_name=kb_row.collection_name,
                               file_path=file_row.file_path, chunk_size=chunk_size,
                               chunk_overlap=chunk_overlap, old_child_ids=old_child_ids)
 
@@ -587,14 +620,15 @@ def _build_chunk_rows(kb_id: int, file_id: int,
 
 
 def _swap_vectors(child_docs: list[Document], new_child_ids: Sequence[int],
-                  old_child_ids: Sequence[int], file_id: int) -> None:
-    """向量置换（MySQL 事务提交后执行）：先写新后删旧。
+                  old_child_ids: Sequence[int], file_id: int,
+                  collection_name: str) -> None:
+    """向量置换（MySQL 事务提交后执行）：先写新后删旧，集合取库行绑定列。
 
     先写后删的中间失败形态是新旧并存而非检索空洞（旧向量命中后被软删过滤，不产脏内容）；
     删除清单 = 历代子块 id（含软删行），让原样重试具备完全收敛性。Milvus 实例同步调用
     与上传链同形态。
     """
-    milvus: Milvus = vectorstore.get_milvus("test123")
+    milvus: Milvus = vectorstore.get_milvus(collection_name)
     milvus.add_documents(child_docs, ids=[str(i) for i in new_child_ids])
     if not old_child_ids:
         # 空清单必须跳过 delete：langchain-milvus 对空 ids 列表会触发断言错误
@@ -628,4 +662,5 @@ async def reembedding(req: ReembeddingReq) -> None:
         file_content=file_content, parent_chunk_size=PARENT_CHUNK_SIZE_FIXED,
         child_chunk_size=ctx.chunk_size, child_chunk_overlap=ctx.chunk_overlap)
     new_child_ids = await _replace_file_chunks(ctx, parent_docs, child_docs)
-    _swap_vectors(child_docs, new_child_ids, ctx.old_child_ids, req.file_id)
+    _swap_vectors(child_docs, new_child_ids, ctx.old_child_ids, req.file_id,
+                  ctx.collection_name)

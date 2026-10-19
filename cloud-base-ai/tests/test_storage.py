@@ -72,6 +72,14 @@ class FakeMinio:
         self._record("remove_object", bucket=bucket_name, object_name=object_name)
         self.objects.pop((bucket_name, object_name), None)
 
+    def list_objects(self, bucket_name: str, prefix: str | None = None,
+                     recursive: bool = False) -> list[SimpleNamespace]:
+        self._record("list_objects", bucket=bucket_name,
+                     prefix=prefix, recursive=recursive)
+        names = sorted(name for b, name in self.objects
+                       if b == bucket_name and name.startswith(prefix or ""))
+        return [SimpleNamespace(object_name=n) for n in names]
+
     def presigned_get_object(self, bucket_name: str, object_name: str, expires=None) -> str:
         self._record("presigned_get_object", bucket=bucket_name,
                      object_name=object_name, expires=expires)
@@ -130,6 +138,39 @@ def test_remove_object(make_storage) -> None:
     s.put_bytes("gone.txt", b"bye")
     s.remove("gone.txt")
     assert (BUCKET, "gone.txt") not in fake.objects
+
+
+def test_remove_prefix_deletes_all_under_prefix(make_storage) -> None:
+    """前缀内对象全删、返回删除数；前缀外对象不动。"""
+    fake = FakeMinio()
+    s = make_storage(fake)
+    s.put_bytes("kb/20/a.pdf", b"a")
+    s.put_bytes("kb/20/b.pdf", b"b")
+    s.put_bytes("kb/21/c.pdf", b"c")  # 前缀外：不动
+    removed = s.remove_prefix("kb/20/")
+    assert removed == 2
+    assert (BUCKET, "kb/20/a.pdf") not in fake.objects
+    assert (BUCKET, "kb/20/b.pdf") not in fake.objects
+    assert (BUCKET, "kb/21/c.pdf") in fake.objects
+    assert fake._calls_of("list_objects")[0]["recursive"] is True
+
+
+def test_remove_prefix_empty_prefix_zero_calls(make_storage) -> None:
+    """空前缀但无对象 = 空迭代零 remove 调用、不报错（幂等）。"""
+    fake = FakeMinio()
+    s = make_storage(fake)
+    assert s.remove_prefix("") == 0
+    assert fake._calls_of("remove_object") == []
+
+
+def test_remove_prefix_missing_prefix_noop(make_storage) -> None:
+    """前缀不存在（无任何对象落在其下）= 零删除、不报错。"""
+    fake = FakeMinio()
+    s = make_storage(fake)
+    s.put_bytes("kb/20/a.pdf", b"a")
+    assert s.remove_prefix("kb/999/") == 0
+    assert fake._calls_of("remove_object") == []
+    assert (BUCKET, "kb/20/a.pdf") in fake.objects
 
 
 def test_presigned_get_url_passes_expires(make_storage) -> None:

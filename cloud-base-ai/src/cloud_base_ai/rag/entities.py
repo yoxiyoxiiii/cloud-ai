@@ -38,6 +38,10 @@ class AiKnowledgeBase(Base, AuditMixin, SoftDeleteMixin):
     file_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"), comment="文档数量")
     file_chunk_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"), comment="文档分片总数")
     description: Mapped[str | None] = mapped_column(String(512), comment="描述信息")
+    collection_name: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default=text("''"),
+        comment="Milvus集合名（服务端派生kb_{id}，一库一集合；换embedding维度时改本列切新集合后重嵌入）",
+    )
 
 
 class AiKnowledgeBaseFiles(Base, AuditMixin, SoftDeleteMixin):

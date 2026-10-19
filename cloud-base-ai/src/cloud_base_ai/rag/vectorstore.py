@@ -1,6 +1,8 @@
 """向量存储阶段（store）：langchain_core VectorStore 实现封装位：milvus。"""
 from functools import lru_cache
+
 from langchain_milvus import Milvus
+from pymilvus import MilvusClient
 
 from cloud_base_ai.config import get_settings
 from cloud_base_ai.models import model_factory
@@ -24,3 +26,13 @@ def get_milvus(collection_name: str) -> Milvus:
     )
 
     return vector_store
+
+
+def drop_collection(collection_name: str) -> None:
+    """删集合并清空单例缓存：drop 后同名懒建重建依赖缓存清除（旧实例持有已删集合
+    的字段表缓存，复用它 add 既不会重建集合也可能按旧 schema 写入废数据）。
+    has 判断在前，drop 不存在的集合的幂等重删安全；低频管理操作，客户端不缓存。"""
+    client = MilvusClient(uri=get_settings().milvus.uri)
+    if client.has_collection(collection_name):
+        client.drop_collection(collection_name)
+    get_milvus.cache_clear()
