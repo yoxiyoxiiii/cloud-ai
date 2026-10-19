@@ -25,7 +25,6 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.lang.reflect.Field;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,6 +32,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.startsWith;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -99,8 +99,8 @@ class TokenServiceTest {
     @Test
     void refresh_updatesRoleAndDeptSnapshot() throws Exception {
         injectSecret();
-        when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh-token:rt-old")).thenReturn("1");
         when(valueOps.get("sso:refresh:1"))
                 .thenReturn("{\"tokenId\":\"jti-old\",\"token\":\"rt-old\"}");
         OnlineSession session = new OnlineSession();
@@ -155,7 +155,9 @@ class TokenServiceTest {
         assertThat(result.getRefreshToken()).isNotBlank();
         assertThat(result.getExpiresIn()).isEqualTo(7200L);
         verify(valueOps).set(startsWith(SecurityConstants.ONLINE_KEY_PREFIX), anyString(), anyLong(), any(TimeUnit.class));
-        verify(valueOps).set(startsWith("sso:refresh:"), anyString(), anyLong(), any(TimeUnit.class));
+        // 主槽与反向索引双写：索引值是 userId 纯字符串，TTL 与主槽同为 refresh TTL（默认 604800s）
+        verify(valueOps).set(eq("sso:refresh:1"), anyString(), eq(604800L), any(TimeUnit.class));
+        verify(valueOps).set(eq("sso:refresh-token:" + result.getRefreshToken()), eq("1"), eq(604800L), any(TimeUnit.class));
     }
 
     @Test
@@ -187,8 +189,8 @@ class TokenServiceTest {
     @Test
     void refresh_replacesTokensWithoutDeletingNewRefreshKey() throws Exception {
         injectSecret();
-        when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh-token:rt-old")).thenReturn("1");
         when(valueOps.get("sso:refresh:1"))
                 .thenReturn("{\"tokenId\":\"jti-old\",\"token\":\"rt-old\"}");
         OnlineSession session = new OnlineSession();
@@ -208,13 +210,16 @@ class TokenServiceTest {
         assertThat(result.getAccessToken()).isNotBlank();
         verify(stringRedisTemplate).delete("sso:online:jti-old");
         verify(stringRedisTemplate, never()).delete("sso:refresh:1");
+        // 换发成功后旧 token 的反向索引被清理，新 token 的索引已写入
+        verify(stringRedisTemplate).delete("sso:refresh-token:rt-old");
+        verify(valueOps).set(eq("sso:refresh-token:" + result.getRefreshToken()), eq("1"), anyLong(), any(TimeUnit.class));
     }
 
     @Test
     void refresh_deletesOnlyBoundSession() throws Exception {
         injectSecret();
-        when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh-token:rt-2")).thenReturn("1");
         when(valueOps.get("sso:refresh:1"))
                 .thenReturn("{\"tokenId\":\"jti-2\",\"token\":\"rt-2\"}");
         OnlineSession session2 = new OnlineSession();
@@ -237,8 +242,8 @@ class TokenServiceTest {
     @Test
     void refresh_disabledUserRejected() throws Exception {
         injectSecret();
-        when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh-token:rt-old")).thenReturn("1");
         when(valueOps.get("sso:refresh:1"))
                 .thenReturn("{\"tokenId\":\"jti-old\",\"token\":\"rt-old\"}");
         OnlineSession session = new OnlineSession();
@@ -259,8 +264,8 @@ class TokenServiceTest {
     @Test
     void refresh_usesLatestPermissions() throws Exception {
         injectSecret();
-        when(stringRedisTemplate.keys("sso:refresh:*")).thenReturn(Set.of("sso:refresh:1"));
         when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh-token:rt-old")).thenReturn("1");
         when(valueOps.get("sso:refresh:1"))
                 .thenReturn("{\"tokenId\":\"jti-old\",\"token\":\"rt-old\"}");
         OnlineSession session = new OnlineSession();
@@ -283,6 +288,34 @@ class TokenServiceTest {
         assertThat(written.getPermissions()).containsExactly("new:perm");
     }
 
+    /** 反向索引 miss（token 从未签发、已换发清理或过期）→ 2005 */
+    @Test
+    void refresh_indexMissRejected() throws Exception {
+        injectSecret();
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+
+        assertThatThrownBy(() -> tokenService.refresh("rt-unknown"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getCode()).isEqualTo(2005))
+                .hasMessageContaining("refreshToken 无效或已过期");
+    }
+
+    /** 陈旧索引：索引命中但主槽已被新登录覆盖（token 比对不符）→ 2005，且不动在线会话 */
+    @Test
+    void refresh_staleIndexRejected() throws Exception {
+        injectSecret();
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh-token:rt-old")).thenReturn("1");
+        when(valueOps.get("sso:refresh:1"))
+                .thenReturn("{\"tokenId\":\"jti-new\",\"token\":\"rt-new\"}");
+
+        assertThatThrownBy(() -> tokenService.refresh("rt-old"))
+                .isInstanceOfSatisfying(BusinessException.class,
+                        ex -> assertThat(ex.getCode()).isEqualTo(2005))
+                .hasMessageContaining("refreshToken 无效或已过期");
+        verify(stringRedisTemplate, never()).delete(anyString());
+    }
+
     @Test
     void logout_expiredTokenIsIdempotent() throws Exception {
         injectSecret();
@@ -294,10 +327,26 @@ class TokenServiceTest {
     @Test
     void logout_removesOnlineAndRefresh() throws Exception {
         injectSecret();
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh:1")).thenReturn("{\"tokenId\":\"jti-1\",\"token\":\"rt-1\"}");
         String token = com.cloudai.common.security.util.JwtUtil.createToken(TEST_SECRET, 1L, "admin", "jti-1", 7200);
         tokenService.logout(token);
         verify(stringRedisTemplate).delete("sso:online:jti-1");
         verify(stringRedisTemplate).delete("sso:refresh:1");
+        verify(stringRedisTemplate).delete("sso:refresh-token:rt-1");
+    }
+
+    /** 主槽已不存在时无从得知 token，不误删任何反向索引（主槽删除本身幂等无害） */
+    @Test
+    void logout_refreshSlotMissingSkipsIndexDelete() throws Exception {
+        injectSecret();
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.get("sso:refresh:1")).thenReturn(null);
+        String token = com.cloudai.common.security.util.JwtUtil.createToken(TEST_SECRET, 1L, "admin", "jti-1", 7200);
+        tokenService.logout(token);
+        verify(stringRedisTemplate).delete("sso:online:jti-1");
+        verify(stringRedisTemplate).delete("sso:refresh:1");
+        verify(stringRedisTemplate, never()).delete(startsWith("sso:refresh-token:"));
     }
 
     @Test

@@ -22,11 +22,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 @Slf4j
@@ -35,6 +31,9 @@ import java.util.concurrent.TimeUnit;
 public class TokenService {
 
     private static final String REFRESH_KEY_PREFIX = "sso:refresh:";
+
+    /** refresh 反向索引键前缀：sso:refresh-token:{token} = userId 纯字符串（非 JSON），TTL 与主槽相同 */
+    private static final String REFRESH_INDEX_KEY_PREFIX = "sso:refresh-token:";
 
     /** 时序旁路防护用的固定散列（明文为随机无效串） */
     private static final String DUMMY_HASH = "$2a$10$VAopGs8o/mcBgRg6G0G6..u1kOmyJqxrqhu74w9MhfYZgWKZHZBSG";
@@ -79,23 +78,27 @@ public class TokenService {
         return issueTokens(dto, ip);
     }
 
+    /**
+     * 以 refreshToken 换发新双令牌。
+     * 归属定位走反向索引：GET sso:refresh-token:{token} 得 userId，再 GET 主槽做 token
+     * 相等校验——两次 GET 精确定位，替代对全量用户槽的 KEYS 扫描（KEYS 是 O(N) 且阻塞
+     * Redis 单线程，用户量增长会拖慢整个实例上的全部请求）。
+     */
     public LoginResult refresh(String refreshToken) {
         if (refreshToken == null || refreshToken.isBlank()) {
             throw new BusinessException(2004, "refreshToken 不能为空");
         }
-        Set<String> keys = stringRedisTemplate.keys(REFRESH_KEY_PREFIX + "*");
-        if (keys == null) {
+        // sso:refresh-token:{token},获取userId
+        String userId = stringRedisTemplate.opsForValue().get(REFRESH_INDEX_KEY_PREFIX + refreshToken);
+        if (userId == null) {
             throw new BusinessException(2005, "refreshToken 无效或已过期");
         }
-        RefreshTokenValue matched = null;
-        for (String key : keys) {
-            RefreshTokenValue value = parseRefreshValue(stringRedisTemplate.opsForValue().get(key));
-            if (value != null && refreshToken.equals(value.getToken())) {
-                matched = value;
-                break;
-            }
-        }
-        if (matched == null) {
+
+        // sso:refresh:{userId}
+        RefreshTokenValue matched = parseRefreshValue(
+                stringRedisTemplate.opsForValue().get(REFRESH_KEY_PREFIX + userId));
+        // 相等校验防陈旧索引错位：主槽已被新登录覆盖时，残留索引指向的旧 token 比对不符即拒绝
+        if (matched == null || !refreshToken.equals(matched.getToken())) {
             throw new BusinessException(2005, "refreshToken 无效或已过期");
         }
         // 读旧会话（保留 ip）后精确删除绑定会话（多会话下不误杀其他端）
@@ -129,8 +132,11 @@ public class TokenService {
         if (latest == null || latest.getStatus() == null || latest.getStatus() != 0) {
             throw new BusinessException(2005, "会话已失效，请重新登录");
         }
-        // issueTokens 以新值覆盖 sso:refresh:{userId}，此处不得再 delete（曾致新 refreshToken 落地即死）
-        return issueTokens(latest, old.getIp());
+        // issueTokens 以新值覆盖 sso:refresh:{userId}，此处不得再 delete 主槽（曾致新 refreshToken 落地即死）
+        LoginResult result = issueTokens(latest, old.getIp());
+        // 换发成功后才清理旧 token 的反向索引：失败路径旧 token 仍应可重试
+        stringRedisTemplate.delete(REFRESH_INDEX_KEY_PREFIX + refreshToken);
+        return result;
     }
 
     public void logout(String accessToken) {
@@ -144,6 +150,12 @@ public class TokenService {
         String tokenId = claims.getId();
         Long userId = Long.valueOf(claims.getSubject());
         stringRedisTemplate.delete(SecurityConstants.ONLINE_KEY_PREFIX + tokenId);
+        // 先读主槽取当前 refreshToken，反向索引与之成对清理（miss 时无从得知 token，跳过）
+        RefreshTokenValue refreshValue = parseRefreshValue(
+                stringRedisTemplate.opsForValue().get(REFRESH_KEY_PREFIX + userId));
+        if (refreshValue != null) {
+            stringRedisTemplate.delete(REFRESH_INDEX_KEY_PREFIX + refreshValue.getToken());
+        }
         stringRedisTemplate.delete(REFRESH_KEY_PREFIX + userId);
     }
 
@@ -195,6 +207,7 @@ public class TokenService {
 
     private LoginResult issueTokens(LoginUserDTO dto, String ip) {
         String tokenId = UUID.randomUUID().toString();
+        // 创建token
         String accessToken = JwtUtil.createToken(jwtProperties.getSecret(), dto.getUserId(), dto.getAccount(), tokenId,
                 jwtProperties.getAccessTokenTtl());
         String refreshToken = UUID.randomUUID().toString();
@@ -224,6 +237,10 @@ public class TokenService {
         }
         stringRedisTemplate.opsForValue().set(REFRESH_KEY_PREFIX + dto.getUserId(),
                 refreshJson, jwtProperties.getRefreshTokenTtl(), TimeUnit.SECONDS);
+        // 反向索引与主槽同 TTL 双写（值 = userId 纯字符串）。登录覆盖旧槽时不主动清旧索引：
+        // 主槽 token 相等校验已挡住错位、TTL 自灭，避免登录路径为此多一次读。
+        stringRedisTemplate.opsForValue().set(REFRESH_INDEX_KEY_PREFIX + refreshToken,
+                String.valueOf(dto.getUserId()), jwtProperties.getRefreshTokenTtl(), TimeUnit.SECONDS);
 
         LoginResult result = new LoginResult();
         result.setAccessToken(accessToken);
