@@ -45,7 +45,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
             "/sso/demo", "/system/demo", "/bpmn/demo",
             "/sso/inner", "/system/inner", "/bpmn/inner",
             "/system/mcp",
-            "/actuator");
+            "/actuator"
+    );
 
     private final StringRedisTemplate stringRedisTemplate;
     private final JwtProperties jwtProperties;
@@ -59,25 +60,32 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         String path = exchange.getRequest().getPath().value();
         // 白名单：剥离外部 X-User-* 后放行
         ServerWebExchange safeExchange = stripUserHeaders(exchange);
+        // 放行白名单
         if (WHITELIST.stream().anyMatch(path::startsWith)) {
             return chain.filter(safeExchange);
         }
+
+        // 获取用户token
         String authorization = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
         if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
             return unauthorized(exchange);
         }
         Claims claims;
         try {
+            // 解析token
             claims = JwtUtil.parseToken(jwtProperties.getSecret(), authorization.substring(BEARER_PREFIX.length()));
         } catch (JwtException | IllegalArgumentException e) {
             // IllegalArgumentException：jjwt 对空串等非法输入抛出（非 JwtException 子类）
             return unauthorized(exchange);
         }
         // 读在线会话原始 JSON（StringRedisTemplate 规避 @class 反序列化；null=注销/强退/过期 → 401）
+        // redis 获取登录用户信息
         String json = stringRedisTemplate.opsForValue().get(SecurityConstants.ONLINE_KEY_PREFIX + claims.getId());
         if (json == null) {
             return unauthorized(exchange);
         }
+
+        // 权限数据
         List<String> perms = List.of();
         List<Long> roleIds = null;
         List<Long> deptIds = null;
@@ -112,6 +120,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
                 })).build();
     }
 
+    // 通过请求头，透传到下游服务
     private ServerWebExchange withUserHeaders(ServerWebExchange exchange, UserHeaderValues values) {
         return exchange.mutate().request(builder -> builder
                 .headers(headers -> {
