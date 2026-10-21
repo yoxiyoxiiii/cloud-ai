@@ -22,6 +22,7 @@ import org.springframework.stereotype.Component;
  * 结果分流：成功→CREATE_RESULT/SUCCESS 补偿事件（含 processInstanceId）；4015→查行补发 SUCCESS
  * 事件（首投事件丢失的收敛路径）；4013/4014/4017 确定性失败白名单→CREATE_RESULT/FAILED 补偿事件→ACK；
  * 其余系统态抛出走重试 ×3→死信（人工，dashboard）。
+ * @author jy-root
  */
 @Slf4j
 @Component

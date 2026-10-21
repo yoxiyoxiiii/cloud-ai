@@ -9,6 +9,8 @@ import com.cloudai.common.rocketmq.tx.TxContext;
 import com.cloudai.common.rocketmq.tx.TxLocalExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.flowable.common.engine.api.FlowableException;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
 import org.flowable.common.engine.impl.identity.Authentication;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.TaskService;
@@ -24,6 +26,7 @@ import java.util.Map;
  * 与 mq_tx_log insert 同在 starter listener 的 TransactionTemplate 单事务（审查 R-1 executor 形态，
  * 实现内禁 @Transactional）；实际回写值与发送前推断值不一致时抛异常整体回滚——
  * 单节点模型必一致，此为多节点模型演进防御（设计 D2）。
+ * @author jy-root
  */
 @Slf4j
 @Component
@@ -77,10 +80,10 @@ public class ApprovalCompleteTxExecutor implements TxLocalExecutor<ApprovalEvent
         try {
             taskService.addComment(task.getId(), task.getProcessInstanceId(), cmd.comment());
             taskService.complete(task.getId(), Map.of(VAR_APPROVE, Boolean.parseBoolean(cmd.approve())));
-        } catch (org.flowable.common.engine.api.FlowableObjectNotFoundException e) {
+        } catch (FlowableObjectNotFoundException e) {
             log.error("任务已不存在或已被办理: {}", cmd.taskId(), e);
             throw new BusinessException(ERR_TASK_INVALID, "任务不存在或已被办理");
-        } catch (org.flowable.common.engine.api.FlowableException e) {
+        } catch (FlowableException e) {
             log.error("流程引擎办理异常: {}", cmd.taskId(), e);
             throw new BusinessException("流程引擎办理异常");
         } finally {

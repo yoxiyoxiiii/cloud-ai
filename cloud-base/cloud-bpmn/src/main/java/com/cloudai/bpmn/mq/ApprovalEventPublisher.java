@@ -19,6 +19,7 @@ import java.time.format.DateTimeFormatter;
  * 事件组装/KEYS 组装统一口——TERMINAL 事件经 TxMessageSender 事务半消息发送（executor 形态，
  * completeTask/cancelApproval 编排化），CREATE_RESULT 补偿事件经 {@link #sendPlain} 普通发送
  * （流1 消费 ACK 前的补偿，不在本地事务内——失败事件无前置状态可保原子，契约 §1.3 触发点 3）。
+ * @author jy-root
  */
 @Component
 @RequiredArgsConstructor

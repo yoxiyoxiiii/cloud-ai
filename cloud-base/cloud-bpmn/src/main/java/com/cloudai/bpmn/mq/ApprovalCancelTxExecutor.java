@@ -15,6 +15,7 @@ import org.springframework.stereotype.Component;
  * executeInTx = 4010/4012/4011 复查（发送前置校验后到者防御）+ 删流程实例 + 置已撤销，
  * 与 mq_tx_log insert 同在 starter listener 单事务（审查 R-1 executor 形态）。
  * 复查与删实例复用 ApprovalWorkflowService 既有脚手架（与 createApproval 同一错误语义源）。
+ * @author jy-root
  */
 @Component
 @RequiredArgsConstructor

@@ -30,6 +30,7 @@ import java.util.List;
  * （网格内信任模型，同 getUserByAccount）。两端点均为求值器薄壳：evaluate 恒留痕（D7）→
  * Decision 收敛为窄契约 ScopeVo（D19 五字段——rowGroups 行集判定唯一权威，命中明细/narratives
  * 不出 system）；deny 补痕 operation=deny 留痕。
+ * @author jy-root
  */
 @RestController
 @RequestMapping("/inner/data-perm")

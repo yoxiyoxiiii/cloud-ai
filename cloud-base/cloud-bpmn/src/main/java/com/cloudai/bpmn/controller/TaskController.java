@@ -21,6 +21,7 @@ import java.util.List;
 /**
  * 任务端点（契约 2026-10-07-bpmn-leave-api §3，网关前缀 /bpmn/task）。
  * 待办/已办 assignee 恒取当前登录人；列表不分页（个人量级小，additive 演进项记移交）。
+ * @author jy-root
  */
 @RestController
 @RequestMapping("/task")
