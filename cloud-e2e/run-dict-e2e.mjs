@@ -9,6 +9,9 @@
  *   翻译契约 §0.3/§8.3 + bpmn_approval_status/system_leave_type 契约 2026-10-08-approval-platform-api §7，is_builtin=1 自动落入 3015/3016 保护；
  *   Round I 审批平台化：-bpmn_leave_status/-bpmn_leave_type 种子行已 DELETE， +bpmn_approval_status（审批状态 4 项→Round J 增 4=发起失败共 5 项）/+system_leave_type（请假类型 3 项），总数 4 不变）；
  *   D5b 内置保护：user_status 行徽标/禁用面 + 直连 3015/3016 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
+ * - D6 ProTable 组件化（2026-10-21 通用表格轮）：类型表列首新增勾选列（行单元格索引整体 +1，表头第 1 列空）；
+ *   行勾选/表头全选 → 双击行开字典项弹框 → sizes 切 20（先回第 2 页再切，断言 pageNum 重置 1 + pageSize=20
+ *   请求 + 文案/行数变化）；造数 e2etbl 前缀 8 类型（页内 fetch，中文走浏览器链路避 GBK 坑），场景内直连删净
  * - 结束清扫全部 e2e 前缀类型（含 D5 的 e2econs；先删项后删类型，3011 禁删约束）并断言左表无 e2e 残留、残留 ⊇ SEED_KEYS（宽松，不锁上限）
  * 核心断言（契约 §2 §3 §5；界面重构后字典项管理在弹框内——2026-10-07-dict-ui-list-dialog plan D4）：
  * - D0 侧边 字典管理 位于 菜单管理 之后 + 面包屑 首页/字典管理 + admin 重登快照含 dict 权限（新增类型按钮可见）
@@ -96,7 +99,8 @@ async function loadDictPage() {
   await sleep(300)
 }
 
-/** 左表（类型）按 dictKey 列精确找行：跨页全量检索（新增 id 倒序置顶，残留可能在任意页） */
+/** 左表（类型）按 dictKey 列精确找行：跨页全量检索（新增 id 倒序置顶，残留可能在任意页）；
+ *  D6 起列首有勾选格（空文本），dictKey 在 cells[2] */
 async function findTypeRowByKey(dictKey, { reload = true } = {}) {
   if (reload) await loadDictPage()
   for (let guard = 0; guard < 30; guard++) {
@@ -104,9 +108,9 @@ async function findTypeRowByKey(dictKey, { reload = true } = {}) {
     const n = await rows.count()
     for (let i = 0; i < n; i++) {
       const cells = await rowCells(rows.nth(i))
-      if (cells[1] === dictKey) return rows.nth(i)
+      if (cells[2] === dictKey) return rows.nth(i)
     }
-    const next = page.locator('.type-pane .el-pagination .btn-next')
+    const next = page.locator('.type-pane .pro-table__pagination .btn-next')
     if ((await next.count()) === 0 || !(await next.isEnabled())) return null
     await next.click()
     await waitTableIdle(page)
@@ -126,14 +130,14 @@ async function scanSeedTypeRows() {
     total += n
     for (let i = 0; i < n; i++) {
       const cells = await rowCells(rows.nth(i))
-      if (!SEED_TYPE_NAMES[cells[1]]) continue
-      seen.push(cells[1])
-      log(`  种子行[${cells[1]}]: ${JSON.stringify(cells)}`)
-      assertEq(stripBadge(cells[0]), SEED_TYPE_NAMES[cells[1]], `种子行 ${cells[1]} 字典名称应为 ${SEED_TYPE_NAMES[cells[1]]}（徽标剥离后）`)
-      assertEq(cells[2], '正常', `种子行 ${cells[1]} 状态列应为 正常（statusLabel 译文/降级链同文案）`)
+      if (!SEED_TYPE_NAMES[cells[2]]) continue
+      seen.push(cells[2])
+      log(`  种子行[${cells[2]}]: ${JSON.stringify(cells)}`)
+      assertEq(stripBadge(cells[1]), SEED_TYPE_NAMES[cells[2]], `种子行 ${cells[2]} 字典名称应为 ${SEED_TYPE_NAMES[cells[2]]}（徽标剥离后）`)
+      assertEq(cells[3], '正常', `种子行 ${cells[2]} 状态列应为 正常（statusLabel 译文/降级链同文案）`)
       assert((await rows.nth(i).locator('.builtin-badge').count()) === 1, `种子行 ${cells[1]} 名称格应有内联「内置」徽标（el-tag）`)
     }
-    const next = page.locator('.type-pane .el-pagination .btn-next')
+    const next = page.locator('.type-pane .pro-table__pagination .btn-next')
     if ((await next.count()) === 0 || !(await next.isEnabled())) break
     await next.click()
     await waitTableIdle(page)
@@ -269,18 +273,21 @@ try {
   })
 
   // ================= D1 全宽类型表 + 种子行"字典项"弹框 =================
-  await step('D1', '全宽类型表：4 列 + 内置种子行 ⊇ SEED_KEYS（4 类型，均带徽标+状态正常，宽松不锁上限）；种子行弹框：标题/5 列精确序/种子 2 行（正常/停用）/共 2 条', async () => {
-    // 类型表 4 列精确序
+  await step('D1', '全宽类型表：勾选列 + 4 数据列 + 内置种子行 ⊇ SEED_KEYS（4 类型，均带徽标+状态正常，宽松不锁上限）；种子行弹框：标题/5 列精确序/种子 2 行（正常/停用）/共 2 条', async () => {
+    // 类型表 5 列：D6 ProTable selectable 注入勾选列居首（表头无文本），后 4 列精确序不变
     const ths = page.locator('.type-pane .el-table__header-wrapper th')
     const tn = await ths.count()
     const headers = []
     for (let i = 0; i < tn; i++) headers.push(((await ths.nth(i).innerText()) || '').trim())
     log(`  类型表头(${tn}): ${JSON.stringify(headers)}`)
-    assertEq(headers.join(','), '字典名称,字典键,状态,操作', `类型表头应为 4 列精确序，实际 ${JSON.stringify(headers)}`)
+    assertEq(tn, 5, `类型表应为 5 列（勾选列+4 数据列），实际 ${tn}`)
+    assertEq(headers[0], '', `类型表第 1 列应为勾选列（无文本），实际 "${headers[0]}"`)
+    assertEq(headers.slice(1).join(','), '字典名称,字典键,状态,操作', `类型表数据列应为 4 列精确序，实际 ${JSON.stringify(headers)}`)
+    assert((await page.locator('.type-pane .el-table__header-wrapper th .el-checkbox').count()) === 1, '表头勾选列应有全选 checkbox（ProTable selectable）')
     // 类型表种子行（E1 候选②迁移）：跨页行数 ≥ SEED_KEYS.length 且 seenKeys ⊇ SEED_KEYS——
     // scanSeedTypeRows 就地断言各行徽标与状态列「正常」、名称逐键锁定（审批两类型契约 approval-platform-api §7）
     const seenKeys = await assertSeedSuperset('D1')
-    const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
+    const leftTotal = (await page.locator('.type-pane .pro-table__pagination .el-pagination__total').innerText()).trim()
     log(`  类型表分页: ${leftTotal}`)
     const leftTotalN = parseInt((leftTotal.match(/\d+/) || ['0'])[0], 10)
     assert(leftTotalN >= SEED_KEYS.length, `类型表分页总数应 ≥ 共 ${SEED_KEYS.length} 条（宽松不锁上限），实际 "${leftTotal}"`)
@@ -350,8 +357,8 @@ try {
     assert(row, `左表应出现新类型行 ${TEST_KEY}`)
     const cells = await rowCells(row)
     log(`  新类型行: ${JSON.stringify(cells)}`)
-    assertEq(cells[0], TEST_NAME, '新行字典名称应为提交值')
-    assertEq(cells[2], '正常', '新行状态应为 正常')
+    assertEq(cells[1], TEST_NAME, '新行字典名称应为提交值（cells[1]——列首勾选格占 cells[0]）')
+    assertEq(cells[3], '正常', '新行状态应为 正常')
     await shot(page, 'd2-type-created.png')
     // ---- 2c. 编辑：回显 → 改名 + 停用 → 全量三字段+id → 行内更新 + 弹框标题跟随新名 ----
     await row.getByRole('button', { name: '编辑' }).click()
@@ -383,8 +390,8 @@ try {
     assert(rowV2, '编辑后应仍能按 dictKey 定位类型行')
     const cellsV2 = await rowCells(rowV2)
     log(`  编辑后类型行: ${JSON.stringify(cellsV2)}`)
-    assertEq(cellsV2[0], TEST_NAME_V2, '行内字典名称应更新为新名')
-    assertEq(cellsV2[2], '停用', '行内状态应更新为 停用')
+    assertEq(cellsV2[1], TEST_NAME_V2, '行内字典名称应更新为新名（cells[1]——列首勾选格占 cells[0]）')
+    assertEq(cellsV2[3], '停用', '行内状态应更新为 停用')
     const statusTag = rowV2.locator('.el-tag').first()
     assert(((await statusTag.getAttribute('class')) || '').includes('el-tag--danger'), `停用状态 tag 应为 danger，实际 ${await statusTag.getAttribute('class')}`)
     // 联动价值平移：重开"字典项"弹框断言标题跟随新名（原右栏标题联动断言的替代）
@@ -411,7 +418,8 @@ try {
     await dupDlg.locator('.el-dialog__footer button', { hasText: '取消' }).click()
     await waitDialogGone(page, '新增字典类型')
     const dupRow = await findTypeRowByKey(TEST_KEY, { reload: false })
-    assert((await rowCells(dupRow))[0] === TEST_NAME_V2, '3009 拦截后原类型行应保持不变')
+    // 列首有勾选格，字典名在 cells[1]
+    assert((await rowCells(dupRow))[1] === TEST_NAME_V2, '3009 拦截后原类型行应保持不变')
   })
 
   // ================= D3 项闭环（弹框作用域）：空提交 → 新增 → 3012 → 编辑 =================
@@ -750,9 +758,120 @@ try {
     assert(row, '保护场景后 user_status 类型行应仍在（种子终态）')
     const cellsAfter = await rowCells(row)
     log(`  种子类型行（保护后）: ${JSON.stringify(cellsAfter)}`)
-    assertEq(stripBadge(cellsAfter[0]), '用户状态', '种子类型名应保持 用户状态（徽标剥离后）')
-    assertEq(cellsAfter[1], 'user_status', '种子 dictKey 应保持 user_status')
-    assertEq(cellsAfter[2], cellsBefore[2], `种子类型状态应保持原值 "${cellsBefore[2]}"`)
+    assertEq(stripBadge(cellsAfter[1]), '用户状态', '种子类型名应保持 用户状态（徽标剥离后，cells[1]——列首勾选格占 cells[0]）')
+    assertEq(cellsAfter[2], 'user_status', '种子 dictKey 应保持 user_status')
+    assertEq(cellsAfter[3], cellsBefore[3], `种子类型状态应保持原值 "${cellsBefore[3]}"`)
+  })
+
+  // ================= D6 ProTable 组件化（2026-10-21 通用表格轮）：选择列 / 双击行 / 可切 sizes 分页 =================
+  await step('D6', 'ProTable：行勾选 + 表头全选 → 双击行开字典项弹框（标题含类型名）→ 先翻第 2 页再切 size 20（pageNum 重置 1 + pageSize=20 请求 + 分页文案/行数变化）→ 直连删净造数', async () => {
+    /** 分页请求的 query 精确解（includes 子串会撞 pageNum=1/10，用 searchParams） */
+    const pageQuery = (url) => {
+      const u = new URL(url)
+      return { pageNum: u.searchParams.get('pageNum'), pageSize: u.searchParams.get('pageSize') }
+    }
+    // ---- 6a. 造数（页内 fetch，中文走浏览器 UTF-8 链路）：8 个 e2e 类型 → 总数 12 > 10，
+    //      切 20 才有行数差异与第 2 页可翻（4 种子 + 8 造；若库有余量则更多，断言不锁上限）----
+    const TBL_PREFIX = `e2etbl${stamp}`
+    const made = await page.evaluate(async (args) => {
+      const { prefix, count } = args
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const H = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }
+      const out = []
+      for (let i = 0; i < count; i++) {
+        const res = await fetch('/api/system/dict/type', {
+          method: 'POST',
+          headers: H,
+          body: JSON.stringify({ dictName: `E2E表格${i}`, dictKey: `${prefix}${i}`, status: 0 }),
+        })
+        const body = await res.json()
+        out.push({ dictKey: `${prefix}${i}`, code: body.code, id: body.data })
+      }
+      return out
+    }, { prefix: TBL_PREFIX, count: 8 })
+    assert(made.every((m) => m.code === 200 && typeof m.id === 'string'), `8 个造数类型应全部新增成功，实际 ${JSON.stringify(made)}`)
+    log(`  造数: ${TBL_PREFIX}0..7 共 8 个类型（无字典项）`)
+
+    await loadDictPage()
+    await shot(page, 'd6-table-full.png')
+    // ---- 6b. 选择列：首行勾选 → 表头全选（当页行全 checked）→ 复原 ----
+    const rows10 = page.locator('.type-pane .el-table__row')
+    const n10 = await rows10.count()
+    assertEq(n10, 10, `size=10 第 1 页应恰 10 行（造数后总数 ≥ 12），实际 ${n10}`)
+    await rows10.first().locator('.el-checkbox').click()
+    await sleep(200)
+    assert((await rows10.first().locator('.el-checkbox.is-checked').count()) === 1, '首行勾选后该行 checkbox 应 is-checked')
+    await shot(page, 'd6-row-checked.png')
+    await page.locator('.type-pane .el-table__header-wrapper .el-checkbox').click()
+    await sleep(200)
+    const checkedCount = await page.locator('.type-pane .el-table__row .el-checkbox.is-checked').count()
+    assertEq(checkedCount, n10, `表头全选后当页 ${n10} 行应全 checked，实际 ${checkedCount}`)
+    await shot(page, 'd6-all-checked.png')
+    await page.locator('.type-pane .el-table__header-wrapper .el-checkbox').click()
+    await sleep(200)
+    // ---- 6c. 双击首行 → 打开该类型字典项弹框（ProTable row-dblclick 上抛）→ 关闭后 hidden ----
+    const firstName = stripBadge((await rowCells(rows10.first()))[1])
+    const dataPageP = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/data/page'), { timeout: 15000 }).catch(() => null)
+    await rows10.first().locator('td').nth(1).dblclick()
+    const dblDlg = dataDialog()
+    await dblDlg.waitFor({ state: 'visible', timeout: 8000 })
+    await dataPageP
+    await waitTableIdle(page)
+    const dblTitle = await dataDialogTitle()
+    log(`  双击行弹框标题: "${dblTitle}"（首行名称 "${firstName}"）`)
+    assert(dblTitle.startsWith('字典项：') && dblTitle.includes(firstName), `双击行应打开该类型字典项弹框（标题含首行名称 "${firstName}"），实际 "${dblTitle}"`)
+    await shot(page, 'd6-dblclick-dialog.png')
+    await closeDataDialog()
+    // ---- 6d. sizes 切 20：先翻第 2 页（size=10），再切 20 验证 pageNum 重置 1 + pageSize=20 请求 ----
+    // 选择器收窄到 ProTable 分页条：字典项弹框原地渲染（未挂 body），关闭后其隐藏 el-pagination
+    // 仍在 .type-pane 内——裸 .el-pagination 会匹配 2 个元素触发 Playwright strict mode
+    const nextBtn = page.locator('.type-pane .pro-table__pagination .btn-next')
+    assert(await nextBtn.isEnabled(), '总数 > 10 时 size=10 应有下一页可翻')
+    const p2 = page.waitForResponse((r) => apiPath(r.url(), '/api/system/dict/type/page') && pageQuery(r.url()).pageNum === '2', { timeout: 15000 })
+    await nextBtn.click()
+    const r2 = await p2
+    assertEq(r2.status(), 200, '翻第 2 页请求应 HTTP 200')
+    await waitTableIdle(page)
+    await sleep(300)
+    const rowsP2 = await page.locator('.type-pane .el-table__row').count()
+    log(`  第 2 页（size=10）行数: ${rowsP2}`)
+    // EP 2.14 sizes 下拉的显示值在 .el-select__placeholder（.el-select__selected-item 会先命中隐藏的 filter input wrapper，读出空串）
+    const selItem = page.locator('.type-pane .pro-table__pagination .el-select__placeholder')
+    const selBefore = (await selItem.innerText()).trim()
+    log(`  sizes 文案（切前）: "${selBefore}"`)
+    const p20 = page.waitForResponse(
+      (r) => apiPath(r.url(), '/api/system/dict/type/page') && pageQuery(r.url()).pageNum === '1' && pageQuery(r.url()).pageSize === '20',
+      { timeout: 15000 },
+    )
+    await page.locator('.type-pane .pro-table__pagination .el-select').click()
+    await page.locator('.el-select-dropdown:visible .el-select-dropdown__item', { hasText: '20' }).click()
+    const r20 = await p20
+    assertEq(r20.status(), 200, '切 size=20 的分页请求应 HTTP 200')
+    log(`  切 size=20 请求: ${JSON.stringify(pageQuery(r20.url()))}（断言 pageNum 重置 1）`)
+    await waitTableIdle(page)
+    await sleep(300)
+    const selAfter = (await selItem.innerText()).trim()
+    log(`  sizes 文案（切后）: "${selAfter}"`)
+    assert(selAfter !== selBefore && selAfter.includes('20'), `切 20 后分页 sizes 文案应变化且含 20，切前 "${selBefore}" 切后 "${selAfter}"`)
+    const totalText = (await page.locator('.type-pane .pro-table__pagination .el-pagination__total').innerText()).trim()
+    const totalN = parseInt((totalText.match(/\d+/) || ['0'])[0], 10)
+    const rows20 = await page.locator('.type-pane .el-table__row').count()
+    assertEq(rows20, Math.min(20, totalN), `size=20 第 1 页行数应为 min(20, total)=${Math.min(20, totalN)}（total "${totalText}"），实际 ${rows20}`)
+    assert(rows20 > rowsP2, `size=20 行数（${rows20}）应多于 size=10 第 2 页（${rowsP2}）——行数随 size 变化的可见证据`)
+    await shot(page, 'd6-size-20.png')
+    // ---- 6e. 造数清理（无字典项可直删；CLEANUP 仍是 e2e 前缀兜底）----
+    const ids = made.filter((m) => typeof m.id === 'string').map((m) => m.id)
+    const cleaned = await page.evaluate(async (delIds) => {
+      const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
+      const out = []
+      for (const id of delIds) {
+        const res = await fetch(`/api/system/dict/type/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } })
+        out.push({ id, code: (await res.json()).code })
+      }
+      return out
+    }, ids)
+    assert(cleaned.every((c) => c.code === 200), `8 个造数类型应全部删除成功，实际 ${JSON.stringify(cleaned)}`)
+    log('  造数已直连删净（8 类型）')
   })
 
   // ================= CLEANUP 删净（兜底清扫全部 e2e 前缀类型：先删项后删类型；D5 的 e2econs 含在内） =================
@@ -765,9 +884,9 @@ try {
       let targetKey = ''
       for (let i = 0; i < n; i++) {
         const cells = await rowCells(rows.nth(i))
-        if (cells[1].startsWith('e2e')) {
+        if (cells[2] !== undefined && cells[2].startsWith('e2e')) {
           target = rows.nth(i)
-          targetKey = cells[1]
+          targetKey = cells[2]
           break
         }
       }
@@ -785,7 +904,7 @@ try {
         continue
       }
       // 本页无残留：向后翻页继续找（残留类型 id 倒序可能在后续页；此处不 goto——避免回第 1 页死循环）
-      const next = page.locator('.type-pane .el-pagination .btn-next')
+      const next = page.locator('.type-pane .pro-table__pagination .btn-next')
       if ((await next.count()) > 0 && (await next.isEnabled())) {
         await next.click()
         await waitTableIdle(page)
@@ -798,7 +917,7 @@ try {
     const residue = await page.locator('.type-pane .el-table__row', { hasText: 'e2e' }).count()
     log(`  e2e 残留类型行数: ${residue}`)
     assertEq(residue, 0, `清理后左表不应残留任何 e2e 前缀类型行，实际 ${residue}`)
-    const leftTotal = (await page.locator('.type-pane .el-pagination__total').innerText()).trim()
+    const leftTotal = (await page.locator('.type-pane .pro-table__pagination .el-pagination__total').innerText()).trim()
     log(`  清理后左表分页: ${leftTotal}`)
     const leftTotalN = parseInt((leftTotal.match(/\d+/) || ['0'])[0], 10)
     assert(leftTotalN >= SEED_KEYS.length, `清理后左表分页总数应 ≥ 共 ${SEED_KEYS.length} 条（宽松不锁上限），实际 "${leftTotal}"`)
@@ -823,7 +942,7 @@ try {
   // ---------- 汇总 ----------
   h.summary({
     extras: [
-      `\n测试数据: 类型 ${TEST_KEY}（${TEST_NAME}→${TEST_NAME_V2}）/ 项 ${ITEM_VALUE}（${ITEM_LABEL}→${ITEM_LABEL_V2}）/ 3009 探针 ${TEST_NAME_DUP} / 3012 探针 ${ITEM_LABEL_B} / D5 消费类型 ${CONS_KEY}（${CONS_NAME}，含 3 项）——应均已在 D4/CLEANUP 删净或从未落库`,
+      `\n测试数据: 类型 ${TEST_KEY}（${TEST_NAME}→${TEST_NAME_V2}）/ 项 ${ITEM_VALUE}（${ITEM_LABEL}→${ITEM_LABEL_V2}）/ 3009 探针 ${TEST_NAME_DUP} / 3012 探针 ${ITEM_LABEL_B} / D5 消费类型 ${CONS_KEY}（${CONS_NAME}，含 3 项）/ D6 表格造数 e2etbl${stamp}0..7（无项）——应均已在 D4/D6/CLEANUP 删净或从未落库`,
       'user_status/common_status/bpmn_approval_status/system_leave_type 内置种子（SEED_KEYS 四类型）全程零触碰；admin 未做任何种子外数据写操作',
     ],
   })

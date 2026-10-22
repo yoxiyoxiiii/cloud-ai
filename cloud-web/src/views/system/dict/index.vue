@@ -1,14 +1,16 @@
 <script setup lang="ts">
 /**
  * 数据字典管理页（单卡全宽列表 + 字典项弹框，重构设计 D1/D3）：
- * 类型表全宽分页（契约 §2.1，id 倒序）；行内"字典项"按钮打开 DictDataDialog 弹框，
+ * 类型表全宽分页（契约 §2.1，id 倒序）；行内"字典项"按钮或双击行打开 DictDataDialog 弹框，
  * 项的分页与增删改全部内聚在弹框内（契约 §3，原主从双卡右栏逻辑已迁入）
  * 类型增删改仍在本页：表单弹窗 DictTypeFormDialog + 操作列 编辑/删除
+ * 类型表已接入通用表格组件 ProTable（2026-10-21）：表格壳/勾选列/分页条收编组件
  */
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteDictType, pageDictType } from '../../../api/dict'
 import type { SysDictTypeVo } from '../../../types/api'
+import type { ProTableExposed } from '../../../components/ProTable.vue'
 import DictTypeFormDialog from './components/DictTypeFormDialog.vue'
 import type { DictTypeFormMode } from './components/DictTypeFormDialog.vue'
 import DictDataDialog from './components/DictDataDialog.vue'
@@ -40,18 +42,19 @@ function typeRowOf(row: unknown): SysDictTypeVo {
 // ---------- 类型列表（单卡全宽） ----------
 const typeLoading = ref(false)
 const typeRows = ref<SysDictTypeVo[]>([])
-const typeTotal = ref(0)
-/** 分页：pageSize 恒 10、省 sizes（设计 §5 口径沿用） */
+/** total 直传 ProTable（组件内归一），类型保持后端原样 string */
+const typeTotal = ref<number | string>(0)
+/** 分页收编进 ProTable：10/20/50 可切（2026-10-21 组件化取代 dict 轮恒 10 旧口径） */
 const typeQuery = reactive({ pageNum: 1, pageSize: 10 })
 
-/** 加载类型分页（契约 §2.1）：total 为 Long→String，分页组件需 Number() */
+/** 加载类型分页（契约 §2.1）：total 为 Long→String 字符串，ProTable 内部归一 */
 async function loadTypePage(pageNum: number = typeQuery.pageNum): Promise<void> {
   typeLoading.value = true
   try {
     typeQuery.pageNum = pageNum
     const page = await pageDictType({ pageNum: typeQuery.pageNum, pageSize: typeQuery.pageSize })
     typeRows.value = page.rows
-    typeTotal.value = Number(page.total)
+    typeTotal.value = page.total
   } catch {
     // 拦截器已统一 toast，表格保持现状
   } finally {
@@ -62,6 +65,24 @@ async function loadTypePage(pageNum: number = typeQuery.pageNum): Promise<void> 
 const typeDialogVisible = ref(false)
 const typeDialogMode = ref<DictTypeFormMode>('add')
 const typeDialogRow = ref<SysDictTypeVo>()
+
+// ---------- ProTable 勾选与翻页 ----------
+/** ProTable 实例（expose 面见 ProTableExposed：清勾选） */
+const tableRef = ref<ProTableExposed>()
+
+/** 勾选集（ProTable selection-change 上抛；工具栏暂不消费选中集，仅保证链路通） */
+const selectedRows = ref<SysDictTypeVo[]>([])
+
+/** 勾选集上抛收窄（unknown[] 经全页唯一断言函数收敛，不散落裸 as） */
+function handleSelectionChange(rows: unknown[]): void {
+  selectedRows.value = rows.map(typeRowOf)
+}
+
+/** 翻页/改 size：先清勾选（选中集不跨页保留），再按新页码加载 */
+function handleTypePageChange(): void {
+  tableRef.value?.clearSelection()
+  void loadTypePage()
+}
 
 function openTypeAdd(): void {
   typeDialogMode.value = 'add'
@@ -94,6 +115,7 @@ async function handleTypeDelete(row: SysDictTypeVo): Promise<void> {
     await deleteDictType(row.id)
     ElMessage.success('删除成功')
     await loadTypePage()
+    tableRef.value?.clearSelection()
   } catch {
     // 拦截器已统一 toast（3011/3008）；表格刷新后自然对齐
   }
@@ -126,7 +148,19 @@ onMounted(() => {
     </template>
 
     <!-- row-key：无 key 时 el-table 按 index 原地 patch，新增行会瞬时残留上一行 el-tag 节点（E3 dict D2 渲染竞态实锤） -->
-    <el-table v-loading="typeLoading" :data="typeRows" row-key="id">
+    <ProTable
+      ref="tableRef"
+      :rows="typeRows"
+      :loading="typeLoading"
+      :total="typeTotal"
+      v-model:page-num="typeQuery.pageNum"
+      v-model:page-size="typeQuery.pageSize"
+      selectable
+      row-key="id"
+      @selection-change="handleSelectionChange"
+      @row-dblclick="(row: unknown) => openDataDialog(typeRowOf(row))"
+      @page-change="handleTypePageChange"
+    >
       <el-table-column label="字典名称" min-width="140">
         <template #default="{ row }">
           <span>{{ typeRowOf(row).dictName }}</span>
@@ -174,16 +208,7 @@ onMounted(() => {
           >
         </template>
       </el-table-column>
-    </el-table>
-
-    <el-pagination
-      class="table-pagination"
-      v-model:current-page="typeQuery.pageNum"
-      :page-size="typeQuery.pageSize"
-      :total="typeTotal"
-      layout="total, prev, pager, next"
-      @current-change="loadTypePage"
-    />
+    </ProTable>
 
     <DictTypeFormDialog
       v-model="typeDialogVisible"
@@ -200,11 +225,6 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-}
-
-.table-pagination {
-  margin-top: 16px;
-  justify-content: flex-end;
 }
 
 /** 内置徽标内联名称格（设计 D3 统一形态） */
