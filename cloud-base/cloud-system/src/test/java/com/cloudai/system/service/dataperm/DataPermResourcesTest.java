@@ -188,4 +188,44 @@ class DataPermResourcesTest {
         assertThat(DataPermResources.findFilterColumn(DataPermResources.BPMN_APPROVAL, "title")
                 .dictKey()).isNull();
     }
+
+    // ---- 列级-only 资源（2026-10-22 列级数据权限轮）：user 注册形态 ----
+
+    @Test
+    void user_registeredColumnOnly_withMobileEmail() {
+        // 静态初始化成功本身即证明 registerColumnOnly 走 D17 断言链
+        //（SysUserVo 已标 @DataPermVo 且 mobile/email 是真实 String 实例字段）
+        assertThat(DataPermResources.isRegistered(DataPermResources.USER)).isTrue();
+        assertThat(DataPermResources.getConfigurableColumns(DataPermResources.USER))
+                .containsExactly("mobile", "email");
+        assertThat(DataPermResources.listRegisteredResources()).contains(DataPermResources.USER);
+        // 行级不可配是注册态约束：可过滤列强制空清单（任何谓词 field 必 3035 拒）
+        assertThat(DataPermResources.isColumnOnly(DataPermResources.USER)).isTrue();
+        assertThat(DataPermResources.getFilterColumns(DataPermResources.USER)).isEmpty();
+        assertThat(DataPermResources.findFilterColumn(DataPermResources.USER, "mobile")).isNull();
+    }
+
+    @Test
+    void columnOnly_existingResourcesStayFalse() {
+        // 既有资源形态零变化：leave/bpmn_approval 恒 false，未注册资源 false
+        assertThat(DataPermResources.isColumnOnly("leave")).isFalse();
+        assertThat(DataPermResources.isColumnOnly(DataPermResources.BPMN_APPROVAL)).isFalse();
+        assertThat(DataPermResources.isColumnOnly("ghost")).isFalse();
+        assertThat(DataPermResources.isColumnOnly(null)).isFalse();
+    }
+
+    @Test
+    void user_assertColumn_sameValidationChain() {
+        // user 资源列配置走同一 3034 校验链：注册列放行、未注册列（如 nickname）拒绝
+        assertThatCode(() -> DataPermResources.assertColumn(DataPermResources.USER, "mobile"))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> DataPermResources.assertColumn(DataPermResources.USER, "email"))
+                .doesNotThrowAnyException();
+
+        BusinessException ex = catchThrowableOfType(
+                () -> DataPermResources.assertColumn(DataPermResources.USER, "nickname"),
+                BusinessException.class);
+
+        assertThat(ex.getCode()).isEqualTo(3034);
+    }
 }

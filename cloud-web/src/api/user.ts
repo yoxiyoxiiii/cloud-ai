@@ -21,6 +21,11 @@ export interface CreateUserPayload {
   status: number
   /** 部门 id（契约 2026-10-10-data-permission-api §5.1 additive）：可选，不传/null=不挂部门；无效 3027 */
   deptId?: string
+  /** 手机号（契约 2026-10-22-dataperm-column-visibility-api §4.1 additive）：可选，空=未填；
+   * 格式校验后端权威（无效 1002「手机号格式无效」），前端不做格式校验 */
+  mobile?: string
+  /** 邮箱（契约 2026-10-22-dataperm-column-visibility-api §4.1 additive）：语义同 mobile（1002「邮箱格式无效」） */
+  email?: string
 }
 
 export interface UpdateUserPayload {
@@ -30,6 +35,11 @@ export interface UpdateUserPayload {
   /** 部门 id（契约 2026-10-10-data-permission-api §5.1 additive）：null 不更新该列（部分更新语义，
    *  契约无清空通道——编辑清空不生效，仅换挂其他部门可表达）；无效 3027 */
   deptId?: string
+  /** 手机号（契约 2026-10-22-dataperm-column-visibility-api §4.1/§4.3 additive）：空=不更新该列；
+   * 值 *** 后端按「不修改」处理（哨兵语义）——前端回填已置空，正常不会提交该值 */
+  mobile?: string
+  /** 邮箱（契约 2026-10-22-dataperm-column-visibility-api §4.1/§4.3 additive）：语义同 mobile */
+  email?: string
 }
 
 export interface AssignRolePayload {

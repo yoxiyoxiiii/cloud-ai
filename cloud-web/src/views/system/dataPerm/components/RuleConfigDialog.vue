@@ -157,6 +157,24 @@ const configurableColumns = computed<string[]>(() => {
 
 const isCustomScope = computed(() => form.rowScope === ROW_SCOPE_CUSTOM)
 
+/**
+ * 当前资源是否仅列级权限（契约 2026-10-22-dataperm-column-visibility-api §2/§3.1）：
+ * true 时行档位与谓词不参与求值——行档区禁用、条件段隐藏并提示；rowScope 固定 SELF 照存
+ * （存库值不参与求值）。防御旧后端缺 columnOnly 字段按 false 消费（既有资源形态零变化）
+ */
+const isColumnOnly = computed<boolean>(() => {
+  const hit = resources.value.find((r) => r.resource === form.resource)
+  return hit?.columnOnly ?? false
+})
+
+/** columnOnly 资源行档固定 SELF（契约 §3.1：rowScope 照收照存但不参与求值——默认/回显/切换统一归位） */
+function applyColumnOnlyScope(): void {
+  if (isColumnOnly.value && form.rowScope !== ROW_SCOPE_SELF) {
+    form.rowScope = ROW_SCOPE_SELF
+    form.customAccounts = []
+  }
+}
+
 /* ============ 行级条件段（谓词契约 2026-10-11-dataperm-predicate-api §2.2-§2.4） ============ */
 
 /**
@@ -483,11 +501,13 @@ async function loadSubjectOptions(): Promise<void> {
   }
 }
 
-/** 资源切换（新增模式）：可配列/可过滤列随之变化，列动作重置为全可视、条件行清空、字典列选项预取 */
+/** 资源切换（新增模式）：可配列/可过滤列随之变化，列动作重置为全可视、条件行清空、
+ * columnOnly 资源行档归 SELF、字典列选项预取 */
 function handleResourceChange(): void {
   formRef.value?.clearValidate(['resource'])
   rebuildColumnActions([])
   predicateRows.value = []
+  applyColumnOnlyScope()
   void loadDictOptions()
 }
 
@@ -537,6 +557,11 @@ watch(
           rebuildColumnActions(config.columns)
           // 条件段回显（谓词契约 §2.2；predicates 必返，?? [] 防御旧后端缺字段）
           rebuildPredicates(config.predicates ?? [])
+          // columnOnly 资源回显归位 SELF（契约 §3.1：历史/API 直调可能存非 SELF，存库值不参与求值）
+          applyColumnOnlyScope()
+          if (isColumnOnly.value) {
+            predicateRows.value = []
+          }
         } else {
           // configured=false：走新增默认 SELF（契约 §3.2）+ 空条件
           form.rowScope = ROW_SCOPE_SELF
@@ -552,6 +577,7 @@ watch(
         form.customAccounts = []
         rebuildColumnActions([])
         predicateRows.value = []
+        applyColumnOnlyScope()
         await loadSubjectOptions()
       }
       // 当前资源字典列选项预取（dictKey 非空列值输入器数据源；缓存幂等）
@@ -569,8 +595,9 @@ async function handleSubmit(): Promise<void> {
   if (!valid || saving.value) {
     return
   }
-  // 条件行先行校验/组装（后端 3035-3037/1002 权威，前端拦截给友好提示；null=已提示拦截）
-  const predicates = buildPredicates()
+  // 条件行先行校验/组装（后端 3035-3037/1002 权威，前端拦截给友好提示；null=已提示拦截）；
+  // columnOnly 资源谓词恒空提交（契约 §3.1：条件段不可配，非空后端 3035 拒绝——固定 [] 防切换残留）
+  const predicates = isColumnOnly.value ? [] : buildPredicates()
   if (predicates === null) {
     return
   }
@@ -645,10 +672,19 @@ async function handleSubmit(): Promise<void> {
         </el-select>
       </el-form-item>
       <el-form-item label="行范围" prop="rowScope">
-        <el-radio-group v-model="form.rowScope" :disabled="loading" @change="handleScopeChange">
+        <el-radio-group v-model="form.rowScope" :disabled="loading || isColumnOnly" @change="handleScopeChange">
           <el-radio v-for="opt in SCOPE_OPTIONS" :key="opt.value" :value="opt.value">{{ opt.label }}</el-radio>
         </el-radio-group>
       </el-form-item>
+      <!-- columnOnly 资源提示（契约 §2/§3.1）：行档区禁用 + 条件段隐藏的同时说明原因 -->
+      <el-alert
+        v-if="isColumnOnly"
+        type="info"
+        :closable="false"
+        show-icon
+        class="column-only-alert"
+        title="该资源仅列级权限生效，行范围配置不参与求值"
+      />
       <el-form-item v-if="isCustomScope" label="账号集合" prop="customAccounts">
         <el-select
           v-model="form.customAccounts"
@@ -670,7 +706,9 @@ async function handleSubmit(): Promise<void> {
         <div class="field-hint">已选 {{ form.customAccounts.length }} 个账号（上限约 30）</div>
       </el-form-item>
       <!-- ============ 行级条件段（谓词契约 2026-10-11-dataperm-predicate-api §1.1/§2.2-§2.4）：
-        组内多条件 AND、与档位行内 AND；空列表=无条件（保存即随档位清空条件） ============ -->
+        组内多条件 AND、与档位行内 AND；空列表=无条件（保存即随档位清空条件）；
+        columnOnly 资源整块隐藏（契约 2026-10-22-dataperm-column-visibility-api §3.1：谓词不可配） ============ -->
+      <template v-if="!isColumnOnly">
       <el-divider content-position="left" class="predicate-divider">行级条件（与档位同时生效）</el-divider>
       <div class="predicate-section">
         <div v-if="predicateRows.length === 0" class="predicate-empty">未配置条件——仅按上方档位过滤行范围</div>
@@ -925,6 +963,7 @@ async function handleSubmit(): Promise<void> {
           <span class="field-hint">多条件同时满足（AND）并与档位叠加；同列至多一条</span>
         </div>
       </div>
+      </template>
       <el-form-item
         v-for="columnKey in configurableColumns"
         :key="columnKey"
@@ -945,6 +984,12 @@ async function handleSubmit(): Promise<void> {
 <style scoped>
 .full-width {
   width: 100%;
+}
+
+/* columnOnly 资源行级不适用提示（契约 2026-10-22-dataperm-column-visibility-api §2）：与表单内容区对齐 */
+.column-only-alert {
+  margin: 0 0 12px;
+  padding-left: 90px;
 }
 
 .column-action-select {

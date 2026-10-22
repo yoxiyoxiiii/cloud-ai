@@ -1,5 +1,6 @@
 package com.cloudai.common.mcp.auth;
 
+import com.cloudai.common.core.domain.LoginUser;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.mcp.config.McpProperties;
 import com.cloudai.common.security.constant.SecurityConstants;
@@ -18,6 +19,9 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -28,6 +32,9 @@ import java.util.List;
  * MCP 面双主体认证（契约 2026-10-17-mcp-tools-api §1.2）：
  * 服务密钥 → JWT 验签 → Redis 在线检查，三关全过构建 McpPrincipal。
  * 拒绝=HTTP 401 + R JSON（真实状态码，网关 AuthGlobalFilter 401 先例）；身份不取任何明文 header（防伪造）。
+ * 列级数据权限轮增补：三关全过后用同一主体构建 SecurityContext（JWT 主体即数据权限规则主体）——
+ * MCP 面委托的 ManageService 读路径（如用户分页求值）与 REST 面同取当前登录人，列动作两面一致；
+ * 双通道并存：McpPrincipal attribute 保留不动（权限切面照旧从 attribute 读，互不依赖）。
  */
 @Slf4j
 @RequiredArgsConstructor
@@ -64,7 +71,24 @@ public class McpAuthFilter implements Filter {
             return;
         }
         request.setAttribute(McpPrincipal.ATTR, principal);
-        chain.doFilter(request, response);
+        try {
+            SecurityContextHolder.getContext().setAuthentication(buildAuthentication(principal));
+            chain.doFilter(request, response);
+        } finally {
+            // 无状态纪律：请求结束清理（线程池复用防串号）；内层过滤器的 finally 双清无害
+            SecurityContextHolder.clearContext();
+        }
+    }
+
+    /** SecurityContext 主体：与 McpPrincipal 同源（验签 claims + 在线会话快照），authorities 由权限清单构建 */
+    private UsernamePasswordAuthenticationToken buildAuthentication(McpPrincipal principal) {
+        LoginUser loginUser = new LoginUser();
+        loginUser.setUserId(principal.userId());
+        loginUser.setAccount(principal.account());
+        loginUser.setPermissions(principal.perms());
+        List<SimpleGrantedAuthority> authorities = principal.perms().stream()
+                .map(SimpleGrantedAuthority::new).toList();
+        return new UsernamePasswordAuthenticationToken(loginUser, null, authorities);
     }
 
     /** 第一关：服务密钥。未配置态拒绝全部；常量时间比较防时序侧信道 */

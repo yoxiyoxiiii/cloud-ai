@@ -11,14 +11,13 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
-import org.springframework.core.Ordered;
 import org.springframework.core.env.Environment;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
  * MCP 安全组件自动装配（cloud.mcp.enabled=true 才生效，默认关）。
- * 装配认证过滤器（仅拦 endpoint-pattern，order 最前）与配置对齐校验；
- * 工具类与 ToolCallbackProvider 注册永远留在业务服务侧。
+ * 装配认证过滤器（仅拦 endpoint-pattern，注册序须在 spring-security 链之后——见
+ * mcpAuthFilterRegistration 内注释）与配置对齐校验；工具类与 ToolCallbackProvider 注册永远留在业务服务侧。
  */
 @AutoConfiguration
 @EnableConfigurationProperties(McpProperties.class)
@@ -36,7 +35,11 @@ public class CloudMcpAutoConfiguration {
         McpAuthFilter filter = new McpAuthFilter(properties, jwtProperties, stringRedisTemplate);
         FilterRegistrationBean<McpAuthFilter> registration = new FilterRegistrationBean<>(filter);
         registration.addUrlPatterns(properties.getEndpointPattern());
-        registration.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        // 须排 springSecurityFilterChain（注册序 -100，SecurityProperties.DEFAULT_FILTER_ORDER）之后：
+        // Spring Security 链首 SecurityContextHolderFilter 以 setDeferredContext 整体置换先前
+        // context——本过滤器先于安全链运行时塞入的认证主体会被置换成空，工具执行线程读到匿名
+        //（设计 §12 D67）。-100 之后到 0 之间任取，取 -90 便于阅读。
+        registration.setOrder(-90);
         return registration;
     }
 

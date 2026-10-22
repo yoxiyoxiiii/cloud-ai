@@ -63,6 +63,10 @@ export interface SysUserVo {
   deptId: string | null
   /** 部门名（契约 2026-10-10-data-permission-api §5.2 additive）：LEFT JOIN sys_dept 派生；挂靠部门被删后 null 降级不阻断 */
   deptName: string | null
+  /** 手机号（契约 2026-10-22-dataperm-column-visibility-api §3.2 additive）：null=未填或被列规则隐藏（两态不可区分，展示 '-'）；'***'=被列规则脱敏（原样展示，回填置空见 DATAPERM_MASK） */
+  mobile: string | null
+  /** 邮箱（契约 2026-10-22-dataperm-column-visibility-api §3.2 additive）：取值语义同 mobile */
+  email: string | null
 }
 
 /**
@@ -670,6 +674,9 @@ export interface DataPermResourceVo {
   /** 可过滤列清单（契约 2026-10-11-dataperm-predicate-api §2.4 增量，必返）——条件段列下拉数据源；
    * 与 columns（列级可配列，VO 字段名，String only）语义/锚点显式区分（契约 §1.4） */
   filterColumns: FilterColumnVo[]
+  /** 是否仅列级权限（契约 2026-10-22-dataperm-column-visibility-api §2 additive）：true=行档位与谓词不参与求值，
+   * 配置台对这类资源禁用行档区与条件段并提示；既有资源恒 false（防御旧后端缺字段按 false 消费） */
+  columnOnly: boolean
 }
 
 /** 主体选项 VO（契约 §6.5）：id 为字符串（Long→String）；label 后端拼好（角色=角色名；用户=`昵称(账号)`） */
@@ -712,7 +719,7 @@ export interface HitRuleVo {
   predicates?: PredicateItem[]
 }
 
-/** 列决策 VO（契约 §6.7 ColumnDecisionVo）：explain 出参内嵌；无动作为 [] */
+/** 列决策 VO（契约 §6.7 ColumnDecisionVo）：explain 出参内嵌 + my-scope columns 复用（契约 2026-10-22-dataperm-column-visibility-api §1.1——术语同源无第二命名体系）；无动作为 [] */
 export interface ColumnDecisionVo {
   columnKey: string
   action: number
@@ -735,10 +742,18 @@ export interface DataPermExplainVo {
   narratives: string[]
 }
 
-/** 我的数据范围 VO（契约 §6.8）：列表页提示条（leave / bpmn 审批页，后者见 2026-10-10-dataperm-component §4）；columnSummary null=无列动作 */
+/**
+ * 我的数据范围 VO（契约 §6.8）：列表页提示条（leave / bpmn 审批页，后者见 2026-10-10-dataperm-component §4）；columnSummary null=无列动作。
+ * 增量（契约 2026-10-22-dataperm-column-visibility-api §1）：columns 结构化清单（前端动态列渲染驱动源）；
+ * scopeLabel 新取值「不适用（该资源仅列级权限）」（§1.2，仅 columnOnly 资源返回，不落入既有五态判定序）
+ */
 export interface MyScopeVo {
   scopeLabel: string
   columnSummary: string | null
+  /** 列动作终态清单（契约 2026-10-22-dataperm-column-visibility-api §1.1 additive，必返，无动作 []）：
+   * 消费口径——action=0 的列页面整列不渲染（v-if 隐藏）、action=1 的列保留显示（值已是 ***，后端处理）；
+   * 拉取失败降级=按全列渲染（值层后端防线兜底）；输出按 columnKey 字典序稳定 */
+  columns: ColumnDecisionVo[]
 }
 
 /** 规则分页入参（契约 §3.1）：筛选全部可选（组合）；非法 resource 不报错返回空集（筛选宽松语义） */
@@ -817,6 +832,11 @@ export const ROW_SCOPE_ALL = 4
 export const ACTION_HIDDEN = 0
 export const ACTION_MASKED = 1
 
+/** 列脱敏哨兵值（契约 2026-10-22-dataperm-column-visibility-api §4.3）：编辑回填检测行值 === 本常量
+ * 时置空 + placeholder「已脱敏，留空保持不变」；后端 update 对该值按「不修改」处理（库值保持原值）——
+ * 它永远不是合法新值（新增路径提交被后端格式校验 1002 拦截） */
+export const DATAPERM_MASK = '***'
+
 /** 规则主体类型（契约 §1/§7）：0 角色 / 1 用户 */
 export const SUBJECT_ROLE = 0
 export const SUBJECT_USER = 1
@@ -892,6 +912,11 @@ export function operatorsForType(type: FilterColumnType): { value: PredicateOper
 /** 数据权限资源标识（契约 2026-10-10-dataperm-component-api §1/§4）：审批单（bpmn 远程资源，
  * 可配列 title）——审批页 my-scope 提示条入参；资源字面量唯一声明点，页面一律引本常量 */
 export const DATAPERM_RESOURCE_APPROVAL = 'bpmn_approval'
+
+/** 数据权限资源标识（契约 2026-10-22-dataperm-column-visibility-api §3.1）：用户管理（本地资源，
+ * columnOnly=true——行档位与谓词不参与求值，可配列 mobile/email）——用户管理页动态列 my-scope 入参；
+ * 资源字面量唯一声明点，页面一律引本常量 */
+export const DATAPERM_RESOURCE_USER = 'user'
 
 /* ============ MQ 死信治理域（契约 2026-10-11-mq-dlq-governance-api §2/§3，新域 v1） ============ */
 

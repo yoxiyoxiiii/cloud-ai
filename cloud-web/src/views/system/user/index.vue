@@ -2,6 +2,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteUser, pageUser } from '../../../api/user'
+import { usePermColumns } from '../../../composables/usePermColumns'
+import { DATAPERM_RESOURCE_USER } from '../../../types/api'
 import type { SysUserVo } from '../../../types/api'
 import UserFormDialog from './components/UserFormDialog.vue'
 import type { UserFormMode } from './components/UserFormDialog.vue'
@@ -37,6 +39,10 @@ const rows = ref<SysUserVo[]>([])
 const total = ref(0)
 const query = reactive({ pageNum: 1, pageSize: 10 })
 
+/** 列级数据权限（user 资源）：my-scope columns 驱动 mobile/email 列 v-if——
+ * 规则变更后下一次加载即同步（即时生效语义，契约 2026-10-22-dataperm-column-visibility-api §1.1） */
+const permColumns = usePermColumns(DATAPERM_RESOURCE_USER)
+
 const formDialogVisible = ref(false)
 const formDialogMode = ref<UserFormMode>('add')
 const formDialogUser = ref<SysUserVo>()
@@ -45,9 +51,11 @@ const resetPwdUser = ref<SysUserVo>()
 const assignRoleVisible = ref(false)
 const assignRoleUser = ref<SysUserVo>()
 
-/** 加载分页（契约 §3.1）：total 为 Long→String，分页组件需 Number() */
+/** 加载分页（契约 §3.1）：total 为 Long→String，分页组件需 Number()；
+ * 列清单与分页请求并行重拉（不阻塞表格——即时生效语义），失败降级全列由 composable 内消化 */
 async function loadUserPage(pageNum: number = query.pageNum): Promise<void> {
   loading.value = true
+  void permColumns.load()
   try {
     query.pageNum = pageNum
     const page = await pageUser({ pageNum: query.pageNum, pageSize: query.pageSize })
@@ -130,6 +138,14 @@ onMounted(() => {
         </template>
       </el-table-column>
       <el-table-column prop="nickname" label="昵称" min-width="120" />
+      <!-- 列级数据权限（契约 2026-10-22-dataperm-column-visibility-api §1.1/§3.2）：
+           隐藏列整列不渲染（v-if）；脱敏列保留显示（值已是 ***）；null（未填或隐藏）显示 '-' -->
+      <el-table-column v-if="!permColumns.isHidden('mobile')" label="手机号" min-width="120">
+        <template #default="{ row }">{{ rowOf(row).mobile ?? '-' }}</template>
+      </el-table-column>
+      <el-table-column v-if="!permColumns.isHidden('email')" label="邮箱" min-width="180">
+        <template #default="{ row }">{{ rowOf(row).email ?? '-' }}</template>
+      </el-table-column>
       <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="STATUS_MAP[rowOf(row).status]?.tagType ?? 'info'">

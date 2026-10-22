@@ -160,13 +160,14 @@ public class DataPermManageService {
         columnMapper.deleteBySubject(rule.getResource(), rule.getSubjectType(), rule.getSubjectId());
     }
 
-    /** 资源注册表（契约 §3.5 + 谓词轮 §2.4 增量 filterColumns）：配置弹窗与条件编辑器的数据源 */
+    /** 资源注册表（契约 §3.5 + 谓词轮 §2.4 + 列级轮 columnOnly 增量）：配置弹窗与条件编辑器的数据源 */
     public List<DataPermResourceVo> listResources() {
         List<DataPermResourceVo> result = new ArrayList<>();
         for (String resource : DataPermResources.listRegisteredResources()) {
             DataPermResourceVo vo = new DataPermResourceVo();
             vo.setResource(resource);
             vo.setColumns(DataPermResources.getConfigurableColumns(resource));
+            vo.setColumnOnly(DataPermResources.isColumnOnly(resource));
             vo.setFilterColumns(DataPermResources.getFilterColumns(resource).stream()
                     .map(DataPermConvert::toFilterColumnVo).toList());
             result.add(vo);

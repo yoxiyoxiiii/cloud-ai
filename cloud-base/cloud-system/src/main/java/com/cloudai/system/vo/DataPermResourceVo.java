@@ -21,6 +21,9 @@ public class DataPermResourceVo implements Serializable {
     /** 可配列清单（如 ["title","reason"]——列级动作，VO 字段名锚点） */
     private List<String> columns;
 
+    /** 是否列级-only（行档位与谓词不参与求值；配置台据此禁用行档区与条件段） */
+    private boolean columnOnly;
+
     /** 可过滤列清单（行级条件，entity 字段名锚点——契约 §5.2） */
     private List<FilterColumnVo> filterColumns = new ArrayList<>();
 }

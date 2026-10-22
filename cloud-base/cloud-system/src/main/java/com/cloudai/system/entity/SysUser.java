@@ -23,6 +23,12 @@ public class SysUser extends BaseEntity {
 
     private String nickname;
 
+    /** 手机号（可空=未填；数据权限资源 user 的可配列——列脱敏/隐藏只改写出参 VO，库值永不被列规则改写） */
+    private String mobile;
+
+    /** 邮箱（可空=未填；语义同 mobile） */
+    private String email;
+
     /** 部门ID（sys_dept.id；NULL=未挂部门，部门类数据权限档位求值展开为空集——数据权限轮设计 §3.5） */
     private Long deptId;
 

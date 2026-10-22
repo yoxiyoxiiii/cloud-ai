@@ -532,4 +532,97 @@ class ArchitectureGuardTest {
             });
         }
     }
+
+    /** mcp 包内出参含数据权限白名单 VO 的 @Tool 方法必须在方法体调用列应用（约定名
+     * applyColumnActions——工具体直调 applier 的既有形态）。MCP 端点走 RouterFunction，
+     * REST 面的列 advice（ResponseBodyAdvice）不经过——漏应用即明文泄露，构建期拦截。
+     * 白名单 = 类级标注 @DataPermVo 的类（文本级发现）；返回类型解析泛型一层
+     * （PageResult&lt;X&gt;/List&lt;X&gt;/单对象 X 三形态，嵌套泛型不命中）。 */
+    @Test
+    void mcpToolMethods_returningDataPermVo_mustApplyColumnActions() throws IOException {
+        java.util.Set<String> whitelist = dataPermVoClassNames();
+        try (Stream<Path> files = Files.walk(MAIN_JAVA.resolve("com/cloudai/system/mcp"))) {
+            files.filter(p -> p.toString().endsWith(".java")).forEach(file -> {
+                try {
+                    String text = Files.readString(file, StandardCharsets.UTF_8);
+                    List<String> violations = toolMethodsWithoutColumnApply(text, whitelist);
+                    assertThat(violations).as("%s：出参含 @DataPermVo 白名单树的 @Tool 方法"
+                            + "必须在方法体调用 applyColumnActions（MCP 面无 advice 兜底）", file).isEmpty();
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        }
+    }
+
+    /** @DataPermVo 类级标注类的短名集合（import 行不含 @ 前缀，无干扰） */
+    private java.util.Set<String> dataPermVoClassNames() throws IOException {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        try (Stream<Path> files = Files.walk(MAIN_JAVA)) {
+            for (Path file : files.filter(p -> p.toString().endsWith(".java")).toList()) {
+                String text = Files.readString(file, StandardCharsets.UTF_8);
+                if (text.contains("@DataPermVo")) {
+                    Matcher m = Pattern.compile("public\\s+(?:final\\s+)?class\\s+(\\w+)").matcher(text);
+                    if (m.find()) {
+                        names.add(m.group(1));
+                    }
+                }
+            }
+        }
+        return names;
+    }
+
+    /** 返回类型（泛型一层）命中白名单而方法体未调用列应用的 @Tool 方法描述清单 */
+    private List<String> toolMethodsWithoutColumnApply(String text, java.util.Set<String> whitelist) {
+        List<String> violations = new ArrayList<>();
+        int idx = 0;
+        while ((idx = text.indexOf("@Tool(", idx)) >= 0) {
+            int braceStart = text.indexOf('{', idx);
+            int pubIdx = text.indexOf("public ", idx);
+            if (braceStart < 0 || pubIdx < 0 || pubIdx > braceStart) {
+                break;
+            }
+            int end = matchingBraceEnd(text, braceStart);
+            int parenIdx = text.indexOf('(', pubIdx);
+            if (end < 0 || parenIdx < 0 || parenIdx > braceStart) {
+                break;
+            }
+            String[] parts = text.substring(pubIdx + "public ".length(), parenIdx).trim().split("\\s+");
+            if (parts.length >= 2) {
+                String typeName = unwrapGenericOneLevel(parts[parts.length - 2]);
+                String body = text.substring(braceStart, end);
+                if (typeName != null && whitelist.contains(typeName) && !body.contains("applyColumnActions")) {
+                    violations.add(parts[parts.length - 1] + " → " + parts[parts.length - 2]);
+                }
+            }
+            idx = end;
+        }
+        return violations;
+    }
+
+    /** 泛型一层解包：PageResult&lt;X&gt;/List&lt;X&gt; → X；嵌套泛型返回 null（一层约定）；裸类型原样 */
+    private String unwrapGenericOneLevel(String raw) {
+        if (!raw.contains("<")) {
+            return raw;
+        }
+        String inner = raw.substring(raw.indexOf('<') + 1, raw.lastIndexOf('>'));
+        return inner.contains("<") ? null : inner;
+    }
+
+    /** 花括号配平（文本级、无字符串字面量感知——当前 mcp 包源码无字面量含裸花括号形态） */
+    private int matchingBraceEnd(String text, int open) {
+        int depth = 0;
+        for (int i = open; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
 }

@@ -26,6 +26,8 @@ CREATE TABLE sys_user (
     id          BIGINT       NOT NULL AUTO_INCREMENT COMMENT '用户ID',
     account     VARCHAR(30)  NOT NULL COMMENT '登录账号',
     nickname    VARCHAR(30)  NOT NULL DEFAULT '' COMMENT '昵称',
+    mobile      VARCHAR(20)  DEFAULT NULL COMMENT '手机号（可空=未填；数据权限资源 user 的可配列，可被列规则脱敏为 *** 或隐藏为 null）',
+    email       VARCHAR(64)  DEFAULT NULL COMMENT '邮箱（可空=未填；数据权限资源 user 的可配列，可被列规则脱敏为 *** 或隐藏为 null）',
     dept_id     BIGINT       NULL     COMMENT '部门ID（sys_dept.id；NULL=未挂部门，部门类档位求值展开为空集）',
     password    VARCHAR(100) NOT NULL COMMENT 'BCrypt 密码散列',
     status      TINYINT      NOT NULL DEFAULT 0 COMMENT '0正常 1停用',
@@ -396,9 +398,10 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (184, 182,  '编辑',   'ai:kb:update', 'F', '',          '',             2, 1, NOW()),
 (185, 182,  '删除',   'ai:kb:delete', 'F', '',          '',             3, 1, NOW());
 
--- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价）
-INSERT INTO sys_user (id, account, nickname, dept_id, password, is_builtin, create_time) VALUES
-(1, 'admin', '管理员', 1, '$2a$10$.8cM9ZR8tr7HxklhRPzmwORoIi.z8urt0wZ4a3QaGwgFyyGMle4sG', 1, NOW());
+-- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价；
+-- mobile/email 示例值与增量脚本 2026-10-22-dataperm-user-columns.sql 语义等价）
+INSERT INTO sys_user (id, account, nickname, mobile, email, dept_id, password, is_builtin, create_time) VALUES
+(1, 'admin', '管理员', '13800000001', 'admin@example.com', 1, '$2a$10$.8cM9ZR8tr7HxklhRPzmwORoIi.z8urt0wZ4a3QaGwgFyyGMle4sG', 1, NOW());
 
 INSERT INTO sys_user_role (user_id, role_id, create_time) VALUES (1, 1, NOW());
 INSERT INTO sys_role_menu (role_id, menu_id, create_time)

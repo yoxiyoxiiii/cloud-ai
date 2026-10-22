@@ -7,6 +7,7 @@ import com.cloudai.system.api.dataperm.FilterColumnTypeEnum;
 import com.cloudai.system.api.dataperm.FilterColumns;
 import com.cloudai.system.entity.SysLeave;
 import com.cloudai.system.vo.SysLeaveVo;
+import com.cloudai.system.vo.SysUserVo;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,6 +39,9 @@ public final class DataPermResources {
     /** 审批单资源（组件化轮首个跨服务资源，消费方 cloud-bpmn）：可配列 title（标题快照） */
     public static final String BPMN_APPROVAL = "bpmn_approval";
 
+    /** 用户资源（列级数据权限轮）：列级-only——可配列 mobile/email，行档位与谓词不参与求值 */
+    public static final String USER = "user";
+
     /** 无效的资源或列标识（契约 §8 错误码 3034） */
     public static final int ERR_INVALID_RESOURCE = 3034;
 
@@ -59,10 +63,14 @@ public final class DataPermResources {
                 new FilterColumn("businessType", "business_type", FilterColumnTypeEnum.STRING, "业务类型", null),
                 new FilterColumn("createTime", "create_time", FilterColumnTypeEnum.DATETIME, "发起时间", null),
                 new FilterColumn("title", "title", FilterColumnTypeEnum.STRING, "标题", null)));
+        // 列级-only 资源（列级数据权限轮 D60）：可过滤列恒空清单——行级不可配是注册态约束
+        //（空清单使任何谓词 field 在既有 3035 校验链自然拒绝，零新校验码）
+        registerColumnOnly(USER, SysUserVo.class, List.of("mobile", "email"));
     }
 
-    /** 资源定义（D15 + 谓词轮 D32）：可配列 VO 类（D17 断言锚点，远程 null）+ 可过滤列清单（entity 锚） */
-    private record ResourceDef(Class<?> voClass, List<String> columns, List<FilterColumn> filterColumns) {
+    /** 资源定义（D15 + 谓词轮 D32 + 列级轮 D60）：可配列 VO 类（D17 断言锚点，远程 null）+ 可过滤列清单（entity 锚）+ 列级-only 标记 */
+    private record ResourceDef(Class<?> voClass, List<String> columns, List<FilterColumn> filterColumns,
+            boolean columnOnly) {
     }
 
     /**
@@ -76,7 +84,19 @@ public final class DataPermResources {
         validateRegistration(resource, columns);
         assertDeclaredColumns(resource, voClass, columns);
         FilterColumns.assertDeclared(entityClass, filterColumns);
-        REGISTRY.put(resource, new ResourceDef(voClass, List.copyOf(columns), List.copyOf(filterColumns)));
+        REGISTRY.put(resource, new ResourceDef(voClass, List.copyOf(columns), List.copyOf(filterColumns),
+                false));
+    }
+
+    /**
+     * 列级-only 资源注册一行（列级数据权限轮 D60，static 块专用）：共用 register 的前置校验与
+     * D17 声明断言；可过滤列强制为空清单（无参数可传——行级不可配是注册态约束，谓词配置被
+     * 既有 3035 校验链自然拒绝）。求值侧行段短路语义见 DataPermEvaluator 的 columnOnly 分支。
+     */
+    private static void registerColumnOnly(String resource, Class<?> voClass, List<String> columns) {
+        validateRegistration(resource, columns);
+        assertDeclaredColumns(resource, voClass, columns);
+        REGISTRY.put(resource, new ResourceDef(voClass, List.copyOf(columns), List.of(), true));
     }
 
     /**
@@ -88,7 +108,8 @@ public final class DataPermResources {
     private static void registerRemote(String resource, List<String> columns,
             List<FilterColumn> filterColumns) {
         validateRegistration(resource, columns);
-        REGISTRY.put(resource, new ResourceDef(null, List.copyOf(columns), List.copyOf(filterColumns)));
+        REGISTRY.put(resource, new ResourceDef(null, List.copyOf(columns), List.copyOf(filterColumns),
+                false));
     }
 
     /** 注册前置校验（register/registerRemote 共用）：空白 resource / 空列清单 / 重复注册 */
@@ -133,6 +154,12 @@ public final class DataPermResources {
     public static List<FilterColumn> getFilterColumns(String resource) {
         ResourceDef def = resource == null ? null : REGISTRY.get(resource);
         return def == null ? List.of() : def.filterColumns();
+    }
+
+    /** 资源是否列级-only（行档位与谓词不参与求值；未注册资源 false——调用方先经 assertResource） */
+    public static boolean isColumnOnly(String resource) {
+        ResourceDef def = resource == null ? null : REGISTRY.get(resource);
+        return def != null && def.columnOnly();
     }
 
     /** 按 entity 字段名取可过滤列声明（求值 enrichment / 校验链定位用；不在清单返回 null） */

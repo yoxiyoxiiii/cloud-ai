@@ -330,6 +330,46 @@ class DataPermConvertTest {
         assertThat(vo.getPredicates().get(0).getValues()).containsExactly("1");
     }
 
+    // ---- 列级数据权限轮增量（2026-10-22）：columns 结构化清单 + columnOnly scopeLabel ----
+
+    @Test
+    void toMyScopeVo_columnsStructured_hiddenFirstThenMaskedEachSorted() {
+        DataPermDecision decision = decisionOf(allScope(), null);
+        decision.setColumnScope(com.cloudai.system.api.dataperm.ColumnScope.of(
+                Set.of("email"), Set.of("mobile")));
+
+        MyScopeVo vo = DataPermConvert.toMyScopeVo(decision);
+
+        // 与 explain 列决策同序同源：hidden 在前 masked 在后、各自字典序；action 数值 0/1
+        assertThat(vo.getColumns())
+                .extracting(com.cloudai.system.vo.DataPermExplainVo.ColumnDecisionVo::getColumnKey,
+                        com.cloudai.system.vo.DataPermExplainVo.ColumnDecisionVo::getAction)
+                .containsExactly(
+                        org.assertj.core.api.Assertions.tuple("email", 0),
+                        org.assertj.core.api.Assertions.tuple("mobile", 1));
+    }
+
+    @Test
+    void toMyScopeVo_noColumnActions_emptyArray() {
+        DataPermDecision decision = decisionOf(allScope(), null);
+
+        MyScopeVo vo = DataPermConvert.toMyScopeVo(decision);
+
+        // 无列动作必返 [] 而非 null（机器消费 length===0 即全显示，免 null 判断）
+        assertThat(vo.getColumns()).isNotNull().isEmpty();
+    }
+
+    @Test
+    void toMyScopeVo_columnOnlyResource_labelNotApplicable() {
+        DataPermDecision decision = decisionOf(allScope(), null);
+        decision.setResource(DataPermResources.USER);
+
+        MyScopeVo vo = DataPermConvert.toMyScopeVo(decision);
+
+        // 新首位分支：columnOnly 资源恒「不适用」，不落既有五态判定序
+        assertThat(vo.getScopeLabel()).isEqualTo("不适用（该资源仅列级权限）");
+    }
+
     // ---- 脚手架 ----
 
     private String labelOf(DataPermDecision decision) {

@@ -4,6 +4,7 @@ import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { createUser, updateUser } from '../../../../api/user'
 import { treeDept } from '../../../../api/dept'
+import { DATAPERM_MASK } from '../../../../types/api'
 import type { SysDeptTreeNode, SysUserVo } from '../../../../types/api'
 
 export type UserFormMode = 'add' | 'edit'
@@ -28,6 +29,10 @@ interface UserFormData {
   status: number
   /** 部门 id（契约 2026-10-10-data-permission-api §5.1 additive）：undefined=不挂/不改 */
   deptId: string | undefined
+  /** 手机号（契约 2026-10-22-dataperm-column-visibility-api §4.1）：表单内空串承载，提交空=undefined 不更新/未填 */
+  mobile: string
+  /** 邮箱：语义同 mobile */
+  email: string
 }
 
 /** 用户状态（契约 §3）：0=正常 1=停用 */
@@ -45,6 +50,8 @@ const form = reactive<UserFormData>({
   password: '',
   status: STATUS_NORMAL,
   deptId: undefined,
+  mobile: '',
+  email: '',
 })
 
 const rules: FormRules<UserFormData> = {
@@ -60,6 +67,23 @@ const rules: FormRules<UserFormData> = {
 
 const title = computed(() => (props.mode === 'add' ? '新增用户' : '编辑用户'))
 
+/**
+ * 联系方式预填（契约 2026-10-22-dataperm-column-visibility-api §4.3 哨兵语义）：
+ * 行值 === DATAPERM_MASK（脱敏标记）→ 置空回填（placeholder 提示留空保持不变），
+ * 防止把 *** 误当真实值提交；null（未填或被列规则隐藏）同样归空
+ */
+function contactInitial(value: string | null): string {
+  return value === null || value === DATAPERM_MASK ? '' : value
+}
+
+/** 联系方式占位文案：新增选填；编辑脱敏行值提示「已脱敏」、普通值提示留空=不更新 */
+function contactPlaceholder(field: 'mobile' | 'email'): string {
+  if (props.mode === 'add') {
+    return field === 'mobile' ? '请输入手机号（选填）' : '请输入邮箱（选填）'
+  }
+  return (props.user?.[field] ?? null) === DATAPERM_MASK ? '已脱敏，留空保持不变' : '留空保持不变'
+}
+
 /** 打开时初始化：编辑回显行数据（account 只读展示），新增给默认值；并惰性加载部门树（一次） */
 watch(
   () => props.modelValue,
@@ -74,12 +98,16 @@ watch(
       form.password = ''
       form.status = props.user.status
       form.deptId = props.user.deptId ?? undefined
+      form.mobile = contactInitial(props.user.mobile)
+      form.email = contactInitial(props.user.email)
     } else {
       form.account = ''
       form.nickname = ''
       form.password = ''
       form.status = STATUS_NORMAL
       form.deptId = undefined
+      form.mobile = ''
+      form.email = ''
     }
     if (!deptTreeLoaded.value) {
       treeDept()
@@ -93,6 +121,13 @@ watch(
     }
   },
 )
+
+/** 联系方式提交值：trim 后空串归 undefined（不随 payload 提交——undefined 不更新/未填语义，
+ * 契约 §4.1）；不做格式校验（后端权威 1002 拦截器 toast，避免双端正则漂移） */
+function contactPayload(value: string): string | undefined {
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
 
 async function handleSubmit(): Promise<void> {
   const valid = await formRef.value?.validate().catch(() => false)
@@ -108,22 +143,26 @@ async function handleSubmit(): Promise<void> {
         password: form.password,
         status: form.status,
         deptId: form.deptId,
+        mobile: contactPayload(form.mobile),
+        email: contactPayload(form.email),
       })
       ElMessage.success('新增成功')
     } else if (props.user) {
-      // account 与 password 不可改（契约 §3.4），仅提交 id/nickname/status/deptId
+      // account 与 password 不可改（契约 §3.4），仅提交 id/nickname/status/deptId/mobile/email
       await updateUser({
         id: props.user.id,
         nickname: form.nickname,
         status: form.status,
         deptId: form.deptId,
+        mobile: contactPayload(form.mobile),
+        email: contactPayload(form.email),
       })
       ElMessage.success('保存成功')
     }
     emit('success')
     emit('update:modelValue', false)
   } catch {
-    // 拦截器已统一 toast（如账号已存在 / 部门无效 3027 的业务 msg）
+    // 拦截器已统一 toast（如账号已存在 / 部门无效 3027 / 手机号·邮箱格式无效 1002 的业务 msg）
   } finally {
     loading.value = false
   }
@@ -174,6 +213,26 @@ async function handleSubmit(): Promise<void> {
           placeholder="请选择部门（可空）"
           :disabled="loading"
           class="dept-select"
+        />
+      </el-form-item>
+      <!-- 联系方式（契约 2026-10-22-dataperm-column-visibility-api §4）：可选字段，留空=未填（新增）/
+           不更新（修改）；脱敏行值回填已置空（见 contactInitial），placeholder 提示留空语义 -->
+      <el-form-item label="手机号" prop="mobile">
+        <el-input
+          v-model="form.mobile"
+          :placeholder="contactPlaceholder('mobile')"
+          clearable
+          maxlength="20"
+          :disabled="loading"
+        />
+      </el-form-item>
+      <el-form-item label="邮箱" prop="email">
+        <el-input
+          v-model="form.email"
+          :placeholder="contactPlaceholder('email')"
+          clearable
+          maxlength="64"
+          :disabled="loading"
         />
       </el-form-item>
       <el-form-item label="状态" prop="status">

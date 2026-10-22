@@ -642,6 +642,52 @@ class DataPermEvaluatorTest {
         assertThat(decision.getNarratives()).contains("命中条件：标题 前缀 e2e");
     }
 
+    // ---- 列级-only 资源（2026-10-22 列级数据权限轮 D60）：行段短路 all + 列规则正常收敛 ----
+
+    @Test
+    void evaluate_columnOnly_rowRulesIgnored_rowSegmentAll() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of(2L));
+        // 列规则正常收敛：角色脱敏 + 用户隐藏 → 宽松者胜（脱敏 > 隐藏）
+        when(columnMapper.listByRoleIds(DataPermResources.USER, List.of(2L)))
+                .thenReturn(List.of(column(0, 2L, "mobile", SysDataPermColumn.ActionEnum.MASKED.getCode())));
+        when(columnMapper.listByUserId(DataPermResources.USER, 5L))
+                .thenReturn(List.of(column(1, 5L, "mobile", SysDataPermColumn.ActionEnum.HIDDEN.getCode())));
+
+        DataPermDecision decision = evaluator.evaluate(DataPermResources.USER, DataPermOperation.LIST, null);
+
+        // 行段：配了行规则也不参与（ruleMapper 零交互）——dataScope 恒 all、rowFilter 恒 rowAll、行规则不收集
+        assertThat(decision.getDataScope().isAll()).isTrue();
+        assertThat(decision.getRowFilter().isRowAll()).isTrue();
+        assertThat(decision.getHitRules()).isEmpty();
+        verifyNoInteractions(ruleMapper);
+        // 列段：并集宽松者胜
+        assertThat(decision.getColumnScope().isMasked("mobile")).isTrue();
+        assertThat(decision.getColumnScope().isHidden("mobile")).isFalse();
+        // narrative 含「仅列级生效」句
+        assertThat(decision.getNarratives()).contains("该资源仅列级权限生效，行范围不适用");
+        // 留痕：scope_summary 恒 all、行规则摘要空（rule_digest 不出现行规则）
+        verify(logMapper).save(org.mockito.ArgumentMatchers.argThat(row ->
+                "all".equals(row.getScopeSummary()) && row.getRuleDigest().isEmpty()
+                        && "mobile:脱敏".equals(row.getColumnSummary())));
+    }
+
+    @Test
+    void evaluate_columnOnly_withoutRules_rowSegmentStillAll() {
+        loginAs("userA", 5L);
+        when(roleMapper.listEnabledRoleIdsByUserId(5L)).thenReturn(List.of());
+        when(columnMapper.listByUserId(DataPermResources.USER, 5L)).thenReturn(List.of());
+
+        DataPermDecision decision = evaluator.evaluate(DataPermResources.USER, DataPermOperation.DETAIL, "1");
+
+        // 无规则无列动作：行段仍恒 all（不落「默认仅自己」——行级不适用），列空 scope
+        assertThat(decision.getDataScope().isAll()).isTrue();
+        assertThat(decision.getRowFilter().isRowAll()).isTrue();
+        assertThat(decision.getColumnScope().isEmpty()).isTrue();
+        assertThat(decision.getNarratives()).contains("该资源仅列级权限生效，行范围不适用")
+                .doesNotContain("无规则命中，默认仅自己");
+    }
+
     // ---- 脚手架 ----
 
     /** 扩展轮脚手架：单条用户直绑 SELF+条件规则（条件 JSON 直传落库形态） */

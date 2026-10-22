@@ -112,6 +112,9 @@ public final class DataPermConvert {
         vo.setScopeLabel(resolveScopeLabel(decision, dictResolver));
         vo.setColumnSummary(decision.getColumnScope().isEmpty() ? null
                 : decision.getColumnScope().getSummary());
+        // 列动作结构化清单（列级数据权限轮）：与 explain 列决策同序同源——hidden 在前 masked 在后、
+        // 各自字典序稳定；空动作自然得 []（机器消费 length===0 即全显示，免 null 判断）
+        vo.getColumns().addAll(toColumnDecisionVos(decision.getColumnScope()));
         return vo;
     }
 
@@ -307,6 +310,8 @@ public final class DataPermConvert {
 
     /**
      * scopeLabel 判定序 v2（契约 §6，2026-10-11 谓词轮语义变更——无条件五态判定序与文案逐字不变）：
+     * 0 列级-only 资源（列级数据权限轮新增首位分支）→ 不适用（该资源仅列级权限）——行级不参与
+     *   求值，报行范围即失真；既有资源永不进入本分支，五态判定序不动；
      * 1 行范围豁免（任一 ALL 档<b>无条件</b>规则命中）→ 全部；
      * 2 行范围空集（无任何可匹配组，判据 rowFilter.isEmptyScope——ALL+条件用户 dataScope 空但行集非空）→ 无（空范围）；
      * 3 任一命中规则含条件 → 条件范围（{条件中文摘要}）——全部命中条件规则的谓词摘要分号连接（§1.6）；
@@ -318,6 +323,9 @@ public final class DataPermConvert {
      */
     private static String resolveScopeLabel(DataPermDecision decision,
             BiFunction<String, List<String>, Map<String, String>> dictResolver) {
+        if (DataPermResources.isColumnOnly(decision.getResource())) {
+            return "不适用（该资源仅列级权限）";
+        }
         RowFilterView view = RowFilterView.of(decision);
         if (view.rowAll()) {
             return "全部";

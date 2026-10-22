@@ -46,6 +46,17 @@ async function directApi(method, path, data) {
 /** 名称格内联徽标（el-tag「内置」）使 innerText 变 "{name}\n内置"（tag 独立成行）——比对前统一剥离尾缀并 trim（E2 通用模式） */
 const stripBadge = (s) => s.replace(/\s*内置\s*$/, '').trim()
 
+/** 按表头文本解析列位：用户表新增手机号/邮箱动态列（列权限 v-if 可整列消失）后列序不再固定，
+ *  断言一律按列名取位，不写死下标 */
+async function colIdx(name) {
+  const ths = page.locator('.el-table__header-wrapper th')
+  const n = await ths.count()
+  for (let i = 0; i < n; i++) {
+    if (((await ths.nth(i).innerText()) || '').trim() === name) return i
+  }
+  throw new Error(`表头应含「${name}」列，实际未渲染（可能被列权限隐藏）`)
+}
+
 // ---------- 主流程 ----------
 // 主控要求：默认有头模式（用户可在本机看到 UI 效果）+ slowMo 300；--headless 或 E2E_HEADLESS=1 可切回无头
 const HEADLESS = process.env.E2E_HEADLESS === '1' || process.argv.includes('--headless')
@@ -202,7 +213,7 @@ try {
       headers.push(((await headerCells.nth(i).innerText()) || '').trim())
     }
     log(`  表头: ${JSON.stringify(headers)}`)
-    for (const col of ['账号', '昵称', '状态', '创建人', '创建时间', '更新人', '更新时间', '操作']) {
+    for (const col of ['账号', '昵称', '手机号', '邮箱', '状态', '创建人', '创建时间', '更新人', '更新时间', '操作']) {
       assert(headers.includes(col), `表头应含"${col}"，实际 ${JSON.stringify(headers)}`)
     }
     const rowCount = await page.locator('.el-table__row').count()
@@ -212,16 +223,18 @@ try {
     const first = await rowCells(page.locator('.el-table__row').first())
     log(`  首行: ${JSON.stringify(first.slice(0, 5))}`)
     assert(first[0].length > 0, '账号列应有值')
-    const tagText = first[2]
+    const cStatus = await colIdx('状态')
+    const tagText = first[cStatus]
     assert(['正常', '停用'].includes(tagText), `状态列应为 正常/停用 tag，实际 "${tagText}"`)
-    assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(first[4]) || first[4] === '-', `创建时间应为 yyyy-MM-dd HH:mm:ss，实际 "${first[4]}"`)
+    const cCreated = await colIdx('创建时间')
+    assert(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(first[cCreated]) || first[cCreated] === '-', `创建时间应为 yyyy-MM-dd HH:mm:ss，实际 "${first[cCreated]}"`)
     // 分页 total
     const totalText = (await page.locator('.el-pagination__total').innerText()).trim()
     tableTotal = parseInt((totalText.match(/\d+/) || ['0'])[0], 10)
     log(`  分页 total 文案: "${totalText}"（解析=${tableTotal}）`)
     assert(tableTotal >= rowCount, `total(${tableTotal}) 应 >= 当前页行数(${rowCount})`)
-    // 状态 tag 按列位取（td2=状态列）：首行（admin）账号格内联「内置」徽标也是 el-tag，行内裸取会撞 2 元素
-    const tagClass = await page.locator('.el-table__row').first().locator('td').nth(2).locator('.el-tag').getAttribute('class')
+    // 状态 tag 按列位取（表头名解析）：首行（admin）账号格内联「内置」徽标也是 el-tag，行内裸取会撞 2 元素
+    const tagClass = await page.locator('.el-table__row').first().locator('td').nth(cStatus).locator('.el-tag').getAttribute('class')
     log(`  首行状态 tag class: ${tagClass}`)
     await shot(page, 's08-user-table.png')
     if (tableTotal > 10) {
@@ -337,7 +350,7 @@ try {
     log(`  新行: ${JSON.stringify(cells.slice(0, 5))}`)
     assertEq(cells[0], TEST_ACCOUNT, '新行账号应为测试账号')
     assertEq(cells[1], TEST_NICKNAME, '新行昵称应为测试昵称')
-    assertEq(cells[2], '正常', '新行状态应为 正常')
+    assertEq(cells[await colIdx('状态')], '正常', '新行状态应为 正常')
     await shot(page, 's10-row-created.png')
   })
 
@@ -367,7 +380,7 @@ try {
     const cells = await rowCells(row)
     log(`  编辑后行: ${JSON.stringify(cells.slice(0, 3))}`)
     assertEq(cells[1], TEST_NICKNAME_V2, '昵称应更新为 v2')
-    assertEq(cells[2], '停用', '状态应更新为 停用')
+    assertEq(cells[await colIdx('状态')], '停用', '状态应更新为 停用')
     const tagClass = await row.locator('.el-tag').getAttribute('class')
     assert(tagClass.includes('el-tag--danger'), `停用 tag 应为 danger，实际 ${tagClass}`)
     await shot(page, 's11-row-updated.png')
@@ -421,7 +434,7 @@ try {
     await waitToast(page, '保存成功')
     await waitDialogGone(page, '编辑用户')
     row = await findRow(page, TEST_ACCOUNT)
-    assertEq((await rowCells(row))[2], '正常', '改回正常后行内状态应为 正常')
+    assertEq((await rowCells(row))[await colIdx('状态')], '正常', '改回正常后行内状态应为 正常')
 
     // 用测试账号新密码登录验证（预期成功进入 Layout；其无角色权限，用户列表接口可能 403——属预期授权行为）
     await logoutViaUi(page)
@@ -454,20 +467,20 @@ try {
     log(`  admin 行: ${JSON.stringify(cells.slice(0, 7))}`)
     assertEq(stripBadge(cells[0]), 'admin', 'admin 行账号列应为 admin（内联「内置」徽标剥离后）')
     assert((await row.locator('.builtin-badge').count()) === 1, 'admin 行账号格应有内联「内置」徽标（el-tag）')
-    assertEq(cells[2], '正常', 'admin 行状态 tag 文本应为 正常（statusLabel 译文，与本地降级同文案）')
-    // 状态 tag 按列位取（td2=状态列）：账号格内联「内置」徽标也是 el-tag，行内首个 .el-tag 已非状态 tag
-    const adminTagClass = (await row.locator('td').nth(2).locator('.el-tag').getAttribute('class')) || ''
+    assertEq(cells[await colIdx('状态')], '正常', 'admin 行状态 tag 文本应为 正常（statusLabel 译文，与本地降级同文案）')
+    // 状态 tag 按列位取（表头名解析）：账号格内联「内置」徽标也是 el-tag，行内首个 .el-tag 已非状态 tag
+    const adminTagClass = (await row.locator('td').nth(await colIdx('状态')).locator('.el-tag').getAttribute('class')) || ''
     assert(adminTagClass.includes('el-tag--success'), `admin 行状态 tag 颜色应按原 status=0 映射 success，实际 "${adminTagClass}"`)
-    assertEq(cells[3], '-', 'admin 行创建人列应为 -（种子 createBy=null → 降级链终点）')
+    assertEq(cells[await colIdx('创建人')], '-', 'admin 行创建人列应为 -（种子 createBy=null → 降级链终点）')
     await shot(page, 's12b-admin-translated.png')
     // TEST_ACCOUNT 行（本脚本 S10 创建，createBy/updateBy=admin）：创建人/更新人列译文端到端
     row = await findRow(page, TEST_ACCOUNT)
     assert(row, '应能定位测试账号行')
     cells = await rowCells(row)
     log(`  ${TEST_ACCOUNT} 行: ${JSON.stringify(cells.slice(0, 7))}`)
-    assertEq(cells[2], '正常', '测试行状态 tag 文本应为 正常')
-    assertEq(cells[3], '管理员', '测试行创建人列应为 管理员（createBy=admin 译文，改造前显示 admin）')
-    assertEq(cells[5], '管理员', '测试行更新人列应为 管理员（updateBy=admin 译文）')
+    assertEq(cells[await colIdx('状态')], '正常', '测试行状态 tag 文本应为 正常')
+    assertEq(cells[await colIdx('创建人')], '管理员', '测试行创建人列应为 管理员（createBy=admin 译文，改造前显示 admin）')
+    assertEq(cells[await colIdx('更新人')], '管理员', '测试行更新人列应为 管理员（updateBy=admin 译文）')
     // ---- b. 页内 fetch：原字段与译文字段并存（契约 §1 红线的黑盒锁定） ----
     const probe = await page.evaluate(async () => {
       const token = JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken
@@ -663,15 +676,17 @@ try {
     const put = await directApi('PUT', '/system/user', { id: '1', nickname: '管理员', status: 1 })
     log(`  直连停用接口: HTTP ${put.httpStatus} code=${put.body.code} msg="${put.body.msg}"`)
     assertEq(put.body.code, 3017, `内置用户停用（直连）应 body 3017，实际 ${put.body.code}`)
-    // ---- e. 种子终态：行在 + 昵称/状态与保护前一致（cells[1]/[2] 比对不受徽标影响——徽标在 account 列）----
+    // ---- e. 种子终态：行在 + 昵称/状态与保护前一致（列位按表头名解析——徽标在 account 列不影响）----
     row = await findRow(page, 'admin')
     assert(row, '保护场景后 admin 行应仍在（种子终态）')
     const cellsAfter = await rowCells(row)
-    log(`  admin 行（保护后）: ${JSON.stringify(cellsAfter.slice(0, 3))}`)
+    log(`  admin 行（保护后）: ${JSON.stringify(cellsAfter.slice(0, 5))}`)
+    const cNick2 = await colIdx('昵称')
+    const cStatus2 = await colIdx('状态')
     assertEq(stripBadge(cellsAfter[0]), 'admin', 'admin 账号终态应为 admin（徽标剥离后）')
-    assertEq(cellsAfter[1], cellsBefore[1], `admin 昵称应保持原值 "${cellsBefore[1]}"`)
-    assertEq(cellsAfter[2], cellsBefore[2], `admin 状态应保持原值 "${cellsBefore[2]}"`)
-    assertEq(cellsAfter[2], '正常', 'admin 状态终态应为 正常')
+    assertEq(cellsAfter[cNick2], cellsBefore[cNick2], `admin 昵称应保持原值 "${cellsBefore[cNick2]}"`)
+    assertEq(cellsAfter[cStatus2], cellsBefore[cStatus2], `admin 状态应保持原值 "${cellsBefore[cStatus2]}"`)
+    assertEq(cellsAfter[cStatus2], '正常', 'admin 状态终态应为 正常')
   })
 
   // ================= S15（可选）篡改 token → 401 清态跳登录 =================

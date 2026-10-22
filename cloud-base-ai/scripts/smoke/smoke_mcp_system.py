@@ -1,4 +1,5 @@
 """MCP 通道真连接冒烟：登录 SSO 拿 JWT → 无凭证 401 → 可见性过滤 + 双工具 allow
+→ 列级数据权限（user 资源列规则经 MCP 出参改写 mobile=***，与页面/详情三入口同规则）
 → 无权限用户 PERMISSION_DENIED（登录档位仍可用）→ e2e 用户清理。
 
 用法（仓库根执行）：C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-ai python cloud-base-ai/scripts/smoke/smoke_mcp_system.py
@@ -95,6 +96,48 @@ async def main() -> int:
         print(f"[{'OK' if not r3.is_error and unknown == '[]' else 'FAIL'}] unknown dictKey -> {unknown[:30]}")
         if r3.is_error or unknown != "[]":
             failures.append(f"unknown dictKey not []: {unknown[:60]}")
+
+    # 2.5) 列级数据权限经 MCP 通道改写（契约 2026-10-22-dataperm-column-visibility-api §3.2：
+    #      system_query_users 与页面/详情三入口同主体同规则同改写）——配列规则（admin 脱敏 mobile）
+    #      → 工具出参 mobile=*** → 清规则 → 复验原值。规则只在本段存活，异常也 finally 清。
+    rule_id = None
+    try:
+        status, text = http(f"{GATEWAY}/system/data-perm/rule", "POST",
+                            headers={"Authorization": f"Bearer {admin_jwt}"},
+                            body={"resource": "user", "subjectType": 1, "subjectId": "1", "rowScope": 0,
+                                  "columns": [{"columnKey": "mobile", "action": 1}]})
+        code = json.loads(text).get("code")
+        print(f"[{'OK' if code == 200 else 'FAIL'}] create user column rule (mobile mask) -> code={code}")
+        if code != 200:
+            failures.append(f"column rule create failed: {text[:80]}")
+
+        r6 = await mcp_client.call_tool(admin_jwt, "system_query_users", {"pageNum": 1, "pageSize": 5})
+        rows = json.loads(content_text(r6)).get("rows", [])
+        admin_row = next((r for r in rows if r.get("account") == "admin"), {})
+        masked = admin_row.get("mobile")
+        print(f"[{'OK' if masked == '***' else 'FAIL'}] mcp users admin mobile under rule -> {masked}")
+        if masked != "***":
+            failures.append(f"mcp mobile not masked under rule: {masked!r}")
+
+        status, text = http(f"{GATEWAY}/system/data-perm/rule/page?resource=user&subjectType=1&subjectId=1",
+                            headers={"Authorization": f"Bearer {admin_jwt}"})
+        rule_rows = json.loads(text).get("data", {}).get("rows", [])
+        rule_id = rule_rows[0].get("id") if rule_rows else None
+        if rule_id is None:
+            failures.append("user column rule not found in rule/page")
+    finally:
+        if rule_id is not None:
+            status, _ = http(f"{GATEWAY}/system/data-perm/rule/{rule_id}", "DELETE",
+                             headers={"Authorization": f"Bearer {admin_jwt}"})
+            print(f"[INFO] cleanup user column rule {rule_id} -> http={status}")
+
+    r7 = await mcp_client.call_tool(admin_jwt, "system_query_users", {"pageNum": 1, "pageSize": 5})
+    rows = json.loads(content_text(r7)).get("rows", [])
+    admin_row = next((r for r in rows if r.get("account") == "admin"), {})
+    restored = admin_row.get("mobile")
+    print(f"[{'OK' if restored == '13800000001' else 'FAIL'}] mcp users admin mobile after cleanup -> {restored}")
+    if restored != "13800000001":
+        failures.append(f"mcp mobile not restored after cleanup: {restored!r}")
 
     # 3) 无权限用户：创建（无角色）→ 登录 → user 工具 PERMISSION_DENIED / dict 登录档位可用 → 清理
     stamp = str(int(time.time()))

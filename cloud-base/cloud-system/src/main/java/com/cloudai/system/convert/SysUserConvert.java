@@ -16,6 +16,8 @@ public final class SysUserConvert {
         vo.setId(user.getId());
         vo.setAccount(user.getAccount());
         vo.setNickname(user.getNickname());
+        vo.setMobile(user.getMobile());
+        vo.setEmail(user.getEmail());
         vo.setDeptId(user.getDeptId());
         vo.setStatus(user.getStatus());
         vo.setCreateBy(user.getCreateBy());

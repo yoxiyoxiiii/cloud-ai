@@ -160,11 +160,22 @@ public class DataPermEvaluator {
 
     private DataPermDecision doEvaluate(String account, Long userId, String resource, String operation) {
         DataPermResources.assertResource(resource);
+        // roleIds 先取：columnOnly 资源的列规则收敛同样依赖角色维度，取数不因分支跳过
         List<Long> roleIds = userId == null ? List.of() : roleMapper.listEnabledRoleIdsByUserId(userId);
         DataPermDecision decision = new DataPermDecision();
         decision.setResource(resource);
         decision.setAccount(account);
         decision.setOperation(operation);
+        if (DataPermResources.isColumnOnly(resource)) {
+            // 列级-only（列级数据权限轮 D60）：行档位与谓词不参与收敛——行范围恒全部、无行过滤、
+            // 行规则不收集（hitRules 留空=rule_digest 不出现行规则，与「行级不生效」契约声明自洽）；
+            // 留痕 scope_summary 恒 all；列段照常求值（并集宽松者胜）
+            decision.setDataScope(DataScope.all());
+            decision.setRowFilter(RowFilter.rowAll());
+            resolveColumns(resource, userId, roleIds, decision);
+            buildNarratives(decision);
+            return decision;
+        }
         List<SysDataPermRule> rules = collectRules(resource, userId, roleIds);
         resolveRowFilter(resource, account, userId, rules, decision);
         resolveColumns(resource, userId, roleIds, decision);
@@ -500,6 +511,10 @@ public class DataPermEvaluator {
     }
 
     private String scopeNarrative(DataPermDecision decision) {
+        // 列级-only 资源行范围不适用（列级数据权限轮 D60）：行段恒全部短路，不落既有收敛句式
+        if (DataPermResources.isColumnOnly(decision.getResource())) {
+            return "该资源仅列级权限生效，行范围不适用";
+        }
         if (decision.getDataScope().isAll()) {
             return "行范围收敛：全部（行过滤豁免）";
         }
