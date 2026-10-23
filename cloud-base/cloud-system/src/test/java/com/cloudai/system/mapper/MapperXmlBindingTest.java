@@ -15,7 +15,7 @@ import java.util.Collection;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Mapper XML 绑定冒烟：13 个 XML 全部可解析且 89 个语句与接口一一绑定。
+ * Mapper XML 绑定冒烟：14 个 XML 全部可解析且 94 个语句与接口一一绑定。
  * resultType 写错/命名空间错位在编译期无捕获（Maven 不校验 XML 语义），此测试封住该回归面。
  * 不连库：本模块无嵌入式数据库驱动（仅 mysql-connector-j），@MybatisTest 无法启动嵌入式数据源，
  * 故直接以 XMLMapperBuilder 逐个解析 XML 构建 SqlSessionFactory（配置与生产一致：MP MybatisConfiguration
@@ -36,7 +36,8 @@ class MapperXmlBindingTest {
             "mapper/DataPermRuleMapper.xml",
             "mapper/DataPermColumnMapper.xml",
             "mapper/DataPermLogMapper.xml",
-            "mapper/MqDlqLogMapper.xml"
+            "mapper/MqDlqLogMapper.xml",
+            "mapper/SysTableConfigMapper.xml"
     };
 
     @Test
@@ -45,15 +46,16 @@ class MapperXmlBindingTest {
 
         Collection<String> mappings = factory.getConfiguration().getMappedStatementNames();
         // 14(User) + 9(Role) + 7(Menu) + 4(UserRole) + 4(RoleMenu) + 6(DictType) + 8(DictData) + 3(Leave)
-        //   + 7(Dept) + 11(DataPermRule) + 7(DataPermColumn) + 2(DataPermLog) + 7(MqDlqLog) = 89
+        //   + 7(Dept) + 11(DataPermRule) + 7(DataPermColumn) + 2(DataPermLog) + 7(MqDlqLog) + 4(SysTableConfig) = 94
         // （2026-10-09 投影轮：SysLeave 域 6→3 语句；2026-10-10 数据权限轮：+Dept 域、+数据权限三表、
         //   User +3（countByDeptId/listEnabledAccountsByDeptIds/listByIds）、Role +2（listEnabledRoleIdsByUserId/listByIds）；
         //   2026-10-10 注册表重构轮：DataPermRule +1 / DataPermColumn +1（D17 一致性检查 DISTINCT 两查询）；
         //   2026-10-11 谓词轮：DataPermRule +1（listAll——D39 一致性检查第三维度 predicates 逐条解析）；
         //   2026-10-11 死信治理轮：+MqDlqLog 域 7 语句（watch 落库/分页/单查/重投流转/状态流转/重置/过期清理）；
-        //   2026-10-18 知识库权限轮：User +1（listRoleIdsByAccount——登录 roleIds 聚合），89 → 90）
+        //   2026-10-18 知识库权限轮：User +1（listRoleIdsByAccount——登录 roleIds 聚合），89 → 90；
+        //   2026-10-23 表格配置轮：+SysTableConfig 域 4 语句（findConfig/saveConfig/updateConfig/deleteConfig），90 → 94）
         assertThat(mappings.stream().filter(n -> n.startsWith("com.cloudai.system.mapper")).count())
-                .isEqualTo(90);
+                .isEqualTo(94);
         // 抽查关键语句存在（JOIN 聚合 / 插件分页 / 动态 SQL / 批量插入 / 字典域 / 翻译回源 / 请假域 / 部门与数据权限域）
         assertThat(mappings).contains(
                 "com.cloudai.system.mapper.SysUserMapper.listPermsByAccount",
@@ -82,7 +84,9 @@ class MapperXmlBindingTest {
                 "com.cloudai.system.mapper.DataPermRuleMapper.listDistinctResources",
                 "com.cloudai.system.mapper.DataPermColumnMapper.listDistinctResourceColumns",
                 "com.cloudai.system.mapper.MqDlqLogMapper.pageListDlqLog",
-                "com.cloudai.system.mapper.MqDlqLogMapper.deleteExpiredDlqLog");
+                "com.cloudai.system.mapper.MqDlqLogMapper.deleteExpiredDlqLog",
+                "com.cloudai.system.mapper.SysTableConfigMapper.findConfig",
+                "com.cloudai.system.mapper.SysTableConfigMapper.deleteConfig");
     }
 
     @Test

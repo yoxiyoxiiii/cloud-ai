@@ -4,11 +4,16 @@
  * 类型表全宽分页（契约 §2.1，id 倒序）；行内"字典项"按钮或双击行打开 DictDataDialog 弹框，
  * 项的分页与增删改全部内聚在弹框内（契约 §3，原主从双卡右栏逻辑已迁入）
  * 类型增删改仍在本页：表单弹窗 DictTypeFormDialog + 操作列 编辑/删除
- * 类型表已接入通用表格组件 ProTable（2026-10-21）：表格壳/勾选列/分页条收编组件
+ * 类型表已接入通用表格组件 ProTable（2026-10-21）：表格壳/勾选列/分页条收编组件；
+ * 2026-10-23 表格配置轮：列定义数组化接入 useTableConfig（列序/显隐/列宽个人偏好），
+ * 勾选/双击/分页三能力行为零变化（回归锚点）；本页无列级数据权限面（不传 isColumnHidden）
  */
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteDictType, pageDictType } from '../../../api/dict'
+import { useTableConfig } from '../../../composables/useTableConfig'
+import type { ColumnDef } from '../../../composables/useTableConfig'
+import { TABLE_KEY_DICT } from '../../../types/api'
 import type { SysDictTypeVo } from '../../../types/api'
 import type { ProTableExposed } from '../../../components/ProTable.vue'
 import DictTypeFormDialog from './components/DictTypeFormDialog.vue'
@@ -39,6 +44,19 @@ function typeRowOf(row: unknown): SysDictTypeVo {
   return row as SysDictTypeVo
 }
 
+/** EP @header-dragend 列上下文收窄（本页唯一断言点）：只取 property（= 列定义 key） */
+function columnKeyOf(column: unknown): string {
+  const key = (column as { property?: unknown }).property
+  return typeof key === 'string' ? key : ''
+}
+
+/** 列定义（锁列外，设计 D12）：字典键简单文本 prop 直出，名称/状态为富内容列 */
+const COLUMN_DEFS: ColumnDef[] = [
+  { key: 'dictName', label: '字典名称', minWidth: 140, slot: true },
+  { key: 'dictKey', label: '字典键', minWidth: 160 },
+  { key: 'status', label: '状态', width: 80, slot: true },
+]
+
 // ---------- 类型列表（单卡全宽） ----------
 const typeLoading = ref(false)
 const typeRows = ref<SysDictTypeVo[]>([])
@@ -67,7 +85,7 @@ const typeDialogMode = ref<DictTypeFormMode>('add')
 const typeDialogRow = ref<SysDictTypeVo>()
 
 // ---------- ProTable 勾选与翻页 ----------
-/** ProTable 实例（expose 面见 ProTableExposed：清勾选） */
+/** ProTable 实例（expose 面见 ProTableExposed：清勾选/取内层表格实例） */
 const tableRef = ref<ProTableExposed>()
 
 /** 勾选集（ProTable selection-change 上抛；工具栏暂不消费选中集，仅保证链路通） */
@@ -76,6 +94,29 @@ const selectedRows = ref<SysDictTypeVo[]>([])
 /** 勾选集上抛收窄（unknown[] 经全页唯一断言函数收敛，不散落裸 as） */
 function handleSelectionChange(rows: unknown[]): void {
   selectedRows.value = rows.map(typeRowOf)
+}
+
+/** 表格列配置（设计 D7-D11）：本页无列级数据权限面（不传 isColumnHidden=权限过滤空过）；
+ * selectable=true 告知 composable 表头前导锁列占位（勾选列不参与拖拽） */
+const {
+  columns: configColumns,
+  visibleColumns,
+  load: loadColumnConfig,
+  applyWidth,
+  applyPanel,
+  reset: resetColumnConfig,
+} = useTableConfig(TABLE_KEY_DICT, {
+  defs: COLUMN_DEFS,
+  table: tableRef,
+  selectable: true,
+})
+
+/** 列宽拖拽落定：EP @header-dragend 经 ProTable $attrs 透传，column.property=列 key */
+function onHeaderDragend(newWidth: number, _oldWidth: number, column: unknown): void {
+  const key = columnKeyOf(column)
+  if (key) {
+    applyWidth(key, newWidth)
+  }
 }
 
 /** 翻页/改 size：先清勾选（选中集不跨页保留），再按新页码加载 */
@@ -132,7 +173,9 @@ function openDataDialog(row: SysDictTypeVo): void {
 }
 
 onMounted(() => {
+  // 个人列配置与分页请求并行拉取（互不阻塞）
   void loadTypePage()
+  void loadColumnConfig()
 })
 </script>
 
@@ -141,13 +184,17 @@ onMounted(() => {
     <template #header>
       <div class="pane-header">
         <span>字典类型</span>
-        <el-button v-perms="'system:dict:add'" type="primary" @click="openTypeAdd"
-          >新增类型</el-button
-        >
+        <span class="pane-header__actions">
+          <TableConfigButton :columns="configColumns" @save="applyPanel" @reset="resetColumnConfig" />
+          <el-button v-perms="'system:dict:add'" type="primary" @click="openTypeAdd"
+            >新增类型</el-button
+          >
+        </span>
       </div>
     </template>
 
-    <!-- row-key：无 key 时 el-table 按 index 原地 patch，新增行会瞬时残留上一行 el-tag 节点（E3 dict D2 渲染竞态实锤） -->
+    <!-- row-key：无 key 时 el-table 按 index 原地 patch，新增行会瞬时残留上一行 el-tag 节点（E3 dict D2 渲染竞态实锤）；
+         border 是列宽拖拽的前提：EP resize 处理仅 border 表格生效（POC 实证） -->
     <ProTable
       ref="tableRef"
       :rows="typeRows"
@@ -157,25 +204,36 @@ onMounted(() => {
       v-model:page-size="typeQuery.pageSize"
       selectable
       row-key="id"
+      border
       @selection-change="handleSelectionChange"
       @row-dblclick="(row: unknown) => openDataDialog(typeRowOf(row))"
       @page-change="handleTypePageChange"
+      @header-dragend="onHeaderDragend"
     >
-      <el-table-column label="字典名称" min-width="140">
-        <template #default="{ row }">
-          <span>{{ typeRowOf(row).dictName }}</span>
-          <!-- 内置徽标（保护契约 §7.2：内联名称格不新增列；仅展示，禁用面在操作列） -->
-          <el-tag v-if="typeRowOf(row).builtin" class="builtin-badge" type="info" size="small"
-            >内置</el-tag
+      <el-table-column
+        v-for="col in visibleColumns"
+        :key="col.key"
+        :prop="col.key"
+        :label="col.label"
+        :width="col.width ?? undefined"
+        :min-width="col.width ? undefined : col.minWidth"
+      >
+        <template v-if="col.slot" #default="{ row }">
+          <template v-if="col.key === 'dictName'">
+            <span>{{ typeRowOf(row).dictName }}</span>
+            <!-- 内置徽标（保护契约 §7.2：内联名称格不新增列；仅展示，禁用面在操作列） -->
+            <el-tag v-if="typeRowOf(row).builtin" class="builtin-badge" type="info" size="small"
+              >内置</el-tag
+            >
+          </template>
+          <el-tag
+            v-else-if="col.key === 'status'"
+            :type="STATUS_MAP[typeRowOf(row).status]?.tagType ?? 'info'"
           >
-        </template>
-      </el-table-column>
-      <el-table-column prop="dictKey" label="字典键" min-width="160" />
-      <el-table-column label="状态" width="80">
-        <template #default="{ row }">
-          <el-tag :type="STATUS_MAP[typeRowOf(row).status]?.tagType ?? 'info'">
             {{
-              typeRowOf(row).statusLabel ?? STATUS_MAP[typeRowOf(row).status]?.label ?? typeRowOf(row).status
+              typeRowOf(row).statusLabel ??
+              STATUS_MAP[typeRowOf(row).status]?.label ??
+              typeRowOf(row).status
             }}
           </el-tag>
         </template>
@@ -225,6 +283,12 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.pane-header__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /** 内置徽标内联名称格（设计 D3 统一形态） */

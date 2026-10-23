@@ -157,7 +157,12 @@ export function createHarness({ base, artDir }) {
     let clicks = 0
     for (let attempt = 0; attempt < 3 && !sawLogout && !page.url().includes('/login'); attempt++) {
       await page.locator('.navbar-account').hover()
-      await item.waitFor({ state: 'visible', timeout: 5000 })
+      // 菜单本轮没开出（popper 竞态）不抛——下一轮重新 hover 再试（重试设计原本意图，waitFor 逃逸会击穿三轮循环）
+      try {
+        await item.waitFor({ state: 'visible', timeout: 5000 })
+      } catch {
+        continue
+      }
       await item.hover().catch(() => {})
       clicks += 1
       await item.click({ timeout: 5000 }).catch(() => {})

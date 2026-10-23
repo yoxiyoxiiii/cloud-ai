@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.SysTableConfigMapper">
+
+    <!-- 配置态物理删除表（沿 sys_data_perm_rule 先例）：无 deleted 列，语句无 deleted 条件；
+         审计时间由 SQL NOW() 取数据库时钟（插入 create=update 同值）；无 create_by/update_by 列
+         （本人自治数据，操作人恒为 user_id 本人） -->
+    <sql id="allColumns">
+        id, user_id, table_key, config, create_time, update_time
+    </sql>
+
+    <!-- uk 等值定位；LIMIT 1 唯一键防御 -->
+    <select id="findConfig" resultType="com.cloudai.system.entity.SysTableConfig">
+        SELECT <include refid="allColumns"/>
+          FROM sys_table_config
+         WHERE user_id = #{userId} AND table_key = #{tableKey}
+         LIMIT 1
+    </select>
+
+    <insert id="saveConfig" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_table_config (user_id, table_key, config, create_time, update_time)
+        VALUES (#{userId}, #{tableKey}, #{config}, NOW(), NOW())
+    </insert>
+
+    <!-- upsert 更新分支：按 uk 定位 config 整体覆盖 + update_time（DDL 列宽 4000 由 Service 校验链把守） -->
+    <update id="updateConfig">
+        UPDATE sys_table_config
+           SET config = #{config},
+               update_time = NOW()
+         WHERE user_id = #{userId} AND table_key = #{tableKey}
+    </update>
+
+    <!-- 物理删行=恢复默认；行不存在影响 0 行同样成功（幂等） -->
+    <delete id="deleteConfig">
+        DELETE FROM sys_table_config
+         WHERE user_id = #{userId} AND table_key = #{tableKey}
+    </delete>
+</mapper>

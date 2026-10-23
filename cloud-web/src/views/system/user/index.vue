@@ -1,10 +1,19 @@
 <script setup lang="ts">
+/**
+ * 用户管理页：2026-10-23 表格配置轮改造——顺迁 ProTable（表格壳/分页条收编，不加勾选不加双击）
+ * + 列定义数组化接入 useTableConfig（列序/显隐/列宽个人偏好，设计 D12 双页差异表）。
+ * mobile/email 列级数据权限显隐收敛进合并函数（原页面散写 v-if 已删——列显隐唯一落点），
+ * 权限脱敏列面板标「已脱敏」；操作列锁列模板直写不进配置。
+ */
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { deleteUser, pageUser } from '../../../api/user'
 import { usePermColumns } from '../../../composables/usePermColumns'
-import { DATAPERM_RESOURCE_USER } from '../../../types/api'
+import { useTableConfig } from '../../../composables/useTableConfig'
+import type { ColumnDef } from '../../../composables/useTableConfig'
+import { DATAPERM_RESOURCE_USER, TABLE_KEY_USER } from '../../../types/api'
 import type { SysUserVo } from '../../../types/api'
+import type { ProTableExposed } from '../../../components/ProTable.vue'
 import UserFormDialog from './components/UserFormDialog.vue'
 import type { UserFormMode } from './components/UserFormDialog.vue'
 import ResetPwdDialog from './components/ResetPwdDialog.vue'
@@ -34,14 +43,56 @@ function rowOf(row: unknown): SysUserVo {
   return row as SysUserVo
 }
 
+/**
+ * EP @header-dragend 列上下文收窄（本页唯一断言点）：只取 property（= 列定义 key）
+ */
+function columnKeyOf(column: unknown): string {
+  const key = (column as { property?: unknown }).property
+  return typeof key === 'string' ? key : ''
+}
+
+/**
+ * 列定义（锁列外，设计 D12）：key = VO 字段名（与数据权限 columnKey 同一命名空间）；
+ * slot=true 富内容列（模板 v-for 内按 key 分支），简单文本列（昵称）prop 直出
+ */
+const COLUMN_DEFS: ColumnDef[] = [
+  { key: 'account', label: '账号', minWidth: 120, slot: true },
+  { key: 'nickname', label: '昵称', minWidth: 120 },
+  { key: 'mobile', label: '手机号', minWidth: 120, slot: true },
+  { key: 'email', label: '邮箱', minWidth: 180, slot: true },
+  { key: 'status', label: '状态', width: 80, slot: true },
+  { key: 'createBy', label: '创建人', minWidth: 100, slot: true },
+  { key: 'createTime', label: '创建时间', minWidth: 160, slot: true },
+  { key: 'updateBy', label: '更新人', minWidth: 100, slot: true },
+  { key: 'updateTime', label: '更新时间', minWidth: 160, slot: true },
+]
+
 const loading = ref(false)
 const rows = ref<SysUserVo[]>([])
 const total = ref(0)
 const query = reactive({ pageNum: 1, pageSize: 10 })
 
-/** 列级数据权限（user 资源）：my-scope columns 驱动 mobile/email 列 v-if——
- * 规则变更后下一次加载即同步（即时生效语义，契约 2026-10-22-dataperm-column-visibility-api §1.1） */
+/** 列级数据权限（user 资源）：my-scope columns 驱动列集——规则变更后下一次加载即同步
+ * （即时生效语义，契约 2026-10-22-dataperm-column-visibility-api §1.1） */
 const permColumns = usePermColumns(DATAPERM_RESOURCE_USER)
+
+/** ProTable 实例（表头拖拽挂载经 expose 的 getTable() 定位表头） */
+const tableRef = ref<ProTableExposed>()
+
+/** 表格列配置（设计 D7-D11）：权限过滤优先于个人偏好（权限赢）；拖拽列序/列宽自动防抖保存 */
+const {
+  columns: configColumns,
+  visibleColumns,
+  load: loadColumnConfig,
+  applyWidth,
+  applyPanel,
+  reset: resetColumnConfig,
+} = useTableConfig(TABLE_KEY_USER, {
+  defs: COLUMN_DEFS,
+  table: tableRef,
+  isColumnHidden: permColumns.isHidden,
+  isColumnMasked: permColumns.isMasked,
+})
 
 const formDialogVisible = ref(false)
 const formDialogMode = ref<UserFormMode>('add')
@@ -65,6 +116,14 @@ async function loadUserPage(pageNum: number = query.pageNum): Promise<void> {
     // 拦截器已统一 toast，表格保持现状
   } finally {
     loading.value = false
+  }
+}
+
+/** 列宽拖拽落定：EP @header-dragend 经 ProTable $attrs 透传，column.property=列 key */
+function onHeaderDragend(newWidth: number, _oldWidth: number, column: unknown): void {
+  const key = columnKeyOf(column)
+  if (key) {
+    applyWidth(key, newWidth)
   }
 }
 
@@ -108,13 +167,10 @@ async function handleDelete(user: SysUserVo): Promise<void> {
   }
 }
 
-function handleSizeChange(size: number): void {
-  query.pageSize = size
-  void loadUserPage(1)
-}
-
 onMounted(() => {
+  // 个人列配置与分页/权限清单并行拉取（互不阻塞）
   void loadUserPage()
+  void loadColumnConfig()
 })
 </script>
 
@@ -123,47 +179,61 @@ onMounted(() => {
     <template #header>
       <div class="table-header">
         <span>用户管理</span>
-        <el-button v-perms="'system:user:add'" type="primary" @click="openAdd">新增用户</el-button>
+        <span class="table-header__actions">
+          <TableConfigButton :columns="configColumns" @save="applyPanel" @reset="resetColumnConfig" />
+          <el-button v-perms="'system:user:add'" type="primary" @click="openAdd">新增用户</el-button>
+        </span>
       </div>
     </template>
 
-    <el-table v-loading="loading" :data="rows">
-      <el-table-column label="账号" min-width="120">
-        <template #default="{ row }">
-          <span>{{ rowOf(row).account }}</span>
-          <!-- 内置徽标（保护契约 §7.2：内联账号格不新增列；仅展示，禁用面在操作列） -->
-          <el-tag v-if="rowOf(row).builtin" class="builtin-badge" type="info" size="small"
-            >内置</el-tag
+    <!-- border 是列宽拖拽的前提：EP resize 处理仅 border 表格生效（POC 实证）；
+         row-key 保持行状态与渲染稳定性 -->
+    <ProTable
+      ref="tableRef"
+      :rows="rows"
+      :loading="loading"
+      :total="total"
+      v-model:page-num="query.pageNum"
+      v-model:page-size="query.pageSize"
+      row-key="id"
+      border
+      @page-change="loadUserPage()"
+      @header-dragend="onHeaderDragend"
+    >
+      <el-table-column
+        v-for="col in visibleColumns"
+        :key="col.key"
+        :prop="col.key"
+        :label="col.label"
+        :width="col.width ?? undefined"
+        :min-width="col.width ? undefined : col.minWidth"
+      >
+        <template v-if="col.slot" #default="{ row }">
+          <template v-if="col.key === 'account'">
+            <span>{{ rowOf(row).account }}</span>
+            <!-- 内置徽标（保护契约 §7.2：内联账号格不新增列；仅展示，禁用面在操作列） -->
+            <el-tag v-if="rowOf(row).builtin" class="builtin-badge" type="info" size="small"
+              >内置</el-tag
+            >
+          </template>
+          <!-- 手机号/邮箱：脱敏列保留显示（值已是 ***）；null（未填或隐藏）显示 '-' -->
+          <span v-else-if="col.key === 'mobile'">{{ rowOf(row).mobile ?? '-' }}</span>
+          <span v-else-if="col.key === 'email'">{{ rowOf(row).email ?? '-' }}</span>
+          <el-tag
+            v-else-if="col.key === 'status'"
+            :type="STATUS_MAP[rowOf(row).status]?.tagType ?? 'info'"
           >
-        </template>
-      </el-table-column>
-      <el-table-column prop="nickname" label="昵称" min-width="120" />
-      <!-- 列级数据权限（契约 2026-10-22-dataperm-column-visibility-api §1.1/§3.2）：
-           隐藏列整列不渲染（v-if）；脱敏列保留显示（值已是 ***）；null（未填或隐藏）显示 '-' -->
-      <el-table-column v-if="!permColumns.isHidden('mobile')" label="手机号" min-width="120">
-        <template #default="{ row }">{{ rowOf(row).mobile ?? '-' }}</template>
-      </el-table-column>
-      <el-table-column v-if="!permColumns.isHidden('email')" label="邮箱" min-width="180">
-        <template #default="{ row }">{{ rowOf(row).email ?? '-' }}</template>
-      </el-table-column>
-      <el-table-column label="状态" width="80">
-        <template #default="{ row }">
-          <el-tag :type="STATUS_MAP[rowOf(row).status]?.tagType ?? 'info'">
             {{ rowOf(row).statusLabel ?? STATUS_MAP[rowOf(row).status]?.label ?? rowOf(row).status }}
           </el-tag>
+          <span v-else-if="col.key === 'createBy'">{{
+            rowOf(row).createByName ?? rowOf(row).createBy ?? '-'
+          }}</span>
+          <span v-else-if="col.key === 'createTime'">{{ rowOf(row).createTime ?? '-' }}</span>
+          <span v-else-if="col.key === 'updateBy'">{{
+            rowOf(row).updateByName ?? rowOf(row).updateBy ?? '-'
+          }}</span>
+          <span v-else-if="col.key === 'updateTime'">{{ rowOf(row).updateTime ?? '-' }}</span>
         </template>
-      </el-table-column>
-      <el-table-column label="创建人" min-width="100">
-        <template #default="{ row }">{{ rowOf(row).createByName ?? rowOf(row).createBy ?? '-' }}</template>
-      </el-table-column>
-      <el-table-column label="创建时间" min-width="160">
-        <template #default="{ row }">{{ rowOf(row).createTime ?? '-' }}</template>
-      </el-table-column>
-      <el-table-column label="更新人" min-width="100">
-        <template #default="{ row }">{{ rowOf(row).updateByName ?? rowOf(row).updateBy ?? '-' }}</template>
-      </el-table-column>
-      <el-table-column label="更新时间" min-width="160">
-        <template #default="{ row }">{{ rowOf(row).updateTime ?? '-' }}</template>
       </el-table-column>
       <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
@@ -196,18 +266,7 @@ onMounted(() => {
           >
         </template>
       </el-table-column>
-    </el-table>
-
-    <el-pagination
-      class="table-pagination"
-      v-model:current-page="query.pageNum"
-      v-model:page-size="query.pageSize"
-      :total="total"
-      :page-sizes="[10, 20, 50]"
-      layout="total, prev, pager, next, sizes"
-      @current-change="loadUserPage"
-      @size-change="handleSizeChange"
-    />
+    </ProTable>
 
     <UserFormDialog
       v-model="formDialogVisible"
@@ -227,9 +286,10 @@ onMounted(() => {
   justify-content: space-between;
 }
 
-.table-pagination {
-  margin-top: 16px;
-  justify-content: flex-end;
+.table-header__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 /** 内置徽标内联账号格（设计 D3 统一形态） */

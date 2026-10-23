@@ -1183,3 +1183,34 @@ export interface KbPermsSavePayload {
   dept_ids?: number[]
   user_ids?: number[]
 }
+
+/* ===== 用户表格列配置（契约 2026-10-23-table-config-api，登录即可、零新增权限标识） ===== */
+
+/**
+ * 表格列配置项（契约 §2.1）：数组顺序即列序；width null=未自定义（用页面列定义默认宽）。
+ * key = VO 字段名（如 account/dictName），与数据权限 columnKey 同一命名空间；
+ * 锁列（选择列/操作列）永不出现（保存时前端已过滤）
+ */
+export interface TableColumnConfig {
+  /** 列标识（字符集 [A-Za-z0-9_]，长度 ≤32） */
+  key: string
+  /** true=显示 / false=用户自选隐藏 */
+  visible: boolean
+  /** 列宽 px（40-1000 整数）；null=未自定义 */
+  width: number | null
+}
+
+/** 表格配置 VO（契约 §2.1）：GET 无配置时 data=null（前端按页面默认列序渲染） */
+export interface TableConfigVo {
+  columns: TableColumnConfig[]
+}
+
+/** 保存表格配置 payload（契约 §2.2）：整体覆盖（upsert 幂等） */
+export interface TableConfigSavePayload {
+  columns: TableColumnConfig[]
+}
+
+/** 表格标识（契约 §1 声明点唯一）：页面一律引常量，禁字面量——用户管理页 */
+export const TABLE_KEY_USER = 'system:user'
+/** 表格标识（契约 §1 声明点唯一）：数据字典页 */
+export const TABLE_KEY_DICT = 'system:dict'

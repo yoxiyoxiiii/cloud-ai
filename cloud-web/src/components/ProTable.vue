@@ -6,6 +6,8 @@
 export interface ProTableExposed {
   /** 清空表格勾选（透传 el-table 同名方法；删除/翻页后清残留勾选） */
   clearSelection: () => void
+  /** 取内层 el-table 实例（表格配置列拖拽等需 DOM 级查询的场景经 $el 定位表头；只读用途） */
+  getTable: () => TableInstance | undefined
 }
 </script>
 
@@ -108,6 +110,7 @@ function schedulePageChange(): void {
 
 defineExpose({
   clearSelection: () => tableRef.value?.clearSelection(),
+  getTable: () => tableRef.value,
 })
 </script>
 
