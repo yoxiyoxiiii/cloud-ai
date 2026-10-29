@@ -150,16 +150,11 @@
 
 ## 5. AI 侧可见性过滤（客户端体验层）
 
-- Python 侧硬编码映射（本契约为唯一对齐物，改工具名/权限档位必须先改这里）：
+> 2026-10-29 修订（平台 Agent 管理轮，修订案见 `2026-10-29-agent-platform-api.md` §7）：真相源由本文件硬编码映射换轨为 `cloud_ai` 库 `ai_tool` 注册表。
 
-```python
-TOOL_PERMS: dict[str, set[str]] = {
-    "system_query_users": {"system:user:list"},
-    "system_query_dict_items": set(),   # 登录即可
-}
-```
-
-- 过滤规则：用户 perms 快照（对话请求携带的 JWT 对应会话）⊇ 所需 perms → 工具对该用户可见；空集=登录即可见。
+- **真相源**：`cloud_ai` 库 `ai_tool` 注册表（`required_perms` 列，逗号分隔，空=登录即可）。种子值与本契约 §2 权限档位同步（`system_query_users` → `system:user:list`；`system_query_dict_items` → 空）；**工具名/权限档位变更须先修本契约再改种子**，管理面不提供注册表编辑。
+- **实现**：`cloud_base_ai/mcp/perm.py` 的 `visible_tools(tool_rows, user_perms)` 按注册表行过滤（不再持有任何工具清单）；agent 运行链路每运行查询一次注册表（量级个位数，不设缓存）。`smoke_mcp_system.py` 同步改造。
+- 过滤规则：用户 perms 快照（对话请求携带的 JWT 对应会话）⊇ 工具 `required_perms` → 工具对该用户可见；空集=登录即可见。
 - 过滤只影响 tools/list 呈现给模型的清单，**不影响服务端判定**——直接调用无权限工具由服务端 `PERMISSION_DENIED` 拒绝（防御纵深）。
 
 ## 6. 错误语义总表（AI 侧消费口径）

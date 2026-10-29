@@ -32,12 +32,15 @@
 import { chromium } from 'playwright'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHarness } from './lib/harness.mjs'
+import { createHarness, resetTableConfigs, restoreTableConfigs } from './lib/harness.mjs'
 
 const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173'
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), 'artifacts')
 /** D5c 无 token 直调网关（绕过 /api 代理与页面事件采集——page.request 不触发 page.on('response')，不污染 D-VERIFY） */
 const GATEWAY = process.env.E2E_GATEWAY || 'http://localhost:18080'
+
+/** 列配置复位句柄（D0 登录后写入，finally 恢复 admin 个人列偏好） */
+let tableConfigHandle = null
 
 const h = createHarness({ base: BASE, artDir: ART })
 const { log, sleep, step, assert, assertEq, shot, waitToast, waitDialogGone, waitTableIdle, breadcrumbTexts, login, rowCells } = h
@@ -252,7 +255,13 @@ try {
     // admin 重登 = 全新权限快照（含 system:dict:*，按钮级权限可见性即快照证据）
     const r = await login(page, 'admin', 'admin123')
     assert(r.ok, `admin 登录应成功: ${r.msg || ''}`)
-    await page.waitForURL(`**${DICT_PATH}`, { timeout: 15000 })
+    // D1+ 的列序断言以页面默认列为基线——复位 admin 的个人列配置（收尾 finally 恢复）；
+    // login 落地时页面已按旧配置渲染，删除后须重载让页面按默认列重新拉取
+    tableConfigHandle = await resetTableConfigs(page, GATEWAY, ['system:dict'])
+    if (tableConfigHandle.saved.size > 0) {
+      await page.reload({ waitUntil: 'domcontentloaded' })
+      await page.waitForURL(`**${DICT_PATH}`, { timeout: 15000 })
+    }
     await waitTableIdle(page)
     log(`  登录回跳: ${page.url()}`)
     // 侧边菜单顺序（动态路由种子：系统管理 7 项 + 流程管理 4 项 + AI 助手 4 项 + 工作台——数据权限轮 2026-10-10 +部门管理/数据权限；死信治理轮 2026-10-11 +死信治理；AI 对话轮 2026-10-13 +对话；知识库管理轮 2026-10-15 +知识库；平台 Agent 管理轮 2026-10-29 +智能体管理/智能体对话）
@@ -946,5 +955,6 @@ try {
       'user_status/common_status/bpmn_approval_status/system_leave_type 内置种子（SEED_KEYS 四类型）全程零触碰；admin 未做任何种子外数据写操作',
     ],
   })
+  await restoreTableConfigs(tableConfigHandle)
   await browser.close()
 }

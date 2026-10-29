@@ -12,7 +12,7 @@
 import { chromium } from 'playwright'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHarness } from './lib/harness.mjs'
+import { createHarness, resetTableConfigs, restoreTableConfigs } from './lib/harness.mjs'
 
 const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173'
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), 'artifacts')
@@ -42,6 +42,9 @@ async function directApi(method, path, data) {
   })
   return { httpStatus: res.status(), body: await res.json() }
 }
+
+/** 列配置复位句柄（S4 登录后写入，finally 恢复 admin 个人列偏好） */
+let tableConfigHandle = null
 
 /** 名称格内联徽标（el-tag「内置」）使 innerText 变 "{name}\n内置"（tag 独立成行）——比对前统一剥离尾缀并 trim（E2 通用模式） */
 const stripBadge = (s) => s.replace(/\s*内置\s*$/, '').trim()
@@ -132,6 +135,12 @@ try {
     log(`  登录接口: HTTP ${resp.status()}, body.code=${body.code}`)
     assertEq(body.code, 200, '登录业务码应为 200')
     assert(body.data?.accessToken, '登录响应应含 accessToken')
+    // S8+ 的列头/行定位断言以页面默认列为基线——复位 admin 的个人列配置（收尾 finally 恢复）；
+    // login 落地时页面已按旧配置渲染，删除后须重载让页面按默认列重新拉取
+    tableConfigHandle = await resetTableConfigs(page, GATEWAY, ['system:user'])
+    if (tableConfigHandle.saved.size > 0) {
+      await page.reload({ waitUntil: 'domcontentloaded' })
+    }
     await page.waitForURL('**/system/user', { timeout: 15000 })
     // 动态路由后根 M 渲染为 el-sub-menu，其内层 ul.el-menu--inline 也是 .el-menu——
     // 裸 .el-menu 命中 2 元素触发 strict violation，改用侧边根元素 .sidebar-menu
@@ -712,5 +721,6 @@ try {
 } finally {
   // ---------- 汇总 ----------
   h.summary({ extras: [`\n测试账号: ${TEST_ACCOUNT}（应已在 S14 删除）`] })
+  await restoreTableConfigs(tableConfigHandle)
   await browser.close()
 }

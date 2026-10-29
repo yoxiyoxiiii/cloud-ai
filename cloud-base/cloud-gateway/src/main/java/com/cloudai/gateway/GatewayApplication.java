@@ -8,6 +8,7 @@ import org.springframework.boot.autoconfigure.security.reactive.ReactiveUserDeta
  * 排除 ReactiveUserDetailsServiceAutoConfiguration：
  * security-starter 传递带入 spring-boot-starter-security（网关取 JwtUtil/常量），
  * 该自动配置在无用户存储时生成随机密码并打日志（噪音）；网关不做 HTTP Basic 认证。
+ * @author jy-root
  */
 @SpringBootApplication(exclude = ReactiveUserDetailsServiceAutoConfiguration.class)
 public class GatewayApplication {

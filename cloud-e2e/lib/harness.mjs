@@ -17,6 +17,72 @@ import path from 'node:path'
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /**
+ * 表格列配置基线复位（tableconfig 轮补强）：列头断言与 admin 个人列偏好解耦。
+ * 按人按表持久化的列配置（显隐/列序/列宽）会让同一页面在不同登录态下渲染不同列集，
+ * 回归断言须以页面默认列为基线——本函数对给定 tableKey 逐个 GET 存档，有个人配置则
+ * DELETE（幂等，回默认列）；返回恢复句柄交 restoreTableConfigs 在脚本收尾原样回写，
+ * 个人偏好不因跑回归而丢失。
+ * 复位/恢复走 Node fetch + 登录后捕获的 token：不依赖脚本结束时的页面登录态
+ * （防中途切换受限用户后把配置恢复到错误账号），也不入 page 网络统计（不污染 VERIFY 场景）。
+ * @param {import('playwright').Page} page 已登录 admin 的页面（取 localStorage token）
+ * @param {string} apiBase 直连基座（dev 代理传 `${BASE}/api`，网关直连传 GATEWAY）
+ * @param {string[]} tableKeys 如 ['system:user', 'system:dict']
+ */
+export async function resetTableConfigs(page, apiBase, tableKeys) {
+  const token = await page.evaluate(() => JSON.parse(localStorage.getItem('cloud-web:auth')).accessToken)
+  const saved = new Map()
+  for (const key of tableKeys) {
+    const res = await fetch(`${apiBase}/system/table-config/${key}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    const body = await res.json().catch(() => null)
+    // HTTP 失败或 R.code!=200 时基线状态未知——告警而非静默当"无个人配置"（body 级失败 fetch 不抛）
+    if (!body || body.code !== 200) {
+      console.log(`  [table-config] ${key} 读取失败（HTTP ${res.status}${body ? ` code=${body.code}` : ' 非 JSON'}），按无个人配置处理`)
+      continue
+    }
+    if (body.data) {
+      saved.set(key, body.data)
+      const del = await fetch(`${apiBase}/system/table-config/${key}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const delBody = await del.json().catch(() => null)
+      if (!delBody || delBody.code !== 200) {
+        console.log(`  [table-config] ${key} 复位 DELETE 失败（HTTP ${del.status}），列断言可能受个人配置干扰`)
+      }
+    }
+  }
+  if (saved.size) console.log(`  [table-config] 基线复位 ${[...saved.keys()].join(',')}（收尾恢复）`)
+  return { apiBase, token, saved }
+}
+
+/** 复位句柄回写（脚本 finally 调用）：原样 PUT 回存档配置；失败仅告警不抛（不掩盖场景结果） */
+export async function restoreTableConfigs(handle) {
+  if (!handle || handle.saved.size === 0) return
+  const restored = []
+  for (const [key, cfg] of handle.saved) {
+    try {
+      const res = await fetch(`${handle.apiBase}/system/table-config/${key}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${handle.token}` },
+        body: JSON.stringify(cfg),
+      })
+      // R 约定 HTTP 恒 200、成败在 body.code——fetch 对 HTTP 4xx/5xx 不抛，须查 body 才知真假
+      const body = await res.json().catch(() => null)
+      if (body && body.code === 200) {
+        restored.push(key)
+      } else {
+        console.log(`  [table-config] 恢复 ${key} 失败（HTTP ${res.status}${body ? ` code=${body.code}` : ' 非 JSON'}），个人列偏好需手动重设`)
+      }
+    } catch (e) {
+      console.log(`  [table-config] 恢复 ${key} 失败（个人列偏好需手动重设）: ${e.message}`)
+    }
+  }
+  if (restored.length) console.log(`  [table-config] 已恢复个人列配置: ${restored.join(',')}`)
+}
+
+/**
  * 创建 harness 实例
  * @param {{ base: string, artDir: string }} opts base=目标入口（E2E_BASE_URL），artDir=截图输出目录
  */

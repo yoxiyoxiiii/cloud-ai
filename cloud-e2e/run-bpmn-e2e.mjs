@@ -54,7 +54,7 @@
  * - BP9 详情流程图三态全覆盖：已通过 A 单主高亮恰 [endApprove] + completed 含 start/approval；
  *   审批中 E 单主高亮恰 [approval]（在途列）；已撤销 C 单截断形态 active=[] 无终态高亮 +
  *   completed 截断至删除点 + 时间线两步（发起申请/流程结束=已撤销）→ E 后台办结归终态
- * - BP10 定义页「查看图」弹窗：xml 端点 200 → svg 渲染 leave_approval 语义元素封闭集恰 9 id + 零高亮 marker → 关闭
+ * - BP10 定义页「查看图」弹窗：xml 端点 200 → svg 渲染 leave_approval 5 节点 + 4 连线（连线 id 容忍部署残留再生成 Flow_* 形态）+ 零高亮 marker → 关闭
  * - BP11 设计器：「设计」打开 leave_approval → 画布元素 ≥1 + 属性面板挂载 + XML 源码含 leave_approval →
  *   不改动「保存部署」→ 部署响应/toast/页内 fetch 三证 version+1（原样保留）
  * - BP12 工作台两卡：「我的待办」卡（title/businessTypeName 行）+「我的审批」卡（前 5、状态 tag）+
@@ -1055,12 +1055,21 @@ try {
       const labelN = allIds.length - nodeIds.length
       const connN = await viewer.locator('.djs-connection').count()
       log(`  查看图画布: 语义元素=${nodeIds.length}（其中连线 ${connN}）外置标签=${labelN} 全量 ids=${JSON.stringify(allIds)}`)
-      assertEq(
-        nodeIds.join(','),
-        'approval,decision,endApprove,endReject,flowApproval,flowApprove,flowReject,flowStart,start',
-        `leave_approval 应恰 9 语义元素（5 节点 + 4 连线封闭集），实际 ${JSON.stringify(nodeIds)}`,
-      )
-      assertEq(connN, 4, `连线元素应恰 4（flowStart/flowApproval/flowApprove/flowReject），实际 ${connN}`)
+      // 节点 5-id 与连线基数走强断言；连线 id 不锁死种子集——历史「设计器保存部署」会把
+      // 某条连线 id 再生成为 Flow_* 形态（bpmn-js 部署残留，latestVersion 设计下成为可见版；
+      // bpmn 契约口径「v2+ 部署残留允许」，语义无损——源/目标不变，流程场景不受影响）
+      const NODE_IDS = ['approval', 'decision', 'endApprove', 'endReject', 'start']
+      for (const n of NODE_IDS) {
+        assert(nodeIds.includes(n), `流程图缺语义节点 ${n}，实际 ${JSON.stringify(nodeIds)}`)
+      }
+      assertEq(nodeIds.length, 9, `语义元素应恰 9（5 节点 + 4 连线），实际 ${JSON.stringify(nodeIds)}`)
+      assertEq(connN, 4, `连线元素应恰 4，实际 ${connN}`)
+      for (const f of ['flowStart', 'flowApprove', 'flowReject']) {
+        assert(nodeIds.includes(f), `种子连线 ${f} 应在位，实际 ${JSON.stringify(nodeIds)}`)
+      }
+      const fourth = nodeIds.find((id) => ![...NODE_IDS, 'flowStart', 'flowApprove', 'flowReject'].includes(id))
+      assert(fourth === 'flowApproval' || /^Flow_[0-9a-z]+$/i.test(fourth),
+        `第 4 条连线 id 应为种子 flowApproval 或再生成 Flow_* 形态，实际 "${fourth}"`)
       const m = await viewerMarkers(viewer)
       assertEq(m.active.length + m.completed.length, 0, `定义页查看图应零高亮 marker（无高亮入参），实际 active=${JSON.stringify(m.active)} completed=${JSON.stringify(m.completed)}`)
       await shot(page, 'bp10-definition-diagram.png')

@@ -23,7 +23,7 @@
 import { chromium } from 'playwright'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { createHarness } from './lib/harness.mjs'
+import { createHarness, resetTableConfigs, restoreTableConfigs } from './lib/harness.mjs'
 
 const BASE = process.env.E2E_BASE_URL || 'http://localhost:5173'
 const ART = path.join(path.dirname(fileURLToPath(import.meta.url)), 'artifacts')
@@ -46,6 +46,9 @@ const TEST_403_ROLE_NAME = `e2e导航403${stamp}`
 
 const ROLE_PATH = '/system/role'
 const USER_PATH = '/system/user'
+
+/** 列配置复位句柄（N0 登录后写入，finally 恢复 admin 个人列偏好） */
+let tableConfigHandle = null
 /** 种子菜单 id（契约 §2 示例/基线 SQL）：10 系统管理 M / 12 角色管理 C / 121 角色新增 F / 122 角色修改 F */
 const SEED = { ROOT: '10', ROLE_C: '12', ROLE_ADD: '121', ROLE_EDIT: '122' }
 /** 勾选目标 F 节点显示名（种子 122 角色修改——system:role:edit，非 add 保 N5 前提） */
@@ -138,6 +141,8 @@ try {
   await step('N0', 'admin 登录（前置）', async () => {
     const r = await login(page, 'admin', 'admin123')
     assert(r.ok, `admin 登录应成功: ${r.msg || ''}`)
+    // N2+ 的用户页行定位断言以页面默认列为基线——先复位 admin 的个人列配置（收尾 finally 恢复）
+    tableConfigHandle = await resetTableConfigs(page, `${BASE}/api`, ['system:user'])
     // 裸 .el-menu 会命中根 ul + el-sub-menu 内层 ul（strict violation），用 .sidebar-menu
     await page.locator('.sidebar-menu').waitFor({ state: 'visible', timeout: 10000 })
     log(`  登录落点: ${page.url()}`)
@@ -549,5 +554,6 @@ try {
       '种子账号 admin 与种子菜单（10/11/12/13/111…20/21/211 与 30 段 31/32/33/34…）零触碰；权限快照时效语义（绑定先于登录，契约 §3）',
     ],
   })
+  await restoreTableConfigs(tableConfigHandle)
   await browser.close()
 }
