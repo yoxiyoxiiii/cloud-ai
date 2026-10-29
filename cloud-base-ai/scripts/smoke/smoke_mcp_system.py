@@ -16,7 +16,9 @@ import time
 import urllib.error
 import urllib.request
 
+from cloud_base_ai.agent import dao as agent_dao
 from cloud_base_ai.config import get_settings
+from cloud_base_ai.db import tx
 from cloud_base_ai.mcp import client as mcp_client
 from cloud_base_ai.mcp.perm import visible_tools
 
@@ -49,6 +51,15 @@ def content_text(result) -> str:
     return getattr(result.content[0], "text", "") if result.content else ""
 
 
+async def visible_from_registry(perms: set[str]) -> list[str]:
+    """ai_tool 注册表行 + 用户 perms 求可见 tool_key 集（visible_tools 以注册表为真相源，
+    服务端呈现面与本脚本同源计算，断言口径一致）。"""
+    async with tx.get_session_factory()() as s:
+        async with s.begin():
+            rows = await agent_dao.list_tools(s)
+    return sorted(t.tool_key for t in visible_tools(list(rows), perms))
+
+
 async def main() -> int:
     failures: list[str] = []
     cfg = get_settings().mcp
@@ -69,7 +80,7 @@ async def main() -> int:
         failures.append(f"no-credential not 401/R JSON: {status}")
 
     # 2) 管理员可见性 + 双工具 allow（走通道封装——真实验证 client.py）
-    admin_visible = visible_tools({"system:user:list"})  # admin perms 必含该档位
+    admin_visible = await visible_from_registry({"system:user:list"})  # admin perms 必含该档位
     async with mcp_client.build_client(admin_jwt) as c:
         tools = await c.list_tools()
         server_names = sorted(t.name for t in tools)
@@ -150,7 +161,7 @@ async def main() -> int:
     print(f"[INFO] create no-role user {account} -> code={json.loads(text).get('code')} id={user_id}")
     try:
         user_jwt = login(account, "E2ePass123!")
-        denied_visible = visible_tools(set())
+        denied_visible = await visible_from_registry(set())
         print(f"[INFO] visible(no-perm user): {denied_visible} (dict only)")
 
         r4 = await mcp_client.call_tool(user_jwt, "system_query_users", {"pageNum": 1, "pageSize": 5})

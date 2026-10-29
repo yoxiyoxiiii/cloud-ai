@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
  * 业务类型配置读取（设计 D2）：type_code → 配置行；detail_route 模板渲染 + 校验。
  * 不做内存缓存（MVP 单行配置+每次发起/列表一次 uk_type_code 等值查询，量级可忽略；
  * 缓存失效复杂度不成比例，记档可演进——移交备忘 4）。
+ * @author jy-root
  */
 @Slf4j
 @Service

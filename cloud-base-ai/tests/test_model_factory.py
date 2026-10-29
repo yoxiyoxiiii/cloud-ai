@@ -57,6 +57,27 @@ def test_factory_cached(monkeypatch: pytest.MonkeyPatch) -> None:
     assert get_chat_model() is get_chat_model()  # 进程内单例（连接池复用）
 
 
+# ---------- temperature 扩展（2026-10-29 平台 Agent 轮：每智能体温度） ----------
+
+
+def test_temperature_none_keeps_class_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    use_llm(LLMSettings(api_key="test-key"), monkeypatch)
+    m = get_chat_model()
+    # None 不传参 → ChatOpenAI 类默认 None（langchain-openai 1.7.0 实测，
+    # 请求省略该字段由服务端取默认），既有调用方（RAG 域）行为不变
+    assert m.temperature is None
+
+
+def test_temperature_value_cached_per_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    use_llm(LLMSettings(api_key="test-key"), monkeypatch)
+    m_default = get_chat_model()
+    m_half = get_chat_model(0.5)
+    assert m_half is get_chat_model(0.5)  # 同温度键单例
+    assert m_half is not m_default  # None 与 0.5 分开缓存（lru_cache 键扩展）
+    assert m_half.temperature == 0.5
+    assert m_default.temperature is None
+
+
 def test_embedding_construct_passes_params(monkeypatch: pytest.MonkeyPatch) -> None:
     use_embedding(EmbeddingModelSettings(base_url="http://127.0.0.1:11434",
                                          model="qllama/bge-large-zh-v1.5:latest"), monkeypatch)

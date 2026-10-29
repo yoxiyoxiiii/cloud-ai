@@ -64,17 +64,22 @@
 - **预期**：批量入口复用本轮单文件编排（世代置换语义不变），异步化引入后 5008 重试收敛路径保持。
 - **登记日期**：2026-10-16（重新向量化轮）
 
-## MCP 通道已接入但对话编排未接（工具建好了，LLM 还没用上）
+## MCP 编排已接入（RAG 对话仍纯检索、未接工具编排）
 
-- **待办**：对话链路把 `visible_tools` 清单注入模型并回填工具调用结果（langchain.mcp MCPAdapter
-  适配）——本轮只交付通道原语（`mcp/client.py`/`mcp/perm.py`）与错误语义（5009/5010）。
+- **待办**：`/rag/chat` 系对话仍为纯 RAG 检索链路，未把 `visible_tools` 清单注入其模型——
+  工具编排目前只在平台 Agent 域（`agent/runtime.py`，用户自建智能体绑定 MCP 工具）落地。
+  RAG 对话是否需要工具编排待需求出现再评估。
 - **外部系统**：cloud-system MCP server（streamable，端点 :9202/mcp）。**寻址取舍**：AI 侧直连
   9202 不走网关——网关刻意屏蔽 `/system/mcp`（服务间面不外露），内网直连是既定设计；
   双主体头 `X-MCP-Client-Secret`（值同 Nacos，本地 .env `CLOUD_BASE_AI_MCP__CLIENT_SECRET`）
-  + `Authorization: Bearer <用户 JWT>`。
+  + `Authorization: Bearer <用户 JWT>`。工具可见性真相源是 `ai_tool` 注册表（required_perms
+  逗号串，空=登录即可），`mcp/perm.py visible_tools(工具行, 用户perms)` 白名单过滤。
 - **命令**（真连接冒烟，仓库根执行）：
   `C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-ai python cloud-base-ai/scripts/smoke/smoke_mcp_system.py`
-  （前置：sso/system/gateway/Redis/Nacos 在运行）
-- **预期**：编排轮接入后工具面经契约 `2026-10-17-mcp-tools-api.md` §5 的 TOOL_PERMS 呈现，
-  服务端最终权限裁决语义不变（PERMISSION_DENIED 走 isError 分支）。
-- **登记日期**：2026-10-17（MCP server 轮 Phase 3）
+  （通道冒烟，前置：sso/system/gateway/Redis/Nacos 在运行）；
+  `C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-ai python cloud-base-ai/scripts/smoke/smoke_agent_platform.py`
+  （Agent 平台端到端冒烟，另需 cloud-base-ai :8010 与 Redis 集群 7000 在运行）
+- **预期**：编排已验证真链路（2026-10-29 agent 平台轮 SMOKE PASS：模型真调
+  system_query_dict_items、工具明细入运行审计行）；服务端最终权限裁决语义不变
+  （PERMISSION_DENIED 走 isError 分支转述给模型）。
+- **登记日期**：2026-10-17（MCP server 轮 Phase 3）；2026-10-29（agent 平台轮兑现编排后改写）

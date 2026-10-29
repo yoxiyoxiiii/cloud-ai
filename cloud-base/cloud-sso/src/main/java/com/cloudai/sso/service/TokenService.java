@@ -21,9 +21,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -162,7 +164,7 @@ public class TokenService {
     public List<OnlineSession> onlineList() {
         List<OnlineSession> list = new ArrayList<>();
         Set<String> keys = stringRedisTemplate.keys(SecurityConstants.ONLINE_KEY_PREFIX + "*");
-        if (keys != null) {
+        if (!CollectionUtils.isEmpty(keys)) {
             keys.forEach(key -> {
                 String json = stringRedisTemplate.opsForValue().get(key);
                 if (json == null) {

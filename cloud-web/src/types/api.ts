@@ -1214,3 +1214,176 @@ export interface TableConfigSavePayload {
 export const TABLE_KEY_USER = 'system:user'
 /** 表格标识（契约 §1 声明点唯一）：数据字典页 */
 export const TABLE_KEY_DICT = 'system:dict'
+
+/* ===== 平台 Agent 管理（契约 2026-10-29-agent-platform-api）
+   管理面 §2 七端点（perms ai:agent:list/add/update/delete）+ 运行面 §3 两端点与
+   会话面 §4 四端点（perms ai:agent:run）。AI 域出参口径同 kb 契约 §1：字段 snake_case、
+   id/total 为 JSON number（非 Java 域 Long→String）、分页查询参数名 page/size。
+   流式端点 §3.2 帧协议逐字沿 RAG 对话母契约——前端 utils/sse.ts 零改动直接复用 */
+
+/**
+ * 智能体列表行 VO（契约 §2.1）：分页 id 倒序、软删不可见；
+ * status 语义 0=启用 1=停用；tool_names 为绑定工具显示名（空数组=纯对话 agent）；
+ * 列表行不含 system_prompt/tool_ids——编辑回显须走 §2.3 详情端点
+ */
+export interface AgentSummaryVo {
+  /** 智能体 id（AI 域口径：JSON number） */
+  id: number
+  name: string
+  /** 描述；可 null */
+  description: string | null
+  /** LLM 采样温度（0~2） */
+  temperature: number
+  status: number
+  tool_names: string[]
+  /** yyyy-MM-dd HH:mm:ss 或 null */
+  create_time: string | null
+  /** yyyy-MM-dd HH:mm:ss 或 null */
+  update_time: string | null
+}
+
+/**
+ * 智能体详情 VO（契约 §2.3）：列表行全字段 + 提示词/工具 id 绑定/配置版本；
+ * config_version 每次成功编辑 SQL 原子 +1（运行时缓存失效键，前端仅回显展示值不消费）
+ */
+export interface AgentDetailVo extends AgentSummaryVo {
+  system_prompt: string
+  /** 绑定工具 id 集（ai_tool.id）；编辑提交原样回传 */
+  tool_ids: number[]
+  config_version: number
+}
+
+/**
+ * 创建智能体入参（契约 §2.2）：name 唯一（重名/墓碑占键 5016）；
+ * tool_ids 可选默认 []，含无效项 5017（服务端去重）
+ */
+export interface CreateAgentPayload {
+  name: string
+  system_prompt: string
+  /** 可选 ≤512 */
+  description?: string
+  /** 可选，默认 0.7，0 ≤ x ≤ 2 */
+  temperature?: number
+  tool_ids?: number[]
+}
+
+/**
+ * 编辑智能体入参（契约 §2.4）：与创建同构 + status 必填；全量覆盖语义
+ * （不传字段=清空/回默认）——前端恒提交完整表单；每次成功编辑 config_version +1
+ */
+export interface UpdateAgentPayload extends CreateAgentPayload {
+  /** 0=启用 1=停用 */
+  status: number
+}
+
+/**
+ * 工具注册表 VO（契约 §2.6）：只读不分页（量级个位数）、管理面不提供编辑；
+ * required_perms 空数组=登录即可；description 与注入 LLM 的 doc 同源
+ */
+export interface ToolVo {
+  /** 工具 id（ai_tool.id） */
+  id: number
+  /** 工具标识（对齐 MCP 工具名，如 system_query_users） */
+  tool_key: string
+  /** 显示名 */
+  name: string
+  description: string
+  /** 所需权限标识（空数组=登录即可） */
+  required_perms: string[]
+}
+
+/**
+ * 运行日志内工具调用明细（契约 §2.7 tool_calls 项）：arguments 为工具入参原对象
+ */
+export interface RunToolCallVo {
+  tool_key: string
+  arguments: object
+  /** 工具调用是否成功 */
+  ok: boolean
+  /** 失败原因；成功为 null */
+  error: string | null
+}
+
+/**
+ * 运行日志行 VO（契约 §2.7）：时间倒序分页；
+ * status 语义 0=成功 1=失败（失败=异常终止；模型对工具错误的正常转述属成功）
+ */
+export interface RunLogVo {
+  id: number
+  /** 会话 id */
+  session_id: number
+  /** 运行者用户 id（跨库昵称不做，展示账号由前端按需另查——本页直显 id） */
+  user_id: number
+  status: number
+  /** 工具调用明细（无工具运行为空数组） */
+  tool_calls: RunToolCallVo[]
+  /** 失败摘要（不含 key 与上游原文）；成功为 null */
+  error_msg: string | null
+  /** 耗时毫秒 */
+  duration_ms: number
+  /** 运行结束落库时间 */
+  create_time: string
+}
+
+/**
+ * 智能体会话 VO（契约 §4）：创建返回与列表行同构；
+ * title 创建恒「新对话」，首问后服务端取前 16 字符更新
+ */
+export interface AgentSessionVo {
+  /** 会话 id（AI 域口径：JSON number） */
+  id: number
+  /** 归属智能体 id */
+  agent_id: number
+  title: string
+  /** 创建时间 yyyy-MM-dd HH:mm:ss 字符串直显 */
+  create_time: string
+}
+
+/**
+ * 智能体会话消息回显出参（契约 §4）：全量时间升序 ≤100 条；
+ * 消息项结构与 RAG 会话回显同构（role/content 两字段），复用 SessionMessageVo
+ */
+export interface AgentSessionMessagesVo {
+  messages: SessionMessageVo[]
+}
+
+/**
+ * 非流式运行出参（契约 §3.1）：answer 为完整回答、model 为实际模型名；
+ * 流式 §3.2 出参为 SSE 帧流（utils/sse.ts 通道，非本类型）
+ */
+export interface AgentAnswerVo {
+  answer: string
+  model: string
+}
+
+/**
+ * 运行两端点入参（契约 §3）：session_id 须归属当前用户且属于路径 agent_id
+ * （5019 会话不存在 / 5020 访问被拒）；question 1..4000
+ */
+export interface AgentRunPayload {
+  /** 目标会话 id（必须 JSON number） */
+  session_id: number
+  question: string
+}
+
+/** 智能体分页入参（契约 §2.1）：AI 域参数名 page/size；name 可选包含匹配（≤50 字符） */
+export interface AgentPageQuery {
+  /** 页码（1 起） */
+  page: number
+  /** 每页条数（1..200，越界后端钳制不报错） */
+  size: number
+  /** 名称搜索（可选，包含匹配；仅非空时携带） */
+  name?: string
+}
+
+/** 运行历史分页入参（契约 §2.7）：同智能体分页口径（无 name 过滤） */
+export interface AgentRunsPageQuery {
+  page: number
+  size: number
+}
+
+/** 智能体会话分页入参（契约 §4）：同 AI 域 page/size 口径 */
+export interface AgentSessionPageQuery {
+  page: number
+  size: number
+}

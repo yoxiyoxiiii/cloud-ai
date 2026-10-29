@@ -21,7 +21,8 @@ import DefinitionManageView from '../views/bpmn/definition/index.vue'
 import NotFoundView from '../views/error/NotFound.vue'
 import ChatView from '../views/rag/chat/index.vue'
 import KbManageView from '../views/rag/kb/index.vue'
-import AgentsView from '../views/agents/index.vue'
+import AgentManageView from '../views/agents/manage/index.vue'
+import AgentChatView from '../views/agents/chat/index.vue'
 
 /** path → 组件注册表（静态 import，键 = sys_menu.path 约定值） */
 export const VIEW_REGISTRY: Record<string, Component> = {
@@ -43,9 +44,9 @@ export const VIEW_REGISTRY: Record<string, Component> = {
   // 知识库对话（菜单 181）/ 知识库管理（菜单 182，契约 2026-10-14-ai-kb-api §8 种子）
   '/rag/chat': ChatView,
   '/rag/kb': KbManageView,
-
-  // agent
-  '/agent': AgentsView
+  // 智能体管理（菜单 186）/ 智能体对话（菜单 190，契约 2026-10-29-agent-platform-api §5 种子）
+  '/agent/manage': AgentManageView,
+  '/agent/chat': AgentChatView
 }
 
 /** 按 path 解析视图组件：未注册 → NotFound 兜底（不报错，设计 D5） */

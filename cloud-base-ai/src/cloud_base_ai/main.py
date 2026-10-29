@@ -22,7 +22,12 @@ from cloud_base_ai.rag.router import kb_router as rag_kb_router
 from cloud_base_ai.rag.router import kb_read_router as rag_kb_read_router
 from cloud_base_ai.rag.router import kb_update_router as rag_kb_update_router
 from cloud_base_ai.rag.router import kb_delete_router as rag_kb_delete_router
-from cloud_base_ai.agents.router import router as agent_chat_router
+from cloud_base_ai.agent.router import agent_add_router
+from cloud_base_ai.agent.router import agent_delete_router
+from cloud_base_ai.agent.router import agent_list_router
+from cloud_base_ai.agent.router import agent_run_router
+from cloud_base_ai.agent.router import agent_session_router
+from cloud_base_ai.agent.router import agent_update_router
 from cloud_base_ai.response import R
 
 
@@ -45,7 +50,12 @@ app.include_router(rag_kb_router)  # 知识库管理面（2026-10-14 create_kb �
 app.include_router(rag_kb_read_router)  # 知识库管理面读端点（2026-10-15 管理轮）
 app.include_router(rag_kb_update_router)  # 知识库编辑端点（2026-10-15 列表管理轮）
 app.include_router(rag_kb_delete_router)  # 知识库删除端点（2026-10-15 列表管理轮）
-app.include_router(router=agent_chat_router)
+app.include_router(agent_list_router)  # 平台 Agent 管理查询（2026-10-29 agent 平台轮）
+app.include_router(agent_add_router)  # 智能体创建（权限分立：ai:agent:add）
+app.include_router(agent_update_router)  # 智能体编辑（ai:agent:update）
+app.include_router(agent_delete_router)  # 智能体删除（ai:agent:delete）
+app.include_router(agent_run_router)  # 运行 + 会话创建/列表（ai:agent:run）
+app.include_router(agent_session_router)  # 会话删除/消息回显（ai:agent:run）
 
 
 @app.get("/")
