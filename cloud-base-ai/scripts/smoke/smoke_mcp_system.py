@@ -2,6 +2,9 @@
 → 列级数据权限（user 资源列规则经 MCP 出参改写 mobile=***，与页面/详情三入口同规则）
 → 无权限用户 PERMISSION_DENIED（登录档位仍可用）→ e2e 用户清理。
 
+通道走 ai_mcp_server 注册表 SYSTEM 内置行驱动（per-server 路由的真实路径）——
+脚本不再自带连接参数，注册行缺失即失败（种子里 2026-10-30-mcp-server-mgmt.sql）。
+
 用法（仓库根执行）：C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-ai python cloud-base-ai/scripts/smoke/smoke_mcp_system.py
 前置：cloud-system(:9202)/cloud-sso(:9201)/cloud-gateway(:18080)/Redis/Nacos 在运行，
       Nacos cloud.mcp.client-secret 与本工程 .env CLOUD_BASE_AI_MCP__CLIENT_SECRET 同值。
@@ -16,13 +19,15 @@ import time
 import urllib.error
 import urllib.request
 
-from cloud_base_ai.agent import dao as agent_dao
+from cloud_base_ai.agent.entities import AiTool
 from cloud_base_ai.config import get_settings
 from cloud_base_ai.db import tx
 from cloud_base_ai.mcp import client as mcp_client
 from cloud_base_ai.mcp.perm import visible_tools
+from cloud_base_ai.mcp_server import dao as mcp_dao
 
 GATEWAY = "http://localhost:18080"
+BUILTIN_SERVER = "SYSTEM"
 
 
 def http(url, method="GET", headers=None, body=None):
@@ -51,13 +56,24 @@ def content_text(result) -> str:
     return getattr(result.content[0], "text", "") if result.content else ""
 
 
-async def visible_from_registry(perms: set[str]) -> list[str]:
-    """ai_tool 注册表行 + 用户 perms 求可见 tool_key 集（visible_tools 以注册表为真相源，
-    服务端呈现面与本脚本同源计算，断言口径一致）。"""
+async def load_builtin_server():
+    """取 SYSTEM 内置注册行（通道 per-server 路由入口）；缺行即冒烟失败。"""
     async with tx.get_session_factory()() as s:
         async with s.begin():
-            rows = await agent_dao.list_tools(s)
-    return sorted(t.tool_key for t in visible_tools(list(rows), perms))
+            row = await mcp_dao.find_server_by_name(s, BUILTIN_SERVER)
+    assert row is not None and row.is_builtin == 1, \
+        "ai_mcp_server SYSTEM builtin row missing (run 2026-10-30-mcp-server-mgmt.sql)"
+    return row
+
+
+async def visible_from_registry(perms: set[str], server) -> list[str]:
+    """SYSTEM 名下已发布工具行 + 用户 perms 求可见 tool_key 集（visible_tools 以
+    注册表为真相源；只取已发布行——草稿/失效工具服务端 tools/list 本就不含）。"""
+    async with tx.get_session_factory()() as s:
+        async with s.begin():
+            rows = await mcp_dao.list_tools_by_server(s, server.id)
+    published = [r for r in rows if r.status == AiTool.StatusEnum.PUBLISHED.value]
+    return sorted(t.tool_key for t in visible_tools(published, perms))
 
 
 async def main() -> int:
@@ -67,11 +83,14 @@ async def main() -> int:
         print("[FAIL] client-secret not configured (.env CLOUD_BASE_AI_MCP__CLIENT_SECRET empty)")
         return 1
 
+    server = await load_builtin_server()
+    print(f"[OK] builtin server row loaded: id={server.id} url={server.url}")
+
     admin_jwt = login("admin", "admin123")
     print("[OK] admin login via gateway")
 
     # 1) 无凭证 401：原始探针不带双主体头，initialize 即被拒
-    status, text = http(cfg.base_url, "POST", headers={"Accept": "application/json, text/event-stream"},
+    status, text = http(server.url, "POST", headers={"Accept": "application/json, text/event-stream"},
                         body={"jsonrpc": "2.0", "id": 1, "method": "initialize",
                               "params": {"protocolVersion": "2025-03-26", "capabilities": {},
                                          "clientInfo": {"name": "smoke", "version": "0"}}})
@@ -80,33 +99,33 @@ async def main() -> int:
         failures.append(f"no-credential not 401/R JSON: {status}")
 
     # 2) 管理员可见性 + 双工具 allow（走通道封装——真实验证 client.py）
-    admin_visible = await visible_from_registry({"system:user:list"})  # admin perms 必含该档位
-    async with mcp_client.build_client(admin_jwt) as c:
+    admin_visible = await visible_from_registry({"system:user:list"}, server)  # admin perms 必含该档位
+    async with mcp_client.build_client(server, admin_jwt) as c:
         tools = await c.list_tools()
         server_names = sorted(t.name for t in tools)
         print(f"[INFO] server tools: {server_names}; visible(admin): {admin_visible}")
         if server_names != admin_visible:
             failures.append(f"visibility mismatch: server={server_names} visible={admin_visible}")
 
-        r1 = await mcp_client.call_tool(admin_jwt, "system_query_users", {"pageNum": 1, "pageSize": 3})
-        users = json.loads(content_text(r1))
-        print(f"[{'OK' if not r1.is_error else 'FAIL'}] system_query_users "
-              f"is_error={r1.is_error} total={users.get('total')} first={users['rows'][0]['account']}")
-        if r1.is_error or mcp_client.is_permission_denied(r1):
-            failures.append("admin users call errored/denied")
+    r1 = await mcp_client.call_tool(server, "system_query_users", {"pageNum": 1, "pageSize": 3}, admin_jwt)
+    users = json.loads(content_text(r1))
+    print(f"[{'OK' if not r1.is_error else 'FAIL'}] system_query_users "
+          f"is_error={r1.is_error} total={users.get('total')} first={users['rows'][0]['account']}")
+    if r1.is_error or mcp_client.is_permission_denied(r1):
+        failures.append("admin users call errored/denied")
 
-        r2 = await mcp_client.call_tool(admin_jwt, "system_query_dict_items", {"dictKey": "user_status"})
-        items = json.loads(content_text(r2))
-        print(f"[{'OK' if not r2.is_error else 'FAIL'}] system_query_dict_items "
-              f"is_error={r2.is_error} items={len(items)}")
-        if r2.is_error:
-            failures.append("admin dict call errored")
+    r2 = await mcp_client.call_tool(server, "system_query_dict_items", {"dictKey": "user_status"}, admin_jwt)
+    items = json.loads(content_text(r2))
+    print(f"[{'OK' if not r2.is_error else 'FAIL'}] system_query_dict_items "
+          f"is_error={r2.is_error} items={len(items)}")
+    if r2.is_error:
+        failures.append("admin dict call errored")
 
-        r3 = await mcp_client.call_tool(admin_jwt, "system_query_dict_items", {"dictKey": "no_such_key_x"})
-        unknown = content_text(r3)
-        print(f"[{'OK' if not r3.is_error and unknown == '[]' else 'FAIL'}] unknown dictKey -> {unknown[:30]}")
-        if r3.is_error or unknown != "[]":
-            failures.append(f"unknown dictKey not []: {unknown[:60]}")
+    r3 = await mcp_client.call_tool(server, "system_query_dict_items", {"dictKey": "no_such_key_x"}, admin_jwt)
+    unknown = content_text(r3)
+    print(f"[{'OK' if not r3.is_error and unknown == '[]' else 'FAIL'}] unknown dictKey -> {unknown[:30]}")
+    if r3.is_error or unknown != "[]":
+        failures.append(f"unknown dictKey not []: {unknown[:60]}")
 
     # 2.5) 列级数据权限经 MCP 通道改写（契约 2026-10-22-dataperm-column-visibility-api §3.2：
     #      system_query_users 与页面/详情三入口同主体同规则同改写）——配列规则（admin 脱敏 mobile）
@@ -122,7 +141,7 @@ async def main() -> int:
         if code != 200:
             failures.append(f"column rule create failed: {text[:80]}")
 
-        r6 = await mcp_client.call_tool(admin_jwt, "system_query_users", {"pageNum": 1, "pageSize": 5})
+        r6 = await mcp_client.call_tool(server, "system_query_users", {"pageNum": 1, "pageSize": 5}, admin_jwt)
         rows = json.loads(content_text(r6)).get("rows", [])
         admin_row = next((r for r in rows if r.get("account") == "admin"), {})
         masked = admin_row.get("mobile")
@@ -142,7 +161,7 @@ async def main() -> int:
                              headers={"Authorization": f"Bearer {admin_jwt}"})
             print(f"[INFO] cleanup user column rule {rule_id} -> http={status}")
 
-    r7 = await mcp_client.call_tool(admin_jwt, "system_query_users", {"pageNum": 1, "pageSize": 5})
+    r7 = await mcp_client.call_tool(server, "system_query_users", {"pageNum": 1, "pageSize": 5}, admin_jwt)
     rows = json.loads(content_text(r7)).get("rows", [])
     admin_row = next((r for r in rows if r.get("account") == "admin"), {})
     restored = admin_row.get("mobile")
@@ -161,17 +180,17 @@ async def main() -> int:
     print(f"[INFO] create no-role user {account} -> code={json.loads(text).get('code')} id={user_id}")
     try:
         user_jwt = login(account, "E2ePass123!")
-        denied_visible = await visible_from_registry(set())
+        denied_visible = await visible_from_registry(set(), server)
         print(f"[INFO] visible(no-perm user): {denied_visible} (dict only)")
 
-        r4 = await mcp_client.call_tool(user_jwt, "system_query_users", {"pageNum": 1, "pageSize": 5})
+        r4 = await mcp_client.call_tool(server, "system_query_users", {"pageNum": 1, "pageSize": 5}, user_jwt)
         denied = mcp_client.is_permission_denied(r4)
         print(f"[{'OK' if denied else 'FAIL'}] no-perm users call is_error={r4.is_error} "
               f"content={content_text(r4)[:60]}")
         if not r4.is_error or not denied:
             failures.append(f"no-perm users call not denied: is_error={r4.is_error}")
 
-        r5 = await mcp_client.call_tool(user_jwt, "system_query_dict_items", {"dictKey": "user_status"})
+        r5 = await mcp_client.call_tool(server, "system_query_dict_items", {"dictKey": "user_status"}, user_jwt)
         print(f"[{'OK' if not r5.is_error else 'FAIL'}] no-perm dict call (login-only tier) is_error={r5.is_error}")
         if r5.is_error:
             failures.append("login-only dict tier denied for no-perm user")

@@ -1,6 +1,7 @@
-"""平台 Agent 域 ORM 实体（DDL 真相源：cloud-base/scripts/sql/2026-10-29-agent-platform.sql）。
+"""平台 Agent 域 ORM 实体（DDL 真相源：cloud-base/scripts/sql/cloud_ai.sql）。
 
-五表：ai_agent（智能体定义）/ ai_tool（工具注册表，种子字典）/ ai_agent_tool（绑定纯关系表）
+五表：ai_agent（智能体定义）/ ai_tool（工具注册表：内置种子+外部同步草稿审核，
+server/status 列 2026-10-30 MCP server 管理轮扩入）/ ai_agent_tool（绑定纯关系表）
 / ai_agent_session（会话元数据，消息在 Redis）/ ai_agent_run_log（运行审计，append-only）。
 生命周期：创建（默认启用）→ 编辑（config_version+1，缓存失效）→ 停用（拒新运行）→ 软删
 （会话与审计保留）。实体与 pydantic DTO 分离，转换在 service 层。
@@ -77,34 +78,71 @@ class AiAgent(Base, AuditMixin, SoftDeleteMixin):
 
 
 class AiTool(Base):
-    """工具注册表（字典表）：种子手工登记，管理面只读。
+    """工具注册表：内置工具种子登记 + 外部工具同步草稿/审核发布（2026-10-30 MCP server 管理轮扩列）。
 
-    description 注入 LLM 工具 doc、input_schema 服务端定义参数面——两列与 MCP 契约
-    （2026-10-17-mcp-tools-api.md §3/§4）逐字同步，工具名/权限档位变更须先修契约再改种子。
-    无软删无 update 审计（种子数据，行只有插入一个生命周期）。
+    description 注入 LLM 工具 doc、input_schema 服务端定义参数面——内置工具两列与 MCP 契约
+    （2026-10-17-mcp-tools-api.md §3/§4）逐字同步；外部工具以 server 同步为真相源
+    （管理面只可编辑 required_perms 与显示名，2026-10-30 契约 §7.1 修订）。
+    对 agent 可见 = status=已发布 且归属 server 启用未删；无软删（失效态由 status=2 承载，
+    行保留供审计与复活）；update_time 记最近同步/审核时间。
     """
 
     __tablename__ = "ai_tool"
     __table_args__ = (
         UniqueConstraint("tool_key", name="uk_tool_key"),
-        {"comment": "平台工具注册表（MCP 工具的登记台账，种子驱动）"},
+        Index("idx_server_status", "server_id", "status"),
+        {"comment": "平台工具注册表（MCP 工具的登记台账：内置种子+外部同步草稿审核）"},
     )
+
+    class StatusEnum(IntEnum):
+        """工具状态（禁魔法数；字段类型保持 int，存取不经 Enum 实例）。
+
+        草稿=同步产生对 agent 不可见；已发布=审核过可见；失效=server 不再列出不可见行保留。
+        """
+
+        DRAFT = 0
+        PUBLISHED = 1
+        MISSING = 2
+
+        @classmethod
+        def of(cls, value: int) -> "AiTool.StatusEnum | None":
+            try:
+                return cls(value)
+            except ValueError:
+                return None
 
     id: Mapped[int] = mapped_column(_ID_BIGINTEGER, primary_key=True, autoincrement=True,
                                     comment="工具ID（主键）")
     tool_key: Mapped[str] = mapped_column(
-        String(100), nullable=False, comment="工具标识（对齐 MCP 工具名，如 system_query_users）",
+        String(100), nullable=False,
+        comment="工具标识（对齐 MCP 工具名，如 system_query_users；外部工具=server 上报原名直存不加前缀）",
     )
-    name: Mapped[str] = mapped_column(String(50), nullable=False, comment="显示名（管理页勾选展示）")
+    name: Mapped[str] = mapped_column(
+        String(50), nullable=False, comment="显示名（管理页勾选展示；初始=tool_key，审核时可改）",
+    )
     description: Mapped[str] = mapped_column(
-        String(1024), nullable=False, comment="工具描述（注入 LLM 的工具 doc；与 MCP 契约逐字同步）",
+        String(1024), nullable=False,
+        comment="工具描述（注入 LLM 的工具 doc；内置与 MCP 契约逐字同步，外部以 server 同步为准）",
     )
     input_schema: Mapped[str] = mapped_column(
-        Text, nullable=False, comment="入参 JSON Schema 文本（运行动态构造 pydantic 入参模型）",
+        Text, nullable=False,
+        comment="入参 JSON Schema 文本（运行动态构造 pydantic 入参模型；审核时校验可构建）",
     )
     required_perms: Mapped[str] = mapped_column(
         String(200), nullable=False, server_default=text("''"),
         comment="所需权限标识（逗号分隔，空=登录即可；运行门按 ⊆ 用户 perms 过滤）",
+    )
+    server_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, server_default=text("1"),
+        comment="归属MCP服务ID（ai_mcp_server.id，弱引用不建外键；1=内置平台服务",
+    )
+    status: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, server_default=text("0"),
+        comment="工具状态：0=草稿（同步产生，对agent不可见） 1=已发布（审核过，可见） "
+                "2=已失效（server不再列出，不可见，行保留）",
+    )
+    update_time: Mapped[datetime | None] = mapped_column(
+        DateTime, comment="最近同步/审核时间（DB 时钟生成）",
     )
     create_time: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"),

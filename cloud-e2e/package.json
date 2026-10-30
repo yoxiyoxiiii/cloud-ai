@@ -16,6 +16,7 @@
     "e2e:bpmn": "node run-bpmn-e2e.mjs",
     "e2e:aichat": "node run-ai-chat-e2e.mjs",
     "e2e:agent": "node run-agent-e2e.mjs",
+    "e2e:mcp": "node run-mcp-e2e.mjs",
     "e2e:aikb": "node run-ai-kb-e2e.mjs",
     "e2e:kbperm": "node run-ai-kb-perm-e2e.mjs",
     "e2e:dataperm": "node run-dataperm-e2e.mjs",

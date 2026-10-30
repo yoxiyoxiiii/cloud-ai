@@ -22,6 +22,17 @@ def _tool_row(input_schema: str, tool_key: str = "e2e_query") -> AiTool:
                   input_schema=input_schema, required_perms="")
 
 
+def _server_row(**overrides):
+    """归属 server 替身行（内置形态；build_mcp_tool 只透传给通道层）。"""
+    row = SimpleNamespace(name="SYSTEM", url="http://127.0.0.1:9202/mcp",
+                          transport="http", headers_json=None,
+                          credential_headers_json=None, timeout_ms=30000,
+                          is_builtin=1)
+    for k, v in overrides.items():
+        setattr(row, k, v)
+    return row
+
+
 def _agent_row(config_version: int = 1) -> AiAgent:
     return AiAgent(id=101, name="e2e_智能体", system_prompt="你是测试助手",
                    temperature=0.7, status=0, config_version=config_version)
@@ -85,10 +96,48 @@ def test_args_schema_extra_forbidden():
 def test_args_schema_unsupported_type_raises():
     with pytest.raises(BusinessException) as ei:
         runtime.build_args_schema(_tool_row(
-            '{"type":"object","properties":{"a":{"type":"array"}}}'))
+            '{"type":"object","properties":{"a":{"type":"null"}}}'))
     assert ei.value.code == runtime.CODE_AGENT_RUN_FAILED
     with pytest.raises(BusinessException):
         runtime.build_args_schema(_tool_row("not-json"))
+
+
+def test_args_schema_array_and_object_shallow():
+    """array→list、object→dict 浅映射：嵌套结构整体降级容器，不递归内层定义。"""
+    schema = runtime.build_args_schema(_tool_row(
+        '{"type":"object","properties":{'
+        '"tags":{"type":"array","items":{"type":"string"}},'
+        '"filter":{"type":"object","properties":{"k":{"type":"string"}}}'
+        '},"required":["tags"]}'))
+    inst = schema(tags=["a", "b"], filter={"k": "v", "extra": 1})  # 内层不校验
+    assert inst.tags == ["a", "b"]
+    assert inst.filter == {"k": "v", "extra": 1}
+    with pytest.raises(ValidationError):
+        schema(filter={})  # 缺 required tags
+
+
+def test_args_schema_enum_literal():
+    """enum 标量枚举 → Literal：成员外取值校验失败，default 成员生效。"""
+    schema = runtime.build_args_schema(_tool_row(
+        '{"type":"object","properties":{'
+        '"unit":{"type":"string","enum":["c","f"],"default":"c"},'
+        '"level":{"type":"integer","enum":[1,2,3]}'
+        '},"required":["level"]}'))
+    inst = schema(level=2)
+    assert inst.unit == "c"
+    assert inst.level == 2
+    with pytest.raises(ValidationError):
+        schema(level=2, unit="k")  # 非 enum 成员
+    with pytest.raises(ValidationError):
+        schema(level=9)  # 非 enum 成员
+
+
+def test_args_schema_enum_non_scalar_rejected():
+    """enum 成员含非标量（dict 等）：不支持，5018。"""
+    with pytest.raises(BusinessException) as ei:
+        runtime.build_args_schema(_tool_row(
+            '{"type":"object","properties":{"a":{"enum":[{"x":1}]}}}'))
+    assert ei.value.code == runtime.CODE_AGENT_RUN_FAILED
 
 
 def test_args_schema_no_args_ok():
@@ -106,33 +155,52 @@ def _result(text: str, is_error: bool = False):
 async def test_tool_wrapper_normal_and_audit_ok(monkeypatch: pytest.MonkeyPatch):
     seen: dict = {}
 
-    async def fake_call(jwt, name, arguments):
-        seen.update(jwt=jwt, name=name, arguments=arguments)
+    async def fake_call(server_row, tool_key, arguments, jwt):
+        seen.update(jwt=jwt, tool_key=tool_key, arguments=arguments,
+                    server_name=server_row.name)
         return _result('{"rows":[]}')
 
     monkeypatch.setattr(mcp_client, "call_tool", fake_call)
     tool = runtime.build_mcp_tool(_tool_row(
-        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'))
+        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'),
+        _server_row())
     runtime.run_jwt.set("e2e-jwt-token")
     calls: list[dict] = []
     runtime.run_tool_calls.set(calls)
     out = await tool.ainvoke({"dictKey": "user_status"})
     assert out == '{"rows":[]}'
-    # JWT 经 contextvar 到达通道层；工具名与参数透传
-    assert seen == {"jwt": "e2e-jwt-token", "name": "e2e_query",
-                    "arguments": {"dictKey": "user_status"}}
+    # JWT 经 contextvar 到达通道层；server 行/工具名/参数透传（按 server 路由调用）
+    assert seen == {"jwt": "e2e-jwt-token", "tool_key": "e2e_query",
+                    "arguments": {"dictKey": "user_status"}, "server_name": "SYSTEM"}
     # 审计：ok=true error=None，arguments 原样
     assert calls == [{"tool_key": "e2e_query", "arguments": {"dictKey": "user_status"},
                       "ok": True, "error": None}]
 
 
+async def test_tool_wrapper_routes_by_server_row(monkeypatch: pytest.MonkeyPatch):
+    """per-server 路由：外部 server 行原样进通道（url/timeout 不在包装器解析）。"""
+    seen: dict = {}
+
+    async def fake_call(server_row, tool_key, arguments, jwt):
+        seen.update(url=server_row.url, is_builtin=server_row.is_builtin)
+        return _result("ok")
+
+    monkeypatch.setattr(mcp_client, "call_tool", fake_call)
+    tool = runtime.build_mcp_tool(_tool_row('{"type":"object","properties":{}}'),
+                                  _server_row(url="http://e2e-ext:9000/mcp", is_builtin=0))
+    runtime.run_jwt.set("e2e-jwt")
+    await tool.ainvoke({})
+    assert seen == {"url": "http://e2e-ext:9000/mcp", "is_builtin": 0}
+
+
 async def test_tool_wrapper_permission_denied_fixed_message(monkeypatch: pytest.MonkeyPatch):
-    async def fake_call(jwt, name, arguments):
+    async def fake_call(server_row, tool_key, arguments, jwt):
         return _result("PERMISSION_DENIED: system:user:list required", is_error=True)
 
     monkeypatch.setattr(mcp_client, "call_tool", fake_call)
     tool = runtime.build_mcp_tool(_tool_row(
-        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'))
+        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'),
+        _server_row())
     runtime.run_jwt.set("e2e-jwt")
     calls: list[dict] = []
     runtime.run_tool_calls.set(calls)
@@ -144,12 +212,13 @@ async def test_tool_wrapper_permission_denied_fixed_message(monkeypatch: pytest.
 
 
 async def test_tool_wrapper_iserror_plain_text_to_model(monkeypatch: pytest.MonkeyPatch):
-    async def fake_call(jwt, name, arguments):
+    async def fake_call(server_row, tool_key, arguments, jwt):
         return _result("dictKey not found", is_error=True)
 
     monkeypatch.setattr(mcp_client, "call_tool", fake_call)
     tool = runtime.build_mcp_tool(_tool_row(
-        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'))
+        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'),
+        _server_row())
     runtime.run_jwt.set("e2e-jwt")
     calls: list[dict] = []
     runtime.run_tool_calls.set(calls)
@@ -162,12 +231,13 @@ async def test_tool_wrapper_iserror_plain_text_to_model(monkeypatch: pytest.Monk
 
 
 async def test_tool_wrapper_channel_exception_to_model(monkeypatch: pytest.MonkeyPatch):
-    async def fake_call(jwt, name, arguments):
+    async def fake_call(server_row, tool_key, arguments, jwt):
         raise BusinessException("MCP 未配置", 5010)
 
     monkeypatch.setattr(mcp_client, "call_tool", fake_call)
     tool = runtime.build_mcp_tool(_tool_row(
-        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'))
+        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'),
+        _server_row())
     runtime.run_jwt.set("e2e-jwt")
     calls: list[dict] = []
     runtime.run_tool_calls.set(calls)
@@ -179,7 +249,8 @@ async def test_tool_wrapper_channel_exception_to_model(monkeypatch: pytest.Monke
 
 async def test_tool_wrapper_missing_jwt_recorded():
     tool = runtime.build_mcp_tool(_tool_row(
-        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'))
+        '{"type":"object","properties":{"dictKey":{"type":"string"}},"required":["dictKey"]}'),
+        _server_row())
     runtime.run_jwt.set(None)  # 编排漏注入的防御分支
     calls: list[dict] = []
     runtime.run_tool_calls.set(calls)
@@ -189,7 +260,8 @@ async def test_tool_wrapper_missing_jwt_recorded():
 
 
 def test_tool_wrapper_name_and_description():
-    tool = runtime.build_mcp_tool(_tool_row('{"type":"object","properties":{}}'))
+    tool = runtime.build_mcp_tool(_tool_row('{"type":"object","properties":{}}'),
+                                  _server_row())
     assert tool.name == "e2e_query"
     assert tool.description == "工具描述"
 
@@ -235,5 +307,6 @@ def test_assemble_agent_with_tools_zero_network(stub_model, monkeypatch: pytest.
         _tool_row('{"type":"object","properties":{"pageNum":{"type":"integer","default":1}}}',
                   tool_key="system_query_users"),
     ]
-    agent = runtime.assemble_agent(_agent_row(), tool_rows)
+    # 组装入参是 (工具, 归属 server) 元组序列——server 行仅透传给通道层，组装本身不触网
+    agent = runtime.assemble_agent(_agent_row(), [(tool, _server_row()) for tool in tool_rows])
     assert agent is not None

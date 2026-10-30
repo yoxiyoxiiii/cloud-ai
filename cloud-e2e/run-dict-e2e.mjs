@@ -270,7 +270,7 @@ try {
     const labels = []
     for (let i = 0; i < n; i++) labels.push((await items.nth(i).innerText()).trim())
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→工作台')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→MCP服务管理→工作台')
     const active = (await page.locator('.el-menu-item.is-active').innerText()).trim()
     assertEq(active, '字典管理', '/system/dict 下字典管理应高亮')
     const bc = await breadcrumbTexts(page)

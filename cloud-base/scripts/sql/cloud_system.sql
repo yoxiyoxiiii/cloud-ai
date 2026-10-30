@@ -402,12 +402,13 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (172, 17, '忽略',     'system:mqDlq:ignore', 'F', '', '', 2, 1, NOW()),
 (173, 17, '重置',     'system:mqDlq:reset',  'F', '', '', 3, 1, NOW());
 
--- AI 菜单（18 段 11 行；与增量脚本 2026-10-13-ai-rag-chat.sql、2026-10-14-ai-kb-create.sql、
--- 2026-10-15-ai-kb-perms.sql、2026-10-29-agent-platform.sql 语义等价，admin 绑定由下方
--- sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定；2026-10-15 修订：182 perms 改
--- ai:kb:list（查询与菜单），按钮权限拆到 183 F「新增」ai:kb:add；2026-10-15 列表管理轮补
--- 184 F「编辑」ai:kb:update / 185 F「删除」ai:kb:delete；2026-10-29 agent 平台轮补 186 段
--- 「智能体管理」C+187/188/189 F 按钮、190「智能体对话」C 挂 18 下）
+-- AI 菜单（18 段 16 行；与增量脚本 2026-10-13-ai-rag-chat.sql、2026-10-14-ai-kb-create.sql、
+-- 2026-10-15-ai-kb-perms.sql、2026-10-29-agent-platform.sql、2026-10-30-mcp-server-mgmt.sql
+-- 语义等价，admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定；
+-- 2026-10-15 修订：182 perms 改 ai:kb:list（查询与菜单），按钮权限拆到 183 F「新增」ai:kb:add；
+-- 2026-10-15 列表管理轮补 184 F「编辑」ai:kb:update / 185 F「删除」ai:kb:delete；
+-- 2026-10-29 agent 平台轮补 186 段「智能体管理」C+187/188/189 F 按钮、190「智能体对话」C 挂 18 下；
+-- 2026-10-30 MCP server 管理轮补 191「MCP服务管理」C+192/193/194/195 F 按钮挂 18 下）
 INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_builtin, create_time) VALUES
 (18,  0,   'AI 助手', '',             'M', '',          'ChatDotRound', 4, 1, NOW()),
 (181, 18,   '对话',   'ai:chat:list', 'C', '/rag/chat', 'ChatLineRound', 1, 1, NOW()),
@@ -419,7 +420,12 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (187, 186, '新增',       'ai:agent:add',    'F', '',              '',              1, 1, NOW()),
 (188, 186, '编辑',       'ai:agent:update', 'F', '',              '',              2, 1, NOW()),
 (189, 186, '删除',       'ai:agent:delete', 'F', '',              '',              3, 1, NOW()),
-(190, 18,  '智能体对话', 'ai:agent:run',    'C', '/agent/chat',   'ChatLineSquare', 4, 1, NOW());
+(190, 18,  '智能体对话', 'ai:agent:run',    'C', '/agent/chat',   'ChatLineSquare', 4, 1, NOW()),
+(191, 18,  'MCP服务管理', 'ai:mcp:list',   'C', '/mcp/manage', 'Connection',      5, 1, NOW()),
+(192, 191, '新增',        'ai:mcp:add',    'F', '',            '',               1, 1, NOW()),
+(193, 191, '编辑',        'ai:mcp:update', 'F', '',            '',               2, 1, NOW()),
+(194, 191, '删除',        'ai:mcp:delete', 'F', '',            '',               3, 1, NOW()),
+(195, 191, '测试与同步',  'ai:mcp:sync',   'F', '',            '',               4, 1, NOW());
 
 -- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价；
 -- mobile/email 示例值与增量脚本 2026-10-22-dataperm-user-columns.sql 语义等价）

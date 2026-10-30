@@ -71,15 +71,15 @@ class MinIOSettings(BaseModel):
 
 
 class McpSettings(BaseModel):
-    """MCP 客户端通道参数（对端=cloud-system MCP server）：直连服务端口 9202——
-    /system/mcp 被网关刻意屏蔽（服务间面不外露），AI 基座属内网可信调用方不走网关。
+    """MCP 客户端通道参数：内置服务的连接地址已迁至 DB（ai_mcp_server 内置行 url 列，
+    2026-10-30 MCP server 管理轮）——.env 旧键 CLOUD_BASE_AI_MCP__BASE_URL 退役不读
+    （保留无害）；外部 server 连接配置全在 DB 注册表。
 
-    env 覆盖形态：CLOUD_BASE_AI_MCP__BASE_URL / __CLIENT_SECRET。
+    env 覆盖形态：CLOUD_BASE_AI_MCP__CLIENT_SECRET。
     client_secret 与 cloud-system Nacos cloud.mcp.client-secret 同值，真值仅本地 .env；
     默认空 = 未配置态（调用时报 5010，不阻断启动——同 LLM api_key 哲学）。
     """
 
-    base_url: str = "http://127.0.0.1:9202/mcp"
     client_secret: str = ""
 
 

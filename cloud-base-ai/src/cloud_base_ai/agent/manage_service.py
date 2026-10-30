@@ -104,7 +104,8 @@ async def page_list_agents(page: int, size: int, name: str | None = None) -> AiP
     """分页查活智能体（契约 §2.1）：id 倒序，name 包含匹配可选。
 
     tool_names 逐行 join 查询（N+1）——管理页规模（页 ≤200、工具个位数）接受，
-    不为此加批量动词；绑定行为空即纯对话 agent（空数组）。
+    不为此加批量动词；绑定行为空即纯对话 agent（空数组）。可见口径：绑定工具须
+    已发布且归属 server 启用未删（被停用/失效的绑定不进 tool_names）。
     """
     session = current_session()
     rows, total = await dao.page_list_agents(session, page, size, name)
@@ -114,7 +115,7 @@ async def page_list_agents(page: int, size: int, name: str | None = None) -> AiP
         vos.append(AgentSummaryVo(
             id=row.id, name=row.name, description=row.description,
             temperature=float(row.temperature), status=row.status,
-            tool_names=[t.name for t in tools],
+            tool_names=[tool.name for tool, _server in tools],
             create_time=row.create_time, update_time=row.update_time,
         ))
     return AiPageResult(total=total, rows=vos)
@@ -122,32 +123,39 @@ async def page_list_agents(page: int, size: int, name: str | None = None) -> AiP
 
 @transactional
 async def find_agent_detail(agent_id: int) -> AgentDetailVo:
-    """智能体详情（契约 §2.3）：不存在 5015；tool_ids/tool_names 同源（绑定 join 注册表）。"""
+    """智能体详情（契约 §2.3）：不存在 5015。
+
+    tool_ids 取纯绑定行（绑定关系是配置事实，工具停用/失效不改变「绑了什么」）；
+    tool_names 取可见绑定（与 §2.1 列表同口径）。
+    """
     session = current_session()
     agent = await dao.find_agent_by_id(session, agent_id)
     if agent is None:
         raise BusinessException(MSG_AGENT_NOT_EXISTS_MGMT, CODE_AGENT_NOT_EXISTS)
     tools = await dao.list_bound_tools(session, agent_id)
+    tool_ids = await dao.list_bound_tool_ids(session, agent_id)
     return AgentDetailVo(
         id=agent.id, name=agent.name, description=agent.description,
         temperature=float(agent.temperature), status=agent.status,
-        tool_names=[t.name for t in tools],
+        tool_names=[tool.name for tool, _server in tools],
         create_time=agent.create_time, update_time=agent.update_time,
         system_prompt=agent.system_prompt,
-        tool_ids=[t.id for t in tools],
+        tool_ids=list(tool_ids),
         config_version=agent.config_version,
     )
 
 
 @transactional
 async def list_tool_registry() -> list[ToolVo]:
-    """工具注册表全量（契约 §2.6）：管理面只读；required_perms 逗号串拆数组（空=登录即可）。"""
+    """工具注册表清单（契约 §2.6 修订版）：只回对 agent 可见的行（已发布且归属
+    server 启用未删），附 server 归属回显；required_perms 逗号串拆数组（空=登录即可）。"""
     session = current_session()
-    rows = await dao.list_tools(session)
+    rows = await dao.list_visible_tools(session)
     return [
         ToolVo(id=t.id, tool_key=t.tool_key, name=t.name, description=t.description,
-               required_perms=[p for p in t.required_perms.split(",") if p])
-        for t in rows
+               required_perms=[p for p in t.required_perms.split(",") if p],
+               server_id=t.server_id, server_name=server.name)
+        for t, server in rows
     ]
 
 

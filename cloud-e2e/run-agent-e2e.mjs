@@ -319,8 +319,8 @@ try {
     log(`  侧边菜单项: ${JSON.stringify(labels)}`)
     assertEq(
       labels.join(','),
-      '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,工作台',
-      `侧边菜单顺序应为 16 项形态（智能体管理/智能体对话入 AI 助手序），实际 ${JSON.stringify(labels)}`,
+      '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台',
+      `侧边菜单顺序应为 17 项形态（智能体管理/智能体对话/MCP服务管理入 AI 助手序），实际 ${JSON.stringify(labels)}`,
     )
     await page.locator('.el-menu .el-menu-item', { hasText: '智能体管理' }).click()
     await page.waitForURL(`**${MANAGE_PATH}`, { timeout: 8000 })

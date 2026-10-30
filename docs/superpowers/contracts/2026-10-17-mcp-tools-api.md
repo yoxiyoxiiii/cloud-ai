@@ -150,6 +150,8 @@
 
 ## 5. AI 侧可见性过滤（客户端体验层）
 
+> 2026-10-30 二次修订（MCP server 配置化管理轮，修订全文见 `2026-10-30-mcp-server-mgmt-api.md` §7.1）：ai_tool 注册表新增 `server_id`（归属 `ai_mcp_server` 行）与 `status`（0=草稿 1=已发布 2=已失效）列，对 agent 可见 = 已发布且归属 server 启用未删；**本契约 §2-§4 继续作为平台自研工具（内置 SYSTEM 行）的 schema 真相源**，外部 server 工具以外务 server 为真相源不入本契约；管理面可编辑项扩展为 required_perms 与显示名（原「管理面不提供注册表编辑」的增量翻案，用户拍板 P2）。`visible_tools(tool_rows, user_perms)` 签名与过滤语义不变。
+
 > 2026-10-29 修订（平台 Agent 管理轮，修订案见 `2026-10-29-agent-platform-api.md` §7）：真相源由本文件硬编码映射换轨为 `cloud_ai` 库 `ai_tool` 注册表。
 
 - **真相源**：`cloud_ai` 库 `ai_tool` 注册表（`required_perms` 列，逗号分隔，空=登录即可）。种子值与本契约 §2 权限档位同步（`system_query_users` → `system:user:list`；`system_query_dict_items` → 空）；**工具名/权限档位变更须先修本契约再改种子**，管理面不提供注册表编辑。

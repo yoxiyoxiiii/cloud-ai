@@ -28,6 +28,13 @@ from cloud_base_ai.agent.router import agent_list_router
 from cloud_base_ai.agent.router import agent_run_router
 from cloud_base_ai.agent.router import agent_session_router
 from cloud_base_ai.agent.router import agent_update_router
+from cloud_base_ai.mcp_server.router import mcp_server_add_router
+from cloud_base_ai.mcp_server.router import mcp_server_delete_router
+from cloud_base_ai.mcp_server.router import mcp_server_list_router
+from cloud_base_ai.mcp_server.router import mcp_server_sync_router
+from cloud_base_ai.mcp_server.router import mcp_server_update_router
+from cloud_base_ai.mcp_server.router import mcp_tool_list_router
+from cloud_base_ai.mcp_server.router import mcp_tool_update_router
 from cloud_base_ai.response import R
 
 
@@ -56,6 +63,13 @@ app.include_router(agent_update_router)  # 智能体编辑（ai:agent:update）
 app.include_router(agent_delete_router)  # 智能体删除（ai:agent:delete）
 app.include_router(agent_run_router)  # 运行 + 会话创建/列表（ai:agent:run）
 app.include_router(agent_session_router)  # 会话删除/消息回显（ai:agent:run）
+app.include_router(mcp_server_list_router)  # MCP server 管理查询（2026-10-30 MCP server 管理轮）
+app.include_router(mcp_server_add_router)  # server 创建（ai:mcp:add）
+app.include_router(mcp_server_update_router)  # server 编辑（ai:mcp:update）
+app.include_router(mcp_server_delete_router)  # server 软删（ai:mcp:delete）
+app.include_router(mcp_server_sync_router)  # 连通测试/工具同步（ai:mcp:sync）
+app.include_router(mcp_tool_list_router)  # 工具管理清单（ai:mcp:list）
+app.include_router(mcp_tool_update_router)  # 工具审核（ai:mcp:update）
 
 
 @app.get("/")

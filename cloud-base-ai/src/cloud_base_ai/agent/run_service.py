@@ -14,7 +14,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator, Sequence
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
@@ -52,11 +52,11 @@ TITLE_MAX_CHARS: int = 16
 
 
 class PreparedRun(NamedTuple):
-    """运行前置阶段产出：智能体行（组装输入）、权限门后的工具行、会话 id 与尾段历史
-    （含刚落的问）。"""
+    """运行前置阶段产出：智能体行（组装输入）、可见绑定的工具行元组（工具 + 归属
+    server，运行装配按 server 路由调用）、会话 id 与尾段历史（含刚落的问）。"""
 
     agent_row: AiAgent
-    tool_rows: Sequence[AiTool]
+    tool_rows: Sequence[tuple[AiTool, Any]]
     session_id: int
     history: list[AgentSessionMessageVo]
 
@@ -105,14 +105,20 @@ async def _load_owned_agent_session(agent_id: int, session_id: int) -> AiAgentSe
 
 
 @transactional
-async def _load_visible_tools(agent_id: int) -> Sequence[AiTool]:
-    """绑定工具 join 注册表 + 运行权限门：required_perms ⊆ 用户 perms 才注入模型
-    （配置门之外的运行门——三层纵深的中层；服务端 @McpRequirePerm 最终裁决）。"""
+async def _load_visible_tools(agent_id: int) -> Sequence[tuple[AiTool, Any]]:
+    """绑定工具 join 注册表（已发布且 server 启用未删的行）+ 运行权限门：
+    required_perms ⊆ 用户 perms 才注入模型（配置门之外的运行门——三层纵深的中层；
+    服务端 @McpRequirePerm 最终裁决）。
+
+    权限门按工具行侧过滤（visible_tools 鸭子类型只读 required_perms），再把存活
+    元组按工具 id 对回——返回 (AiTool, AiMcpServer) 元组序列供运行装配路由。"""
     session = current_session()
-    rows = await dao.list_bound_tools(session, agent_id)
+    pairs = list(await dao.list_bound_tools(session, agent_id))
     identity = current_identity()
     perms = set(identity.perms) if identity is not None else set()
-    return visible_tools(rows, perms)
+    visible = visible_tools([tool for tool, _server in pairs], perms)
+    visible_ids = {tool.id for tool in visible}
+    return [pair for pair in pairs if pair[0].id in visible_ids]
 
 
 @transactional

@@ -84,9 +84,9 @@ class VoTimeMixin(BaseModel):
     check_fields=False：mixin 自身不声明时间字段，由具体 VO 提供（缺字段时装饰器不报错）。
     """
 
-    @field_serializer("create_time", check_fields=False)
+    @field_serializer("create_time", "update_time", check_fields=False)
     @classmethod
-    def _ser_create_time(cls, v: datetime | None) -> str | None:
+    def _ser_time(cls, v: datetime | None) -> str | None:
         return v.strftime("%Y-%m-%d %H:%M:%S") if v else None
 
 

@@ -137,35 +137,43 @@ CREATE TABLE ai_agent
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
   COMMENT ='平台智能体定义（提示词+工具配置动态组装 DeepAgent 的配置源）';
 
--- 工具注册表（字典表，种子手工登记，管理面只读、不提供编辑）：
--- description 是注入 LLM 的工具 doc、input_schema 是服务端定义的参数面（模型不能自造参数），
--- 两列与 required_perms 逐字同步 MCP 契约 2026-10-17-mcp-tools-api.md §3.1/§3.2、§4.1/§4.2、
--- §2 权限档位（工具名/权限档位变更须先修契约再改种子）；
--- 无软删无 update 审计（种子数据）；查询仅全量 list 走全表，量级个位数，不建二级索引。
+-- 工具注册表（2026-10-30 MCP server 管理轮扩列：server_id 归属 + status 三态 + update_time）：
+-- 平台自研工具（内置 SYSTEM 行）种子登记、回填已发布；外部 server 工具经同步产生草稿、审核发布
+-- （契约 2026-10-30-mcp-server-mgmt-api.md §7.1——对原「管理面不提供编辑」的增量翻案，
+-- 可编辑项仅 required_perms 与显示名）；description/input_schema 的真相源：内置=2026-10-17-mcp-tools-api.md，
+-- 外部=server 本身（同步更新）；对 agent 可见 = status=1 且归属 server 启用未删。
+-- uk_tool_key 为跨 server 全局唯一（工具命名冲突的最终防线）；
+-- idx_server_status 命中「取某 server 全部工具行」（同步）与「按 server/状态过滤清单」（管理面）；
+-- 无软删（失效态由 status=2 承载，行保留供审计与复活）。
 CREATE TABLE ai_tool
 (
     id             BIGINT        NOT NULL AUTO_INCREMENT COMMENT '工具ID（主键）',
-    tool_key       VARCHAR(100)  NOT NULL COMMENT '工具标识（对齐 MCP 工具名，如 system_query_users）',
-    name           VARCHAR(50)   NOT NULL COMMENT '显示名（管理页勾选展示）',
-    description    VARCHAR(1024) NOT NULL COMMENT '工具描述（注入 LLM 的工具 doc；与 MCP 契约逐字同步）',
-    input_schema   TEXT          NOT NULL COMMENT '入参 JSON Schema 文本（运行动态构造 pydantic 入参模型）',
+    tool_key       VARCHAR(100)  NOT NULL COMMENT '工具标识（对齐 MCP 工具名，如 system_query_users；外部工具=server 上报原名直存不加前缀）',
+    name           VARCHAR(50)   NOT NULL COMMENT '显示名（管理页勾选展示；初始=tool_key，审核时可改）',
+    description    VARCHAR(1024) NOT NULL COMMENT '工具描述（注入 LLM 的工具 doc；内置与 MCP 契约逐字同步，外部以 server 同步为准）',
+    input_schema   TEXT          NOT NULL COMMENT '入参 JSON Schema 文本（运行动态构造 pydantic 入参模型；审核时校验可构建）',
     required_perms VARCHAR(200)  NOT NULL DEFAULT '' COMMENT '所需权限标识（逗号分隔，空=登录即可；运行门按 ⊆ 用户 perms 过滤）',
+    server_id      BIGINT        NOT NULL DEFAULT 1 COMMENT '归属MCP服务ID（ai_mcp_server.id，弱引用不建外键；1=内置平台服务',
+    status         TINYINT       NOT NULL DEFAULT 0 COMMENT '工具状态：0=草稿（同步产生，对agent不可见） 1=已发布（审核过，可见） 2=已失效（server不再列出，不可见，行保留）',
+    update_time    DATETIME      NULL COMMENT '最近同步/审核时间（DB 时钟生成）',
     create_time    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '登记时间（DB 时钟生成）',
     PRIMARY KEY (id),
-    UNIQUE KEY uk_tool_key (tool_key)
+    UNIQUE KEY uk_tool_key (tool_key),
+    KEY idx_server_status (server_id, status)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
-  COMMENT ='平台工具注册表（MCP 工具的登记台账，种子驱动）';
+  COMMENT ='平台工具注册表（MCP 工具的登记台账：内置种子+外部同步草稿审核）';
 
--- 工具种子两行（description/input_schema 与 MCP 契约逐字同步；name 为管理页显示名）
-INSERT INTO ai_tool (tool_key, name, description, input_schema, required_perms) VALUES
+-- 工具种子两行（description/input_schema 与 MCP 契约逐字同步；name 为管理页显示名；
+-- server_id=1 内置 SYSTEM 行、status=1 已发布——与现状行为等价，这两工具本就「已审核」）
+INSERT INTO ai_tool (tool_key, name, description, input_schema, required_perms, server_id, status) VALUES
 ('system_query_users', '查询系统用户',
  '分页查询系统用户列表（只读）。返回账号、昵称、部门、状态等；不含密码。需要权限 system:user:list。',
  '{"type": "object", "properties": {"pageNum": {"type": "integer", "minimum": 1, "default": 1, "description": "页码，从 1 开始"}, "pageSize": {"type": "integer", "minimum": 1, "maximum": 200, "default": 10, "description": "每页条数，上限 200（对齐分页插件 maxLimit）"}}, "additionalProperties": false}',
- 'system:user:list'),
+ 'system:user:list', 1, 1),
 ('system_query_dict_items', '查询字典项',
  '按字典键查询启用中的字典项（只读）。返回 value（存库值）/label（展示标签）/sort（排序）。登录即可调用，无需特定权限。',
  '{"type": "object", "properties": {"dictKey": {"type": "string", "minLength": 1, "description": "字典类型键，如 user_status"}}, "required": ["dictKey"], "additionalProperties": false}',
- '');
+ '', 1, 1);
 
 -- 智能体-工具绑定（纯关系表，沿 ai_kb_grant 先例：物理删除、无 deleted 列、无 update 审计列）：
 -- 保存 = 按 agent_id 全删全插（同一事务）；uk_agent_tool(agent_id, tool_id) 前缀 agent_id
@@ -221,3 +229,38 @@ CREATE TABLE ai_agent_run_log
     KEY idx_agent_time (agent_id, create_time)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
   COMMENT ='智能体运行审计（append-only：运行者/状态/工具调用明细/耗时/失败摘要）';
+
+-- ========== MCP Server 配置化管理（2026-10-30 MCP server 管理轮，增量脚本 2026-10-30-mcp-server-mgmt.sql） ==========
+-- 契约 docs/superpowers/contracts/2026-10-30-mcp-server-mgmt-api.md；设计 2026-10-30-mcp-server-mgmt-design.md §4
+
+-- MCP 服务注册表：外部/内置 server 连接配置的真相源（非敏感字段入库；凭据真值在 .env 键
+-- CLOUD_BASE_AI_MCP__SERVERS__<NAME>__<KEY>，DB 只存键名在 credential_headers_json——红线）。
+-- uk_name 兼查重与重名兜底（软删墓碑占键时新建同名报业务码，沿 ai_agent.uk_name 先例）；
+-- name 兼凭据 env 键段与管理命名空间，'SYSTEM' 为内置平台服务占用；
+-- 列表 ORDER BY id DESC 全表扫管理面规模（个位数到十位数）接受，不建额外索引（同 ai_agent 取舍）。
+CREATE TABLE ai_mcp_server
+(
+    id                     BIGINT       NOT NULL AUTO_INCREMENT COMMENT 'MCP服务ID（主键）',
+    name                   VARCHAR(30)  NOT NULL COMMENT '服务名（大写蛇形，全局唯一；兼作凭据env键段 CLOUD_BASE_AI_MCP__SERVERS__<NAME>__*；SYSTEM=内置平台服务',
+    description            VARCHAR(512) NULL COMMENT '描述（管理面备注，可选）',
+    url                    VARCHAR(512) NOT NULL COMMENT 'MCP端点地址（http/sse 的完整 URL；内置服务默认 http://127.0.0.1:9202/mcp）',
+    transport              VARCHAR(20)  NOT NULL DEFAULT 'http' COMMENT '传输类型：http=streamable HTTP sse=SSE 事件流（stdio 本轮不开放，管理面拒绝保存）',
+    headers_json           TEXT         NULL COMMENT '非敏感静态请求头 JSON（字面值入库；secret/token 一律走 credential_headers_json 引用 .env，红线）',
+    credential_headers_json TEXT        NULL COMMENT '凭据请求头 JSON：{header名: .env键名}——只存键名不存真值；键名须匹配 ^CLOUD_BASE_AI_MCP__SERVERS__[A-Z0-9_]+__[A-Z0-9_]+$',
+    timeout_ms             INT          NOT NULL DEFAULT 30000 COMMENT '单次调用超时毫秒（1000..120000）',
+    is_builtin             TINYINT      NOT NULL DEFAULT 0 COMMENT '内置标记：1=平台 cloud-system 服务（不可删不可改名；调用头自动注入用户JWT+服务密钥）',
+    status                 TINYINT      NOT NULL DEFAULT 0 COMMENT '状态：0=启用 1=停用（停用后其工具对 agent 运行不可见，行与工具行保留）',
+    create_by              VARCHAR(30)  NULL COMMENT '创建人',
+    create_time            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（DB 时钟生成）',
+    update_by              VARCHAR(30)  NULL COMMENT '更新人',
+    update_time            DATETIME     NULL COMMENT '更新时间',
+    deleted                TINYINT      NOT NULL DEFAULT 0 COMMENT '逻辑删除：0正常 1已删（软删后其工具对运行不可见，工具行保留）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_name (name)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+  COMMENT ='MCP服务注册表（外部/内置 server 连接配置；凭据真值在 .env 不入库）';
+
+-- 内置行：cloud-system /mcp 端点（is_builtin=1 不可删不可改名；url 部署差异时管理员可编辑）。
+-- 内置行的调用头自动注入当次用户 JWT + X-MCP-Client-Secret（.env 既有键），credential_headers_json 恒 NULL。
+INSERT INTO ai_mcp_server (id, name, description, url, transport, timeout_ms, is_builtin, status) VALUES
+(1, 'SYSTEM', '平台内置 cloud-system MCP 服务', 'http://127.0.0.1:9202/mcp', 'http', 30000, 1, 0);

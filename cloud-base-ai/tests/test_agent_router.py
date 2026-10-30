@@ -112,12 +112,15 @@ def test_list_agents_ok_structure(client: TestClient, monkeypatch: pytest.Monkey
 def test_tool_list_ok_structure(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_registry():
         return [ToolVo(id=1, tool_key="system_query_dict_items", name="查询字典项",
-                       description="按类型查询", required_perms=[])]
+                       description="按类型查询", required_perms=[],
+                       server_id=3, server_name="SYSTEM")]
     monkeypatch.setattr(mgmt, "list_tool_registry", fake_registry)
     body = client.get("/agent/tool/list", headers=LIST_PERMS).json()
     assert body["code"] == 200
     assert body["data"][0]["tool_key"] == "system_query_dict_items"
     assert body["data"][0]["required_perms"] == []
+    assert body["data"][0]["server_id"] == 3  # server 归属回显
+    assert body["data"][0]["server_name"] == "SYSTEM"
 
 
 def test_detail_ok_and_5015(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

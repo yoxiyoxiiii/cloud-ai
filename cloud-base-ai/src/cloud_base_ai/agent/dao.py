@@ -32,6 +32,7 @@ from cloud_base_ai.db.base import (
     current_account,
     fill_create_audit,
 )
+from cloud_base_ai.mcp_server.entities import AiMcpServer
 
 MAX_PAGE_SIZE = 200
 
@@ -159,26 +160,67 @@ async def page_list_agents(
     return rows, total
 
 
-# ---------- AiTool（字典表：全量 list 只读） ----------
+# ---------- AiTool（字典表：全量/可见清单只读） ----------
 
 
 async def list_tools(session: AsyncSession) -> Sequence[AiTool]:
-    """全量工具注册表（id 升序；管理页勾选与运行装配的数据源，量级个位数走全表）。"""
+    """全量工具注册表（id 升序；tool_ids 校验（5017）的数据源——绑定语义对全态开放，
+    可见性过滤在运行装配与勾选清单两处另行收窄）。"""
     stmt = select(AiTool).order_by(AiTool.id.asc())
     return (await session.execute(stmt)).scalars().all()
+
+
+async def list_visible_tools(
+        session: AsyncSession,
+) -> Sequence[tuple[AiTool, AiMcpServer]]:
+    """对 agent 可见的工具清单（契约 2026-10-29 §2.6 修订版）：已发布（status=1）
+    且归属 server 启用未删；元组（工具行 + 归属 server 行）——server 名回显与
+    运行装配路由共用一查询口径。id 升序。"""
+    stmt = (
+        select(AiTool, AiMcpServer)
+        .join(AiMcpServer, AiMcpServer.id == AiTool.server_id)
+        .where(
+            AiTool.status == AiTool.StatusEnum.PUBLISHED.value,
+            AiMcpServer.status == AiMcpServer.StatusEnum.ENABLED.value,
+            AiMcpServer.deleted == SoftDeleteMixin.DeletedEnum.NORMAL,
+        )
+        .order_by(AiTool.id.asc())
+    )
+    return (await session.execute(stmt)).all()
 
 
 # ---------- AiAgentTool（纯关系表：join 查询 + 全删全插） ----------
 
 
-async def list_bound_tools(session: AsyncSession, agent_id: int) -> Sequence[AiTool]:
-    """某智能体绑定的工具行（join ai_agent_tool；命中 uk_agent_tool 的 agent_id 前缀；
-    id 升序=注册表序）——详情回显 tool_ids 与运行装配共同调用。"""
+async def list_bound_tools(
+        session: AsyncSession, agent_id: int
+) -> Sequence[tuple[AiTool, AiMcpServer]]:
+    """某智能体绑定的**可见**工具行元组（工具行 + 归属 server 行）：join 绑定表与
+    server 注册表，过滤「已发布且 server 启用未删」——运行装配与列表 tool_names
+    共用的可见性口径（被停用/失效的绑定静默缩窄，绑定行本身不动）。
+    id 升序=注册表序。"""
     stmt = (
-        select(AiTool)
+        select(AiTool, AiMcpServer)
         .join(AiAgentTool, AiAgentTool.tool_id == AiTool.id)
-        .where(AiAgentTool.agent_id == agent_id)
+        .join(AiMcpServer, AiMcpServer.id == AiTool.server_id)
+        .where(
+            AiAgentTool.agent_id == agent_id,
+            AiTool.status == AiTool.StatusEnum.PUBLISHED.value,
+            AiMcpServer.status == AiMcpServer.StatusEnum.ENABLED.value,
+            AiMcpServer.deleted == SoftDeleteMixin.DeletedEnum.NORMAL,
+        )
         .order_by(AiTool.id.asc())
+    )
+    return (await session.execute(stmt)).all()
+
+
+async def list_bound_tool_ids(session: AsyncSession, agent_id: int) -> Sequence[int]:
+    """某智能体绑定的工具 id 全量（纯绑定行，不做可见性过滤）——详情回显 tool_ids
+    的数据源：绑定关系是管理员配置事实，工具停用/失效不改变「绑了什么」的回显。"""
+    stmt = (
+        select(AiAgentTool.tool_id)
+        .where(AiAgentTool.agent_id == agent_id)
+        .order_by(AiAgentTool.tool_id.asc())
     )
     return (await session.execute(stmt)).scalars().all()
 

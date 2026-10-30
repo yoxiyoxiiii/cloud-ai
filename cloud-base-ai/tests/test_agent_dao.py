@@ -15,8 +15,10 @@ from cloud_base_ai.agent.dao import (
     find_agent_by_id,
     find_agent_by_name,
     find_agent_name_include_deleted,
+    list_bound_tool_ids,
     list_bound_tools,
     list_tools,
+    list_visible_tools,
     page_list_agent_sessions,
     page_list_agents,
     page_list_run_logs,
@@ -36,6 +38,7 @@ from cloud_base_ai.agent.entities import (
     AiTool,
 )
 from cloud_base_ai.db.base import set_current_account
+from cloud_base_ai.mcp_server.entities import AiMcpServer
 from tests.db_testing import make_db_session
 
 pytestmark = pytest.mark.anyio
@@ -54,9 +57,17 @@ def _agent(name: str = "e2e_测试智能体", *, status: int = AiAgent.StatusEnu
                    temperature=0.7, status=status)
 
 
-def _tool(tool_key: str, name: str = "显示名") -> AiTool:
+def _tool(tool_key: str, name: str = "显示名", *,
+          server_id: int = 1,
+          status: int = AiTool.StatusEnum.PUBLISHED.value) -> AiTool:
     return AiTool(tool_key=tool_key, name=name, description="d",
-                  input_schema='{"type": "object"}', required_perms="")
+                  input_schema='{"type": "object"}', required_perms="",
+                  server_id=server_id, status=status)
+
+
+def _mcp_server(name: str = "E2E_SRV", *, status: int = 0) -> AiMcpServer:
+    return AiMcpServer(name=name, url="http://127.0.0.1:9000/mcp",
+                       transport="http", is_builtin=0, status=status)
 
 
 def _session(agent_id: int, user_id: int) -> AiAgentSession:
@@ -215,7 +226,12 @@ async def test_replace_agent_tools_full_replace_and_audit():
     async with make_db_session() as s:
         async with s.begin():
             agent = await save_agent(s, _agent())
-            s.add_all([_tool("t1", "一"), _tool("t2", "二"), _tool("t3", "三")])
+            server = _mcp_server()
+            s.add(server)
+            await s.flush()
+            s.add_all([_tool("t1", "一", server_id=server.id),
+                       _tool("t2", "二", server_id=server.id),
+                       _tool("t3", "三", server_id=server.id)])
         async with s.begin():
             tools = await list_tools(s)
         t1, t2, t3 = tools[0].id, tools[1].id, tools[2].id
@@ -223,12 +239,12 @@ async def test_replace_agent_tools_full_replace_and_audit():
             await replace_agent_tools(s, agent.id, [t1, t3])
         async with s.begin():
             bound = await list_bound_tools(s, agent.id)
-        assert [t.tool_key for t in bound] == ["t1", "t3"]
+        assert [t.tool_key for t, _srv in bound] == ["t1", "t3"]
         async with s.begin():
             await replace_agent_tools(s, agent.id, [t2])  # 全删全插换绑
         async with s.begin():
             bound2 = await list_bound_tools(s, agent.id)
-        assert [t.tool_key for t in bound2] == ["t2"]
+        assert [t.tool_key for t, _srv in bound2] == ["t2"]
         async with s.begin():
             await replace_agent_tools(s, agent.id, [])  # 清空绑定
             assert list(await list_bound_tools(s, agent.id)) == []
@@ -246,12 +262,71 @@ async def test_bound_tools_of_other_agent_invisible():
         async with s.begin():
             a1 = await save_agent(s, _agent("e2e_甲库"))
             a2 = await save_agent(s, _agent("e2e_乙库"))
-            s.add_all([_tool("t1", "一")])
+            server = _mcp_server()
+            s.add(server)
+            await s.flush()
+            s.add_all([_tool("t1", "一", server_id=server.id)])
         async with s.begin():
             tool = (await list_tools(s))[0]
         async with s.begin():
             await replace_agent_tools(s, a1.id, [tool.id])
-        assert [t.tool_key for t in await list_bound_tools(s, a2.id)] == []
+        assert [t.tool_key for t, _srv in await list_bound_tools(s, a2.id)] == []
+
+
+async def test_list_bound_tools_filters_invisible():
+    """可见口径：草稿工具、停用 server、软删 server 名下的绑定不返回（静默缩窄）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            agent = await save_agent(s, _agent("e2e_过滤"))
+            on = _mcp_server("E2E_ON")
+            off = _mcp_server("E2E_OFF", status=1)
+            gone = _mcp_server("E2E_GONE")
+            s.add_all([on, off, gone])
+            await s.flush()
+            await dao_soft_delete_server(s, gone.id)
+            s.add_all([
+                _tool("e2e_vis", "可见", server_id=on.id),
+                _tool("e2e_draft", "草稿", server_id=on.id,
+                      status=AiTool.StatusEnum.DRAFT.value),
+                _tool("e2e_off_srv", "停用服务", server_id=off.id),
+                _tool("e2e_gone_srv", "已删服务", server_id=gone.id),
+            ])
+        async with s.begin():
+            tools = await list_tools(s)
+        async with s.begin():
+            await replace_agent_tools(s, agent.id, [t.id for t in tools])
+        async with s.begin():
+            bound = await list_bound_tools(s, agent.id)
+        assert [(t.tool_key, srv.name) for t, srv in bound] == [("e2e_vis", "E2E_ON")]
+        # 绑定行口径不受过滤影响：四个 id 全量
+        async with s.begin():
+            ids = list(await list_bound_tool_ids(s, agent.id))
+        assert len(ids) == 4
+
+
+async def dao_soft_delete_server(session, server_id: int) -> int:
+    """测试辅助：软删 server 行（复用 mcp_server dao 动词）。"""
+    from cloud_base_ai.mcp_server.dao import soft_delete_server
+    return await soft_delete_server(session, server_id)
+
+
+async def test_list_visible_tools_registry_filter():
+    """§2.6 勾选清单口径：已发布 + server 启用未删，附 server 行元组。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            on = _mcp_server("E2E_VON")
+            off = _mcp_server("E2E_VOFF", status=1)
+            s.add_all([on, off])
+            await s.flush()
+            s.add_all([
+                _tool("e2e_pub", "发布", server_id=on.id),
+                _tool("e2e_miss", "失效", server_id=on.id,
+                      status=AiTool.StatusEnum.MISSING.value),
+                _tool("e2e_off2", "停用服务", server_id=off.id),
+            ])
+        async with s.begin():
+            rows = await list_visible_tools(s)
+        assert [(t.tool_key, srv.name) for t, srv in rows] == [("e2e_pub", "E2E_VON")]
 
 
 # ---------- AiAgentSession：审计回填 / 归属分页 / 首问改题条件更新 / 软删 ----------

@@ -10,7 +10,7 @@
  *   Round I 31/311/312 改造（name=请假申请、perms 换 system:leave 域、path=/system/leave）+ 新增 34/341 我的审批，sort 序 31/34/32/33）；
  *   M5b 内置保护：种子"用户管理"行徽标/禁用面断言 + 直连 PUT/DELETE → 3014 拒（契约 2026-10-07-builtin-protection §2，种子零变更；E2 断言迁移）
  * - 结束按 F → C → M 自底向上删净并断言树中无 E2E 残留——
- *   role e2e R5a 直连断言 admin 绑定恰 55 个种子菜单 id 全量（Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段 + 平台 Agent 管理轮 186-190 段），任何残留 E2E 行都会让下一轮回归必红
+ *   role e2e R5a 直连断言 admin 绑定恰 60 个种子菜单 id 全量（Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段 + 平台 Agent 管理轮 186-190 段 + MCP Server 管理轮 191-195 段），任何残留 E2E 行都会让下一轮回归必红
  * - 不断言"权限改完立即可用"（权限快照时效，契约 §1：变更需重登/refresh 生效）
  * - 动态路由适配（2026-10-07 计划 E1）：M3/M4 C 型表单补填新必填"路由路径"（契约 §5.2 v2），
  *   M4 请求体键断言随 v2 更新为八字段+id；其余场景零改动
@@ -38,7 +38,7 @@ const TEST_PAGE_PATH = `/e2e/page${stamp}`
 const TEST_FUNC = `E2E按钮${stamp}`
 const TEST_PERMS = `system:e2e:test${stamp}`
 
-/** 内置种子菜单 id 全量清单（55 = 既有 23 + 30 段 bpmn 10 行 + 数据权限轮 15/16 段 7 行 + 死信治理轮 17 段 4 行 + AI 对话轮 18 段 2 行 + 知识库管理轮 182-185 段 4 行 + 平台 Agent 管理轮 186-190 段 5 行；契约 2026-10-07-bpmn-leave-api §9
+/** 内置种子菜单 id 全量清单（60 = 既有 23 + 30 段 bpmn 10 行 + 数据权限轮 15/16 段 7 行 + 死信治理轮 17 段 4 行 + AI 对话轮 18 段 2 行 + 知识库管理轮 182-185 段 4 行 + 平台 Agent 管理轮 186-190 段 5 行 + MCP Server 管理轮 191-195 段 5 行；契约 2026-10-07-bpmn-leave-api §9
  *  + 2026-10-08-bpmn-diagram-designer-api §5 + 2026-10-08-approval-platform-api §8）——331 为 F 节点「部署流程」
  *  （perms bpmn:definition:deploy，挂 33 流程定义下，is_builtin=1，Round H 设计器新增）；
  *  34/341 为 Round I 审批平台化新增（34 C「我的审批」perms bpmn:approval:list path /bpmn/approval + 341 F「撤销审批」
@@ -55,7 +55,10 @@ const TEST_PERMS = `system:e2e:test${stamp}`
  *  挂 182 下——同契约 §8，全 is_builtin=1）；
  *  186-190 为平台 Agent 管理轮新增（186 C「智能体管理」perms ai:agent:list path /agent/manage icon Monitor
  *  sort 3 + 187/188/189 F 新增/编辑/删除三按钮挂 186 下 + 190 C「智能体对话」perms ai:agent:run
- *  path /agent/chat icon ChatLineSquare sort 4——契约 2026-10-29-agent-platform-api §5，全 is_builtin=1）
+ *  path /agent/chat icon ChatLineSquare sort 4——契约 2026-10-29-agent-platform-api §5，全 is_builtin=1）；
+ *  191-195 为 MCP Server 配置化管理轮新增（191 C「MCP服务管理」perms ai:mcp:list path /mcp/manage icon
+ *  Connection sort 5 + 192/193/194/195 F 新增/编辑/删除/测试与同步四按钮挂 191 下——
+ *  契约 2026-10-30-mcp-server-mgmt-api §5.2，全 is_builtin=1）
  *  互指义务：与 run-role-e2e.mjs R5a 的 SEED_MENU_IDS 各自维护、改菜单种子段时 grep 两脚本同步改
  *  （有意不进 lib/harness.mjs——harness 保持业务零知识，计划 E1 共享常量决策） */
 const SEED_MENU_IDS = [
@@ -64,6 +67,7 @@ const SEED_MENU_IDS = [
   '15', '151', '152', '153', '16', '161', '162',
   '17', '171', '172', '173',
   '18', '181', '182', '183', '184', '185', '186', '187', '188', '189', '190',
+  '191', '192', '193', '194', '195',
   '20', '21', '211',
   '30', '31', '32', '33', '311', '312', '321', '331', '34', '341',
 ]
@@ -218,7 +222,7 @@ try {
     const labels = []
     for (let i = 0; i < count; i++) labels.push((await menuItems.nth(i).innerText()).trim())
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→工作台（AI 对话轮 18 段「对话」+ 知识库管理轮 182「知识库」+ 平台 Agent 管理轮 186「智能体管理」/190「智能体对话」入序——AI 助手 M sort 4 目录在流程管理后）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→MCP服务管理→工作台（AI 对话轮 18 段「对话」+ 知识库管理轮 182「知识库」+ 平台 Agent 管理轮 186「智能体管理」/190「智能体对话」+ MCP Server 管理轮 191「MCP服务管理」入序——AI 助手 M sort 4 目录在流程管理后）')
     await page.locator('.el-menu-item', { hasText: '菜单管理' }).click()
     await page.waitForURL(`**${MENU_PATH}`, { timeout: 8000 })
     await waitTableIdle(page)
@@ -608,7 +612,7 @@ try {
     }
     const rowCount = await page.locator('.el-table__row').count()
     log(`  清理后总行数: ${rowCount}`)
-    // E1 迁移（宽松语义）：行数 ≥ SEED_MENU_IDS.length 且树 id ⊇ SEED_MENU_IDS（55 项全量，Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段 + 平台 Agent 管理轮 186-190 段；树表无 id 列，经树端点全量收集），
+    // E1 迁移（宽松语义）：行数 ≥ SEED_MENU_IDS.length 且树 id ⊇ SEED_MENU_IDS（60 项全量，Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段 + 平台 Agent 管理轮 186-190 段 + MCP Server 管理轮 191-195 段；树表无 id 列，经树端点全量收集），
     // 不再锁「恰 23 行」上限——后续加内置菜单种子只改 SEED_MENU_IDS 一处
     assert(rowCount >= SEED_MENU_IDS.length, `清理后菜单树应 ≥ ${SEED_MENU_IDS.length} 行（内置种子全量，M5b 保护后零变更），实际 ${rowCount}`)
     const treeIds = []

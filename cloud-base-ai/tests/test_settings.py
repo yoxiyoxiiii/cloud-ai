@@ -162,15 +162,16 @@ def test_minio_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_mcp_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    """mcp 段默认值：直连 cloud-system 9202（网关屏蔽 /system/mcp，内网直连是既定寻址），
-    client_secret 默认空 = 未配置态（调用时报 5010，不阻断启动）。
+    """mcp 段默认值：仅 client_secret 一键（内置服务连接地址已迁 DB 的 ai_mcp_server 行，
+    base_url 字段 2026-10-30 MCP server 管理轮删除），默认空 = 未配置态
+    （调用时报 5010，不阻断启动）。
 
     先 delenv 再断言（同 minio 段先例）：防 uv run 注入的真实 .env 使「默认空」翻转。
     """
     for key in ("BASE_URL", "CLIENT_SECRET"):
         monkeypatch.delenv(f"CLOUD_BASE_AI_MCP__{key}", raising=False)
     s = Settings(_env_file=None)
-    assert s.mcp.base_url == "http://127.0.0.1:9202/mcp"
+    assert not hasattr(s.mcp, "base_url")
     assert s.mcp.client_secret == ""
 
 

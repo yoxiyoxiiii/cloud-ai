@@ -1387,3 +1387,176 @@ export interface AgentSessionPageQuery {
   page: number
   size: number
 }
+
+/* ===== MCP Server 配置化管理（契约 2026-10-30-mcp-server-mgmt-api）
+   管理面九端点（§0/§2，perms ai:mcp:list/add/update/delete/sync）。AI 域出参口径同
+   agent 契约 §0：字段 snake_case、id/total 为 JSON number、分页参数名 page/size */
+
+/**
+ * MCP 服务列表行 VO（契约 §2.1）：分页 id 倒序、软删不可见；
+ * status 语义 0=启用 1=停用；is_builtin=1 为内置平台服务（删除/改名受限）；
+ * tool_counts 为实时聚合摘要串「草稿/已发布/失效」（如 "1/2/0"）；
+ * 列表行不含 headers/credential_headers/timeout_ms——编辑回显须走 §2.3 详情端点
+ */
+export interface McpServerSummaryVo {
+  /** MCP 服务 id（AI 域口径：JSON number） */
+  id: number
+  /** 服务名（大写蛇形 ^[A-Z][A-Z0-9_]{1,29}$；SYSTEM 为内置占用） */
+  name: string
+  /** 管理备注；可 null */
+  description: string | null
+  /** MCP 端点完整地址 */
+  url: string
+  /** http / sse（stdio 后端 5022 拒绝） */
+  transport: string
+  /** 1=内置平台服务（删除/改名受限 5022） */
+  is_builtin: number
+  /** 0=启用 1=停用（停用后其工具对 agent 运行不可见） */
+  status: number
+  /** 工具计数摘要「草稿/已发布/失效」 */
+  tool_counts: string
+  /** yyyy-MM-dd HH:mm:ss 或 null */
+  create_time: string | null
+  /** yyyy-MM-dd HH:mm:ss 或 null */
+  update_time: string | null
+}
+
+/**
+ * MCP 服务详情 VO（契约 §2.3）：列表行全字段 + 请求头两组与超时；
+ * credential_headers 只回显键名映射，不含 .env 真值（凭据红线）
+ */
+export interface McpServerDetailVo extends McpServerSummaryVo {
+  /** 非敏感静态请求头（字面值）；详情未配置时后端给空对象 */
+  headers: Record<string, string>
+  /** 凭据请求头 {header名: .env键名}——只存键名，真值在 .env */
+  credential_headers: Record<string, string>
+  /** 单次调用超时毫秒（1000..120000） */
+  timeout_ms: number
+}
+
+/**
+ * 创建 MCP 服务入参（契约 §1/§2.2）：JSON 导入格式（canonical mcpServers 条目为基底）；
+ * name 全局唯一（重名 5023）；transport 省略=按 url 推断、stdio → 5022；
+ * credential_headers 值必须匹配 ^CLOUD_BASE_AI_MCP__SERVERS__[A-Z0-9_]+__[A-Z0-9_]+$（违例 1001）
+ */
+export interface CreateMcpServerPayload {
+  /** 必填 2..30，^[A-Z][A-Z0-9_]{1,29}$ */
+  name: string
+  /** 必填 ≤512，http(s) URL */
+  url: string
+  /** 可选 ≤512 */
+  description?: string
+  /** 可选 http|sse（省略=按 url 推断） */
+  transport?: string
+  /** 可选，非敏感静态请求头（secret/token 必须走 credential_headers） */
+  headers?: Record<string, string>
+  /** 可选，{header名: .env键名}——只传键名 */
+  credential_headers?: Record<string, string>
+  /** 可选 1000..120000，默认 30000 */
+  timeout_ms?: number
+  /** 可选默认 0（0=启用 1=停用） */
+  status?: number
+}
+
+/**
+ * 编辑 MCP 服务入参（契约 §2.4）：与创建同构 + status 必填；全量覆盖语义。
+ * 内置行（is_builtin=1）name 不可改（改名 5022），其余字段可编辑
+ */
+export interface UpdateMcpServerPayload extends CreateMcpServerPayload {
+  /** 0=启用 1=停用（编辑必填） */
+  status: number
+}
+
+/**
+ * 保存前连通测试入参（契约 §2.6）：§1 配置对象 + 平台鉴权开关；
+ * platform_auth=true 按内置服务双主体注入调用方 JWT + 服务密钥（测平台 /mcp 端点用）
+ */
+export interface TestMcpConfigPayload extends CreateMcpServerPayload {
+  /** 默认 false */
+  platform_auth?: boolean
+}
+
+/**
+ * 连通测试出参（契约 §2.6）：失败不走本出参（5025/5026/1001 走 R 错误分支）；
+ * 连通成功但清单为空是合法结果（ok=true, tool_count=0）
+ */
+export interface McpTestResultVo {
+  ok: boolean
+  /** 远端 tools/list 工具总数 */
+  tool_count: number
+  /** 前 5 个工具名 */
+  sample_tools: string[]
+  /** 恒 null（失败走 R 错误分支，本字段保留对齐契约形态） */
+  error: string | null
+}
+
+/**
+ * 工具同步报告（契约 §2.7）：updated 含失效复活回退草稿的行；
+ * conflicts 为与其他 server 撞 tool_key 而跳过的工具名清单（空数组=无冲突）；
+ * 同步失败（5021/5024/5025/5026）库内零变更
+ */
+export interface McpSyncReportVo {
+  added: number
+  updated: number
+  missing: number
+  conflicts: string[]
+}
+
+/**
+ * 工具清单行 VO（契约 §2.8）：管理面（含草稿/失效），不分页；
+ * status 语义 0=草稿 1=已发布 2=已失效；input_schema 同步自 server
+ * （注入 LLM 的 doc 同源）；required_perms 空数组=登录即可
+ */
+export interface McpToolManageVo {
+  /** 工具 id（ai_tool.id） */
+  id: number
+  /** 工具标识（=server 上报名，原名直存不加前缀） */
+  tool_key: string
+  /** 显示名（初始=tool_key，审核时可改） */
+  name: string
+  /** 工具描述（同步自 server） */
+  description: string
+  /** 入参 JSON Schema（同步自 server） */
+  input_schema: object
+  /** 所需权限（空数组=登录即可；审核时配置） */
+  required_perms: string[]
+  /** 0=草稿 1=已发布 2=已失效 */
+  status: number
+  /** 归属服务 id */
+  server_id: number
+  /** 归属服务名 */
+  server_name: string
+  /** 登记时间 yyyy-MM-dd HH:mm:ss 或 null */
+  create_time: string | null
+  /** 最近同步/审核时间 yyyy-MM-dd HH:mm:ss 或 null */
+  update_time: string | null
+}
+
+/**
+ * 工具审核入参（契约 §2.9）：required_perms 必填（可空数组=登录即可），
+ * 每项 ≤100 字符、≤5 项、须匹配 ^[a-z]+:[a-zA-Z]+:[a-zA-Z]+$；
+ * name 不传=不改；description/input_schema 以同步为准不可经本端点修改
+ */
+export interface ReviewMcpToolPayload {
+  required_perms: string[]
+  /** 可选 ≤50，显示名 */
+  name?: string
+}
+
+/** MCP 服务分页入参（契约 §2.1）：AI 域参数名 page/size；name 可选包含匹配（≤30 字符） */
+export interface McpServerPageQuery {
+  /** 页码（1 起） */
+  page: number
+  /** 每页条数（1..200，越界后端钳制不报错） */
+  size: number
+  /** 服务名搜索（可选，包含匹配；仅非空时携带） */
+  name?: string
+}
+
+/** 工具清单入参（契约 §2.8）：不分页；server_id/status 均可选过滤 */
+export interface McpToolListQuery {
+  /** 过滤某 server；不传=全部 */
+  server_id?: number
+  /** 0=草稿 1=已发布 2=已失效；不传=全部 */
+  status?: number
+}

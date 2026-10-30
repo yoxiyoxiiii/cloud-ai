@@ -5,11 +5,12 @@
    excluded_tools 剥除（模型面与调度面双剥离），显式补回 TodoListMiddleware 的
    write_todos 多步规划。profile key 按「ls_provider:identifier」解析，ChatOpenAI
    实例恒为 openai:<model_name>（装机版 0.7.23 实证，见 examples/agent_poc.py）。
-2. MCP 工具包装器——按 ai_tool 注册表行构造 StructuredTool：args_schema 由
-   input_schema（JSON Schema）经 pydantic create_model 动态生成（服务端定义参数面，
-   模型不能自造参数）；协程体经 contextvar 取当前运行用户 JWT 调 MCP 通道，
-   结果三分支渲染（正常 / 权限拒绝 / 其它错误——错误文本回模型自救不终断运行），
-   每次调用同步记入审计收集器。
+2. MCP 工具包装器——按「ai_tool 注册表行 + 归属 server 行」构造 StructuredTool：
+   args_schema 由 input_schema（JSON Schema）经 pydantic create_model 动态生成
+   （服务端定义参数面，模型不能自造参数）；协程体经 contextvar 取当前运行用户
+   JWT 调 MCP 通道（按 server 行路由内置双主体/外部头），结果三分支渲染
+   （正常 / 权限拒绝 / 其它错误——错误文本回模型自救不终断运行），每次调用同步
+   记入审计收集器。
 3. compiled agent 缓存——contextvar 在 astream 流式任务链的传播性已实证（同
    examples/agent_poc.py），compiled agent 可跨请求安全复用；按
    （agent_id → (config_version, agent)）缓存，版本不匹配重建覆盖，上限 32 条 LRU
@@ -24,7 +25,7 @@ import logging
 from collections import OrderedDict
 from collections.abc import Sequence
 from contextvars import ContextVar
-from typing import Any
+from typing import Any, Literal
 
 from deepagents import (
     GeneralPurposeSubagentProfile,
@@ -89,21 +90,38 @@ def ensure_trim_profile(model_name: str) -> None:
 
 # ---------- 入参 schema 动态构造（JSON Schema → pydantic 模型） ----------
 
-# MVP 支持的 JSON Schema 类型映射；现有两工具仅 string/integer
+# 支持的 JSON Schema 类型映射（浅映射：array→list、object→dict 不递归 items/
+# properties，嵌套结构整体降级为对应容器——外部工具 schema 由审核期构建校验把关）
 _JSON_TYPE_MAP: dict[str, type] = {
     "string": str,
     "integer": int,
     "number": float,
     "boolean": bool,
+    "array": list,
+    "object": dict,
 }
+
+# Literal 成员合法的标量类型（JSON Schema enum 的常见形态；其余成员类型不支持）
+_ENUM_MEMBER_TYPES = (str, int, float, bool)
+
+
+def _enum_literal(tool_key: str, arg_name: str, values: list) -> type:
+    """enum 值列表 → Literal 类型；成员非标量（dict/list 等）按不支持拒绝。"""
+    if not all(isinstance(v, _ENUM_MEMBER_TYPES) for v in values):
+        raise BusinessException(
+            f"工具 {tool_key} 的入参 {arg_name} enum 含非标量成员，不支持",
+            CODE_AGENT_RUN_FAILED,
+        )
+    return Literal[tuple(values)]
 
 
 def build_args_schema(tool_row: AiTool) -> type[BaseModel]:
     """按注册表 input_schema 构造 pydantic 入参模型（服务端定义参数面）。
 
-    支持 type（string/integer/number/boolean）+ required + default；min/max 等
-    约束项 MVP 不映射（面收紧留给后续轮）。不支持的类型抛 5018——注册表配错属
-    组装期失败，由运行编排收口（此时尚无工具调用可记）。
+    支持 type（string/integer/number/boolean/array/object）+ enum（标量枚举 →
+    Literal）+ required + default；min/max 等 约束项不映射（面收紧留给后续轮）。
+    不支持的类型抛 5018——注册表配错属组装期失败，由运行编排收口（此时尚无工具
+    调用可记）；审核动作以本函数为构建校验（不可构建 5028 停留草稿）。
     """
     try:
         schema = json.loads(tool_row.input_schema)
@@ -119,13 +137,17 @@ def build_args_schema(tool_row: AiTool) -> type[BaseModel]:
             raise BusinessException(
                 f"工具 {tool_row.tool_key} 的入参 {name} 定义不合法", CODE_AGENT_RUN_FAILED
             )
-        type_name = spec.get("type")
-        if type_name not in _JSON_TYPE_MAP:
-            raise BusinessException(
-                f"工具 {tool_row.tool_key} 的入参 {name} 类型不支持：{type_name!r}",
-                CODE_AGENT_RUN_FAILED,
-            )
-        py_type = _JSON_TYPE_MAP[spec["type"]]
+        enum_values = spec.get("enum")
+        if isinstance(enum_values, list) and enum_values:
+            py_type = _enum_literal(tool_row.tool_key, name, enum_values)
+        else:
+            type_name = spec.get("type")
+            if type_name not in _JSON_TYPE_MAP:
+                raise BusinessException(
+                    f"工具 {tool_row.tool_key} 的入参 {name} 类型不支持：{type_name!r}",
+                    CODE_AGENT_RUN_FAILED,
+                )
+            py_type = _JSON_TYPE_MAP[type_name]
         if name in required:
             fields[name] = (py_type, ...)
         elif "default" in spec:
@@ -149,8 +171,9 @@ def _content_text(result: Any) -> str:
 # ---------- MCP 工具包装器 ----------
 
 
-def build_mcp_tool(tool_row: AiTool) -> StructuredTool:
-    """按注册表行构造 MCP 工具（name=tool_key 注入模型；协程体桥接 MCP 通道）。
+def build_mcp_tool(tool_row: AiTool, server_row) -> StructuredTool:
+    """按注册表行 + 归属 server 行构造 MCP 工具（name=tool_key 注入模型；协程体
+    桥接 MCP 通道，按 server 行路由内置双主体/外部头）。
 
     结果三分支：正常 → content 文本返回模型；isError 且 PERMISSION_DENIED 前缀 →
     固定文案「当前用户无权执行该操作」（模型转述，不透出服务端原文）；其它 isError /
@@ -169,9 +192,10 @@ def build_mcp_tool(tool_row: AiTool) -> StructuredTool:
             entry["ok"], entry["error"] = False, "用户凭证缺失"
         else:
             try:
-                result = await mcp_client.call_tool(jwt, tool_row.tool_key, kwargs)
+                result = await mcp_client.call_tool(
+                    server_row, tool_row.tool_key, kwargs, jwt)
             except BusinessException as e:
-                # 通道层失败（MCP 未配置/调用失败等）：文本回模型，审计记失败摘要
+                # 通道层失败（MCP 未配置/调用失败/凭据缺等）：文本回模型，审计记失败摘要
                 outcome = f"工具调用失败：{e.msg}"
                 entry["ok"], entry["error"] = False, f"工具调用失败：{e.msg}"
             else:
@@ -208,27 +232,31 @@ def _model_name_of(model: Any) -> str:
     return str(getattr(model, "model_name", None) or getattr(model, "model", ""))
 
 
-def assemble_agent(agent_row: AiAgent, tool_rows: Sequence[AiTool]) -> Any:
+def assemble_agent(agent_row: AiAgent,
+                   tool_rows: Sequence[tuple[AiTool, Any]]) -> Any:
     """按配置行组装 DeepAgent（零网络：ChatOpenAI 构造与 profile 注册均不触网）。
 
-    system_prompt 原样传入（静态模板，不渲染变量）；工具面 = 勾选的 MCP 包装器 +
-    write_todos（经 middleware 补回）；文件/shell/子代理经 profile 剥离。
+    system_prompt 原样传入（静态模板，不渲染变量）；工具面 = 可见绑定的 MCP 包装器
+    （入参为「工具行 + 归属 server 行」元组序列，调用按 server 行路由）+ write_todos
+    （经 middleware 补回）；文件/shell/子代理经 profile 剥离。
     """
     model = model_factory.get_chat_model(temperature=float(agent_row.temperature))
     ensure_trim_profile(_model_name_of(model))
     return create_deep_agent(
         model=model,
-        tools=[build_mcp_tool(t) for t in tool_rows],
+        tools=[build_mcp_tool(tool, server) for tool, server in tool_rows],
         system_prompt=agent_row.system_prompt,
         middleware=[TodoListMiddleware()],
     )
 
 
-def get_agent(agent_row: AiAgent, tool_rows: Sequence[AiTool]) -> Any:
+def get_agent(agent_row: AiAgent,
+              tool_rows: Sequence[tuple[AiTool, Any]]) -> Any:
     """取 compiled agent：缓存命中（config_version 相同）直接复用，否则组装并覆盖缓存。
 
     contextvar 跨请求传播性已实证，compiled agent 复用安全；编辑使 config_version+1
-    → 版本不匹配 → 重建。同步字典操作无 await，单事件循环内原子，免锁。
+    → 版本不匹配 → 重建；同步/审核使工具面变化由 service 调 reset_cache 显式失效。
+    同步字典操作无 await，单事件循环内原子，免锁。
     """
     cached = _agent_cache.get(agent_row.id)
     if cached is not None and cached[0] == agent_row.config_version:
@@ -242,5 +270,6 @@ def get_agent(agent_row: AiAgent, tool_rows: Sequence[AiTool]) -> Any:
 
 
 def reset_cache() -> None:
-    """清空 compiled agent 缓存（测试隔离用）。"""
+    """清空 compiled agent 缓存：工具同步/审核成功后由 mcp_server service 调用
+    （工具行变化不走 config_version，须显式失效）；测试隔离同用。"""
     _agent_cache.clear()

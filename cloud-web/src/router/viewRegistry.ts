@@ -23,6 +23,7 @@ import ChatView from '../views/rag/chat/index.vue'
 import KbManageView from '../views/rag/kb/index.vue'
 import AgentManageView from '../views/agents/manage/index.vue'
 import AgentChatView from '../views/agents/chat/index.vue'
+import McpManageView from '../views/mcp/manage/index.vue'
 
 /** path → 组件注册表（静态 import，键 = sys_menu.path 约定值） */
 export const VIEW_REGISTRY: Record<string, Component> = {
@@ -46,7 +47,9 @@ export const VIEW_REGISTRY: Record<string, Component> = {
   '/rag/kb': KbManageView,
   // 智能体管理（菜单 186）/ 智能体对话（菜单 190，契约 2026-10-29-agent-platform-api §5 种子）
   '/agent/manage': AgentManageView,
-  '/agent/chat': AgentChatView
+  '/agent/chat': AgentChatView,
+  // MCP 服务管理（菜单 191，契约 2026-10-30-mcp-server-mgmt-api §5.2 种子）
+  '/mcp/manage': McpManageView
 }
 
 /** 按 path 解析视图组件：未注册 → NotFound 兜底（不报错，设计 D5） */

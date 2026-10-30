@@ -64,6 +64,8 @@
 
 ### 2.6 GET /ai/agent/tool/list —— 工具注册表（perms ai:agent:list）
 
+> 2026-10-30 修订（MCP server 配置化管理轮，修订全文见 `2026-10-30-mcp-server-mgmt-api.md` §7.2）：本端点仅返回 **status=1（已发布）且归属 server 启用未删** 的工具行（注册表引入 server 维度与草稿态后，绑定面只提供可用工具）；`ToolVo` 追加 `server_id`（number）与 `server_name`（string）字段。
+
 只读、不分页（量级个位数）。**出参** `R<ToolVo[]>`：
 
 | 字段 | 类型 | 说明 |

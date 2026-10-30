@@ -73,13 +73,16 @@ class UpdateAgentReq(CreateAgentReq):
 
 
 class ToolVo(BaseModel):
-    """工具注册表行（契约 §2.6）：required_perms 逗号串拆为数组（空数组=登录即可）。"""
+    """工具注册表行（契约 §2.6 修订版）：只含对 agent 可见的行；required_perms
+    逗号串拆为数组（空数组=登录即可）；server 归属回显。"""
 
     id: int
     tool_key: str
     name: str
     description: str
     required_perms: list[str]
+    server_id: int
+    server_name: str
 
 
 class RunLogVo(BaseModel):

@@ -22,6 +22,7 @@ from cloud_base_ai.agent.schemas import AgentRunReq
 from cloud_base_ai.config import get_settings
 from cloud_base_ai.db import tx
 from cloud_base_ai.exceptions import BusinessException
+from cloud_base_ai.mcp_server.entities import AiMcpServer
 from cloud_base_ai.security import Identity, set_current_identity
 from tests.db_testing import make_service_session_factory
 
@@ -111,6 +112,7 @@ async def _seed(factory, *, status: int = 0, user_id: int = USER_ID,
                 name: str = "e2e_运行助手") -> tuple[int, int]:
     """造一个智能体（绑定两工具：权限档 + 登录即可档）+ 本人会话。
 
+    工具归属启用中的 server 且状态为已发布——运行注入按此口径 join 过滤。
     name/tool_key 均带 name 后缀——同一测试内多次 _seed 时唯一键不冲突。
     """
     async with factory() as s:
@@ -118,10 +120,18 @@ async def _seed(factory, *, status: int = 0, user_id: int = USER_ID,
             agent = AiAgent(name=name, system_prompt="你是客服",
                             temperature=0.7, status=status)
             await dao.save_agent(s, agent)
+            server = AiMcpServer(name=f"SRV_{name}", url="http://127.0.0.1:9202/mcp",
+                                 transport="http", is_builtin=1, status=0)
+            s.add(server)
+            await s.flush()
             t_perm = AiTool(tool_key=f"system_query_users_{name}", name="查用户",
-                            description="d", input_schema="{}", required_perms="system:user:list")
+                            description="d", input_schema="{}", required_perms="system:user:list",
+                            server_id=server.id,
+                            status=AiTool.StatusEnum.PUBLISHED.value)
             t_free = AiTool(tool_key=f"system_query_dict_items_{name}", name="查字典",
-                            description="d", input_schema="{}", required_perms="")
+                            description="d", input_schema="{}", required_perms="",
+                            server_id=server.id,
+                            status=AiTool.StatusEnum.PUBLISHED.value)
             s.add_all([t_perm, t_free])
             await s.flush()
             s.add_all([AiAgentTool(agent_id=agent.id, tool_id=t_perm.id, create_by="e2e_user"),
@@ -155,14 +165,47 @@ async def test_prepare_run_tool_gate_filters_by_perms(monkeypatch: pytest.Monkey
         # 无对应权限：权限档工具被门拦下，登录即可档保留
         _identity(perms=())
         prepared = await run_service.prepare_run(agent_id, req)
-        assert [t.tool_key for t in prepared.tool_rows] == \
+        assert [t.tool_key for t, _srv in prepared.tool_rows] == \
             ["system_query_dict_items_e2e_运行助手"]
 
         # 持权限：两工具全量注入
         _identity(perms=("system:user:list",))
         prepared2 = await run_service.prepare_run(agent_id, req)
-        assert [t.tool_key for t in prepared2.tool_rows] == \
+        assert [t.tool_key for t, _srv in prepared2.tool_rows] == \
             ["system_query_users_e2e_运行助手", "system_query_dict_items_e2e_运行助手"]
+
+
+async def test_prepare_run_filters_unpublished_and_disabled_server(
+        monkeypatch: pytest.MonkeyPatch, store: _FakeStore) -> None:
+    """注入口径：绑定但未发布、或归属停用 server 的工具不注入（权限门之上的存活门）。"""
+    async with make_service_session_factory() as factory:
+        _bind_tx(monkeypatch, factory)
+        agent_id, session_id = await _seed(factory, name="e2e_存活门")
+        async with factory() as s:
+            async with s.begin():
+                on = AiMcpServer(name="SRV_ON_存活", url="http://127.0.0.1:9301/mcp",
+                                 transport="http", is_builtin=0, status=0)
+                off = AiMcpServer(name="SRV_OFF_存活", url="http://127.0.0.1:9302/mcp",
+                                  transport="http", is_builtin=0, status=1)
+                s.add_all([on, off])
+                await s.flush()
+                t_draft = AiTool(tool_key="e2e_draft_tool", name="草稿工具",
+                                 description="d", input_schema="{}", required_perms="",
+                                 server_id=on.id, status=AiTool.StatusEnum.DRAFT.value)
+                t_off = AiTool(tool_key="e2e_offsrv_tool", name="停用服务工具",
+                               description="d", input_schema="{}", required_perms="",
+                               server_id=off.id, status=AiTool.StatusEnum.PUBLISHED.value)
+                s.add_all([t_draft, t_off])
+                await s.flush()
+                s.add_all([AiAgentTool(agent_id=agent_id, tool_id=t_draft.id,
+                                       create_by="e2e_user"),
+                           AiAgentTool(agent_id=agent_id, tool_id=t_off.id,
+                                       create_by="e2e_user")])
+        _identity(perms=("system:user:list",))  # 权限门全放行，只验存活门
+        prepared = await run_service.prepare_run(
+            agent_id, AgentRunReq(session_id=session_id, question="q"))
+        assert [t.tool_key for t, _srv in prepared.tool_rows] == \
+            ["system_query_users_e2e_存活门", "system_query_dict_items_e2e_存活门"]
 
 
 async def test_prepare_run_persists_question_and_renames_title(

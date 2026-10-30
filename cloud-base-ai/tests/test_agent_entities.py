@@ -36,19 +36,32 @@ def test_agent_status_enum():
 
 
 def test_tool_table_and_columns_match_ddl():
-    # 字典表：仅 create_time 审计列，无 update 审计与软删（种子数据只插入）
+    # 内置种子+外部同步：仅 create_time/update_time 时间列，无审计人与软删列
+    # （失效态由 status=2 承载，行保留供审计与复活）
     assert AiTool.__tablename__ == "ai_tool"
     cols = {c.name for c in inspect(AiTool).columns}
     assert cols == {"id", "tool_key", "name", "description", "input_schema",
-                    "required_perms", "create_time"}
+                    "required_perms", "server_id", "status", "update_time",
+                    "create_time"}
     assert not issubclass(AiTool, AuditMixin)
     assert not issubclass(AiTool, SoftDeleteMixin)
 
 
-def test_tool_unique_declarations():
+def test_tool_unique_and_index_declarations():
     constraints = [c for c in AiTool.__table__.constraints
                    if isinstance(c, UniqueConstraint)]
     assert any(uc.name == "uk_tool_key" for uc in constraints)
+    # 同步取某 server 全部行 + 管理面按 server/状态过滤（2026-10-30 MCP server 管理轮）
+    assert any(ix.name == "idx_server_status" for ix in AiTool.__table__.indexes)
+
+
+def test_tool_status_enum():
+    assert AiTool.StatusEnum.of(0) is AiTool.StatusEnum.DRAFT
+    assert AiTool.StatusEnum.of(1) is AiTool.StatusEnum.PUBLISHED
+    assert AiTool.StatusEnum.of(2) is AiTool.StatusEnum.MISSING
+    assert AiTool.StatusEnum.of(9) is None
+    # 字段类型保持 int 映射（禁存枚举实例）
+    assert AiTool.StatusEnum.PUBLISHED.value == 1
 
 
 def test_agent_tool_table_and_columns_match_ddl():

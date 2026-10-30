@@ -13,6 +13,7 @@ from cloud_base_ai.agent.schemas import CreateAgentReq, UpdateAgentReq
 from cloud_base_ai.db import tx
 from cloud_base_ai.db.base import set_current_account
 from cloud_base_ai.exceptions import BusinessException
+from cloud_base_ai.mcp_server.entities import AiMcpServer
 from tests.db_testing import make_service_session_factory
 
 pytestmark = pytest.mark.anyio
@@ -29,26 +30,41 @@ def _req(name: str = "e2e_客服助手", tool_ids: list[int] | None = None) -> C
     return CreateAgentReq(name=name, system_prompt="你是客服助手", tool_ids=tool_ids or [])
 
 
-async def _seed_tools(factory) -> list[int]:
-    """直接走 dao 造两条工具行，返回 id 列表。"""
+async def _seed_server(factory, name: str = "SYSTEM", *, status: int = 0) -> int:
+    """造 server 注册行（默认启用的内置形态），返回 id。"""
+    from cloud_base_ai.mcp_server import dao as mcp_dao
+    async with factory() as s:
+        async with s.begin():
+            row = await mcp_dao.save_server(s, AiMcpServer(
+                name=name, url="http://127.0.0.1:9202/mcp",
+                transport="http", is_builtin=1 if name == "SYSTEM" else 0,
+                status=status))
+    return row.id
+
+
+async def _seed_tools(factory, *, server_status: int = 0) -> tuple[list[int], int]:
+    """造启用 server + 两条已发布工具行，返回（工具 id 列表, server id）。"""
+    server_id = await _seed_server(factory, status=server_status)
     async with factory() as s:
         async with s.begin():
             s.add_all([
                 AiTool(tool_key="system_query_users", name="查询系统用户",
                        description="d", input_schema='{"type":"object"}',
-                       required_perms="system:user:list"),
+                       required_perms="system:user:list", server_id=server_id,
+                       status=AiTool.StatusEnum.PUBLISHED.value),
                 AiTool(tool_key="system_query_dict_items", name="查询字典项",
-                       description="d", input_schema='{"type":"object"}', required_perms=""),
+                       description="d", input_schema='{"type":"object"}', required_perms="",
+                       server_id=server_id, status=AiTool.StatusEnum.PUBLISHED.value),
             ])
         async with s.begin():
             rows = await dao.list_tools(s)
-    return [t.id for t in rows]
+    return [t.id for t in rows], server_id
 
 
 async def test_create_agent_ok_with_bindings(monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
-        tool_ids = await _seed_tools(factory)
+        tool_ids, _server_id = await _seed_tools(factory)
         agent_id = await manage_service.create_agent(_req(tool_ids=[tool_ids[0], tool_ids[0]]))
         assert agent_id > 0
         detail = await manage_service.find_agent_detail(agent_id)
@@ -74,7 +90,7 @@ async def test_create_agent_name_exists_5016(monkeypatch: pytest.MonkeyPatch) ->
 async def test_create_agent_invalid_tool_5017(monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
-        tool_ids = await _seed_tools(factory)
+        tool_ids, _server_id = await _seed_tools(factory)
         with pytest.raises(BusinessException) as ei:
             await manage_service.create_agent(_req(tool_ids=[tool_ids[0], 99999]))
         assert ei.value.code == 5017
@@ -100,7 +116,7 @@ async def test_create_agent_uk_collision_5016(monkeypatch: pytest.MonkeyPatch) -
 async def test_update_agent_full_replace_and_version_bump(monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
-        tool_ids = await _seed_tools(factory)
+        tool_ids, _server_id = await _seed_tools(factory)
         agent_id = await manage_service.create_agent(_req(tool_ids=[tool_ids[0]]))
         req = UpdateAgentReq(name="e2e_数据助手", system_prompt="新提示词",
                              description="新描述", temperature=0.2,
@@ -155,7 +171,7 @@ async def test_page_list_agents_name_filter_and_tool_names(
         monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
-        tool_ids = await _seed_tools(factory)
+        tool_ids, _server_id = await _seed_tools(factory)
         await manage_service.create_agent(_req("e2e_客服甲", [tool_ids[0], tool_ids[1]]))
         await manage_service.create_agent(_req("e2e_客服乙"))
         await manage_service.create_agent(_req("别的人"))
@@ -169,11 +185,63 @@ async def test_page_list_agents_name_filter_and_tool_names(
 async def test_list_tool_registry_perms_split(monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
-        await _seed_tools(factory)
+        tool_ids, server_id = await _seed_tools(factory)
         vos = await manage_service.list_tool_registry()
         assert [v.tool_key for v in vos] == ["system_query_users", "system_query_dict_items"]
         assert vos[0].required_perms == ["system:user:list"]
         assert vos[1].required_perms == []  # 空=登录即可
+        assert all(v.server_id == server_id and v.server_name == "SYSTEM" for v in vos)
+
+
+async def test_list_tool_registry_filters_invisible(monkeypatch: pytest.MonkeyPatch) -> None:
+    """可见口径：草稿/失效工具、停用 server 名下工具不进勾选清单。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        server_id = await _seed_server(factory)
+        async with factory() as s:
+            async with s.begin():
+                s.add_all([
+                    AiTool(tool_key="e2e_pub", name="已发布", description="d",
+                           input_schema="{}", required_perms="", server_id=server_id,
+                           status=AiTool.StatusEnum.PUBLISHED.value),
+                    AiTool(tool_key="e2e_draft", name="草稿", description="d",
+                           input_schema="{}", required_perms="", server_id=server_id,
+                           status=AiTool.StatusEnum.DRAFT.value),
+                ])
+        off_id = await _seed_server(factory, "E2E_OFF", status=1)  # 停用 server
+        async with factory() as s:
+            async with s.begin():
+                s.add(AiTool(tool_key="e2e_off_srv", name="停用服务工具", description="d",
+                             input_schema="{}", required_perms="", server_id=off_id,
+                             status=AiTool.StatusEnum.PUBLISHED.value))
+        vos = await manage_service.list_tool_registry()
+        assert [v.tool_key for v in vos] == ["e2e_pub"]
+
+
+async def test_detail_tool_ids_bindings_vs_tool_names_visible(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """详情两口径：tool_ids 取绑定行（停用工具仍回显绑定事实）、tool_names 取可见绑定。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        server_id = await _seed_server(factory)
+        async with factory() as s:
+            async with s.begin():
+                s.add_all([
+                    AiTool(tool_key="e2e_vis", name="可见工具", description="d",
+                           input_schema="{}", required_perms="", server_id=server_id,
+                           status=AiTool.StatusEnum.PUBLISHED.value),
+                    AiTool(tool_key="e2e_gone", name="失效工具", description="d",
+                           input_schema="{}", required_perms="", server_id=server_id,
+                           status=AiTool.StatusEnum.MISSING.value),
+                ])
+        async with factory() as s:
+            async with s.begin():
+                rows = await dao.list_tools(s)
+        ids = [t.id for t in rows]
+        agent_id = await manage_service.create_agent(_req("e2e_绑定口径", ids))
+        detail = await manage_service.find_agent_detail(agent_id)
+        assert detail.tool_ids == ids  # 绑定事实全量
+        assert detail.tool_names == ["可见工具"]  # 可见口径收窄
 
 
 async def test_page_list_run_logs_empty_and_parsed(monkeypatch: pytest.MonkeyPatch) -> None:
