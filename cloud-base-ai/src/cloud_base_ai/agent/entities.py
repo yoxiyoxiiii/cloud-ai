@@ -1,7 +1,8 @@
 """平台 Agent 域 ORM 实体（DDL 真相源：cloud-base/scripts/sql/cloud_ai.sql）。
 
-五表：ai_agent（智能体定义）/ ai_tool（工具注册表：内置种子+外部同步草稿审核，
-server/status 列 2026-10-30 MCP server 管理轮扩入）/ ai_agent_tool（绑定纯关系表）
+六表：ai_agent（智能体定义）/ ai_tool（工具注册表：内置种子+外部同步草稿审核，
+server/status 列 2026-10-30 MCP server 管理轮扩入）/ ai_agent_tool（工具绑定纯关系表）
+/ ai_agent_mcp_server（MCP 服务绑定纯关系表，2026-10-31 server 级订阅绑定轮新增）
 / ai_agent_session（会话元数据，消息在 Redis）/ ai_agent_run_log（运行审计，append-only）。
 生命周期：创建（默认启用）→ 编辑（config_version+1，缓存失效）→ 停用（拒新运行）→ 软删
 （会话与审计保留）。实体与 pydantic DTO 分离，转换在 service 层。
@@ -168,6 +169,35 @@ class AiAgentTool(Base):
                                           comment="智能体ID（ai_agent.id，弱引用不建外键）")
     tool_id: Mapped[int] = mapped_column(BigInteger, nullable=False,
                                          comment="工具ID（ai_tool.id，弱引用不建外键）")
+    create_by: Mapped[str | None] = mapped_column(String(30), comment="绑定操作人账号")
+    create_time: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"),
+        comment="绑定时间（DB 时钟生成，应用层不传时间值）",
+    )
+
+
+class AiAgentMcpServer(Base):
+    """智能体-MCP服务绑定（纯关系表，沿 AiAgentTool 先例：物理删除、随保存全删全插）。
+
+    订阅语义：绑定后该 server 名下已发布工具自动进入 agent 工具面（装配每运行查库）。
+    停用行可绑（预绑定，运行期静默过滤）；软删行绑定校验拦 5029。
+    """
+
+    __tablename__ = "ai_agent_mcp_server"
+    __table_args__ = (
+        UniqueConstraint("agent_id", "server_id", name="uk_agent_server"),
+        {"comment": "智能体-MCP服务绑定（纯关系表：物理删除，随保存全删全插；"
+                    "订阅语义——server名下已发布工具自动进agent工具面）"},
+    )
+
+    id: Mapped[int] = mapped_column(_ID_BIGINTEGER, primary_key=True, autoincrement=True,
+                                    comment="绑定ID（主键）")
+    agent_id: Mapped[int] = mapped_column(BigInteger, nullable=False,
+                                          comment="智能体ID（ai_agent.id，弱引用不建外键；"
+                                                  "agent 软删不级联，绑定行随软删失去可见入口）")
+    server_id: Mapped[int] = mapped_column(BigInteger, nullable=False,
+                                           comment="MCP服务ID（ai_mcp_server.id，弱引用不建外键；"
+                                                   "停用行可绑=预绑定，运行期静默过滤；软删行绑定校验拦 5029）")
     create_by: Mapped[str | None] = mapped_column(String(30), comment="绑定操作人账号")
     create_time: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"),

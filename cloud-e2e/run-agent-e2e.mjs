@@ -2,8 +2,9 @@
  * 平台 Agent 管理 e2e（契约 2026-10-29-agent-platform-api §2 管理面 + §3 运行 + §4 会话 + §5 菜单种子）
  *
  * 运行前提：gateway 18080 / sso 9201 / system 9202 已启动（登录链走真实网关）；前端 dev 已启动。
- * **cloud-base-ai 8010 与菜单种子 186-190 入库均不需要**——agent 域 13 端点全在浏览器网络层
- * route mock（内存态，沿 run-ai-chat-e2e.mjs 分层先例）；菜单 186/190 与 ai:agent:* 权限经
+ * **cloud-base-ai 8010 与菜单种子 186-190 入库均不需要**——agent 域 14 端点全在浏览器网络层
+ * route mock（内存态，沿 run-ai-chat-e2e.mjs 分层先例；2026-10-31 修订增 §2.8 options 端点）；
+ * 菜单 186/190 与 ai:agent:* 权限经
  * user-nav / auth/me 响应增广注入（route.fetch 真实透传后补种，幂等——种子入库后注入自动跳过，
  * 集成期真跑同一脚本不红）。
  * 运行：cd cloud-e2e && npm run e2e:agent（不进 run-e2e.mjs 聚合）；E2E_HEADLESS=1 无头；
@@ -15,6 +16,9 @@
  * - AG1 管理页 CRUD：菜单可达 → 空态 → 新增（工具多选）→ 创建 body 形态 → 列表行 → 名称搜索 →
  *   编辑改名（PUT 全量含 status）→ 状态开关（详情合并提交）→ 运行历史空态 → 试跑（弹窗内嵌
  *   对话面板流式）→ 删除（确认框文案含名称）
+ * - AG1B MCP 服务级绑定（契约 2026-10-31 修订）：§2.8 选项端点 + 选项标签带已发布工具数 →
+ *   纯订阅创建 body（mcp_server_ids [1] + tool_ids []）→ 列表工具名合并展开 → 编辑回显 →
+ *   混绑编辑两字段并存 → 状态开关合并提交恒带双绑定 → 删除
  * - AG2 对话页：选智能体自动激活 → 新建会话 → 流式问答（3 content 帧 + [DONE] 气泡拼接）→
  *   乐观标题（问句前 16 字）→ 刷新回显（messages 端点）→ 删除会话回空态
  * - AG3 权限收敛：仅 ai:agent:list（无 run/add/update/delete）→ 侧边「智能体对话」不可见、
@@ -55,10 +59,19 @@ const AGENT_PERMS = ['ai:agent:list', 'ai:agent:add', 'ai:agent:update', 'ai:age
 let grantMode = 'full'
 const hasPerm = (p) => grantMode === 'full' || p === 'ai:agent:list'
 
-/** 工具注册表（契约 §2.6 只读；工具显示名/标识供管理页多选与列表 tag 消费） */
+/** 工具注册表（契约 §2.6 只读；工具显示名/标识供管理页多选与列表 tag 消费）。
+ *  两工具均归属 SYSTEM server（§2.6 出参含 server_id/server_name——mock 对齐真实形态，
+ *  亦是列表 tool_names 合并展开投影的归属依据） */
 const mockTools = [
-  { id: 1, tool_key: 'weather_query', name: '天气查询', description: '查询指定城市天气', required_perms: [] },
-  { id: 2, tool_key: 'db_query', name: '数据库查询', description: '受控 SQL 查询', required_perms: [] },
+  { id: 1, tool_key: 'weather_query', name: '天气查询', description: '查询指定城市天气', required_perms: [], server_id: 1, server_name: 'SYSTEM' },
+  { id: 2, tool_key: 'db_query', name: '数据库查询', description: '受控 SQL 查询', required_perms: [], server_id: 1, server_name: 'SYSTEM' },
+]
+
+/** MCP 服务绑定选项（契约 §2.8，2026-10-31 新增）：仅启用未删行 + 名下已发布工具数；
+ *  SYSTEM 名下两工具均已发布、WEATHER 零已发布（0 也列出——订阅语义） */
+const mockServers = [
+  { id: 1, name: 'SYSTEM', description: '内置平台服务', published_tool_count: 2 },
+  { id: 2, name: 'WEATHER', description: '天气服务（暂无已发布工具）', published_tool_count: 0 },
 ]
 
 /** 智能体内存表（§2 全端点数据源）：行含 detail 字段，list 出参现场投影 */
@@ -80,8 +93,18 @@ let lastStreamBody = null
 const frame = (payload) => `data: ${JSON.stringify(payload)}\n\n`
 const STREAM_OK = frame({ content: '第一段' }) + frame({ content: '第二段' }) + frame({ content: '第三段' }) + 'data: [DONE]\n\n'
 
-/** 工具 id → 显示名（列表 tool_names 投影） */
-const toolNames = (ids) => mockTools.filter((t) => ids.includes(t.id)).map((t) => t.name)
+/** 生效工具名投影（契约 §2.1 2026-10-31 修订：合并展开 = 直接绑定 ∪ MCP 服务级绑定展开，
+ *  仅可见工具——mockTools 全为已发布且归属启用 server 行；同一工具双路径绑定不重复） */
+const effectiveToolNames = (a) => {
+  const ids = new Set([...(a.tool_ids ?? [])])
+  for (const t of mockTools) {
+    if ((a.mcp_server_ids ?? []).includes(t.server_id)) ids.add(t.id)
+  }
+  return mockTools.filter((t) => ids.has(t.id)).map((t) => t.name)
+}
+
+/** server id → 名（detail mcp_server_names 数据源；不在选项集的 id 模拟软删行——名照回，台账完整） */
+const serverNameOf = (id) => mockServers.find((s) => s.id === id)?.name ?? `已删除服务#${id}`
 
 /** 智能体列表行投影（契约 §2.1 summary 形态） */
 const summaryOf = (a) => ({
@@ -90,7 +113,7 @@ const summaryOf = (a) => ({
   description: a.description,
   temperature: a.temperature,
   status: a.status,
-  tool_names: toolNames(a.tool_ids),
+  tool_names: effectiveToolNames(a),
   create_time: a.create_time,
   update_time: a.update_time,
 })
@@ -160,7 +183,12 @@ const agentRouteHandler = async (route) => {
   if (p === '/ai/agent/tool/list' && method === 'GET') {
     return route.fulfill(json(R(mockTools)))
   }
-  // §2.2 创建：入参 name/system_prompt/description?/temperature?/tool_ids?，返回新 id
+  // §2.8 MCP 服务绑定选项（只读不分页，2026-10-31 新增；编辑弹窗 MCP 多选数据源）
+  if (p === '/ai/agent/mcp-server/options' && method === 'GET') {
+    if (!hasPerm('ai:agent:list')) return route.fulfill(json(ERR(403, '无操作权限')))
+    return route.fulfill(json(R(mockServers)))
+  }
+  // §2.2 创建：入参 name/system_prompt/description?/temperature?/tool_ids?/mcp_server_ids?，返回新 id
   if (p === '/ai/agent' && method === 'POST') {
     if (!hasPerm('ai:agent:add')) return route.fulfill(json(ERR(403, '无操作权限')))
     lastCreateBody = req.postDataJSON()
@@ -171,6 +199,7 @@ const agentRouteHandler = async (route) => {
       temperature: lastCreateBody.temperature ?? 0.7,
       status: 0,
       tool_ids: lastCreateBody.tool_ids ?? [],
+      mcp_server_ids: lastCreateBody.mcp_server_ids ?? [],
       system_prompt: lastCreateBody.system_prompt,
       config_version: 1,
       create_time: '2026-10-29 11:00:00',
@@ -231,16 +260,28 @@ const agentRouteHandler = async (route) => {
     mockMsgs.get(sid)?.push({ role: 'assistant', content: '第一段第二段第三段' })
     return
   }
-  // §2.3 详情（编辑回显与状态开关合并提交的数据源）
+  // §2.3 详情（编辑回显与状态开关合并提交的数据源；mcp 双字段 2026-10-31 修订——
+  // 纯绑定行回显不做可见性过滤，mcp_server_names 按绑定行 join 取名软删名照回）
   const detailMatch = p.match(/^\/ai\/agent\/(\d+)$/)
   if (detailMatch && method === 'GET') {
     if (!hasPerm('ai:agent:list')) return route.fulfill(json(ERR(403, '无操作权限')))
     const a = mockAgents.find((x) => x.id === Number(detailMatch[1]))
     if (!a) return route.fulfill(json(ERR(5015, '智能体不存在')))
     lastDetailId = a.id
-    return route.fulfill(json(R({ ...summaryOf(a), system_prompt: a.system_prompt, tool_ids: a.tool_ids, config_version: a.config_version })))
+    return route.fulfill(
+      json(
+        R({
+          ...summaryOf(a),
+          system_prompt: a.system_prompt,
+          tool_ids: a.tool_ids,
+          mcp_server_ids: a.mcp_server_ids,
+          mcp_server_names: a.mcp_server_ids.map(serverNameOf),
+          config_version: a.config_version,
+        }),
+      ),
+    )
   }
-  // §2.4 全量编辑（status 必填、config_version 自增）
+  // §2.4 全量编辑（status 必填、config_version 自增；两类绑定均全删全插替换）
   if (detailMatch && method === 'PUT') {
     if (!hasPerm('ai:agent:update')) return route.fulfill(json(ERR(403, '无操作权限')))
     const a = mockAgents.find((x) => x.id === Number(detailMatch[1]))
@@ -251,6 +292,7 @@ const agentRouteHandler = async (route) => {
     a.description = lastUpdateBody.description ?? null
     a.temperature = lastUpdateBody.temperature ?? a.temperature
     a.tool_ids = lastUpdateBody.tool_ids ?? a.tool_ids
+    a.mcp_server_ids = lastUpdateBody.mcp_server_ids ?? a.mcp_server_ids
     a.system_prompt = lastUpdateBody.system_prompt
     a.status = lastUpdateBody.status
     a.config_version += 1
@@ -306,6 +348,7 @@ function ensurePath(path) {
 const ts = Date.now()
 const AGENT_A = `e2e_${ts}_智能体A`
 const AGENT_A_RENAMED = `e2e_${ts}_智能体A改`
+const AGENT_S = `e2e_${ts}_服务订阅体`
 
 try {
   // ================= AG1 管理页 CRUD 全链路 =================
@@ -335,17 +378,21 @@ try {
     await page.getByRole('button', { name: '新增智能体' }).click()
     const dlg = page.locator('.el-dialog', { hasText: '新建智能体' }).last()
     await dlg.waitFor({ state: 'visible', timeout: 5000 })
-    // 工具选项数据源 = 工具注册表端点（§2.6）
+    // 两类多选数据源 = 工具注册表（§2.6）+ MCP 服务选项（§2.8，2026-10-31）
     assert(h.state.apiCalls.some((c) => c.url.includes('/api/ai/agent/tool/list')), '打开弹窗应拉取工具注册表 GET /tool/list')
+    assert(h.state.apiCalls.some((c) => c.url.includes('/api/ai/agent/mcp-server/options')), '打开弹窗应拉取 MCP 服务选项 GET /mcp-server/options')
+    const toolItem = dlg.locator('.el-form-item', { hasText: '绑定工具' })
+    const mcpItem = dlg.locator('.el-form-item', { hasText: 'MCP 服务' })
+    assert((await mcpItem.count()) === 1, '弹窗应含「MCP 服务」多选区（工具多选之后）')
     await dlg.locator('input[placeholder="请输入智能体名称"]').fill(AGENT_A)
     await dlg.locator('textarea[placeholder="定义智能体的角色、能力与输出要求"]').fill('你是 e2e 验证助手')
-    // el-select multiple：点开下拉勾「天气查询」→ Escape 收起
-    await dlg.locator('.el-select').click()
-    const opt = page.locator('.el-select-dropdown__item', { hasText: '天气查询' }).first()
+    // el-select multiple：点开下拉勾「天气查询」→ Escape 收起（弹窗内两个 select，按 form-item 作用域定位）
+    await toolItem.locator('.el-select').click()
+    const opt = page.locator('.el-select-dropdown:visible .el-select-dropdown__item', { hasText: '天气查询' }).first()
     await opt.waitFor({ state: 'visible', timeout: 5000 })
     await opt.click()
     await page.keyboard.press('Escape')
-    await dlg.locator('.el-select .el-tag', { hasText: '天气查询' }).waitFor({ state: 'visible', timeout: 5000 })
+    await toolItem.locator('.el-tag', { hasText: '天气查询' }).waitFor({ state: 'visible', timeout: 5000 })
     await shot(page, 'ag1-create-dialog.png')
     await dlg.getByRole('button', { name: '保存' }).click()
     await waitToast(page, '新建成功')
@@ -354,12 +401,13 @@ try {
     assert(lastCreateBody && typeof lastCreateBody === 'object', 'route 层应记录到创建请求 body')
     assertEq(
       Object.keys(lastCreateBody).sort().join(','),
-      'name,system_prompt,temperature,tool_ids',
-      `创建 body 应恰含四键（description 留空不传），实际 [${Object.keys(lastCreateBody)}]`,
+      'mcp_server_ids,name,system_prompt,temperature,tool_ids',
+      `创建 body 应恰含五键（description 留空不传；mcp_server_ids 恒带——全量覆盖语义），实际 [${Object.keys(lastCreateBody)}]`,
     )
     assertEq(lastCreateBody.name, AGENT_A, `创建 body.name 应为 "${AGENT_A}"`)
     assertEq(lastCreateBody.temperature, 0.7, '未改温度时创建 body.temperature 应为默认 0.7')
     assertEq(JSON.stringify(lastCreateBody.tool_ids), '[1]', '创建 body.tool_ids 应为勾选工具 id 数组')
+    assertEq(JSON.stringify(lastCreateBody.mcp_server_ids), '[]', '未勾选 MCP 服务时 body.mcp_server_ids 应为空数组（恒带）')
     // c. 列表行：名称/工具 tag/温度/状态开关/创建时间（§2.1 投影）
     const rowA = page.locator('.el-table__row', { hasText: AGENT_A }).first()
     await rowA.waitFor({ state: 'visible', timeout: 5000 })
@@ -407,6 +455,7 @@ try {
     await rowB.locator('.el-switch').click()
     await waitToast(page, '已停用')
     assertEq(lastUpdateBody.status, 1, '开关停用提交 body.status 应为 1')
+    assertEq(JSON.stringify(lastUpdateBody.mcp_server_ids), '[]', '开关合并提交应恒带 mcp_server_ids（漏带即清空订阅绑定）')
     assertEq(
       h.state.apiCalls.filter((c) => c.method === 'GET' && /^\/api\/ai\/agent\/\d+$/.test(c.url.split('?')[0])).length,
       detailGetsBefore + 1,
@@ -465,6 +514,93 @@ try {
     )
   })
 
+  // ================= AG1B MCP 服务级绑定（server 订阅，2026-10-31 修订） =================
+  await step('AG1B', 'MCP 服务绑定：选项标签（已发布工具数标注）→ 纯订阅创建 body → 列表合并展开 → 编辑回显 → 混绑编辑两字段并存 → 开关合并恒带双绑定 → 删除', async () => {
+    ensurePath(MANAGE_PATH)
+
+    // a. 新增纯 server 订阅智能体：只勾 SYSTEM（不勾直接工具）
+    await page.getByRole('button', { name: '新增智能体' }).click()
+    const dlg = page.locator('.el-dialog', { hasText: '新建智能体' }).last()
+    await dlg.waitFor({ state: 'visible', timeout: 5000 })
+    const mcpItem = dlg.locator('.el-form-item', { hasText: 'MCP 服务' })
+    await dlg.locator('input[placeholder="请输入智能体名称"]').fill(AGENT_S)
+    await dlg.locator('textarea[placeholder="定义智能体的角色、能力与输出要求"]').fill('订阅 SYSTEM 服务的智能体')
+    // 打开 MCP 服务下拉：选项标签带「已发布 N 工具」标注（§2.8 published_tool_count）
+    await mcpItem.locator('.el-select').click()
+    const mcpDd = page.locator('.el-select-dropdown:visible')
+    await mcpDd.waitFor({ state: 'visible', timeout: 5000 })
+    const optTexts = (await mcpDd.locator('.el-select-dropdown__item').allInnerTexts()).map((t) => t.trim())
+    assert(
+      optTexts.some((t) => t.includes('SYSTEM') && t.includes('已发布 2 工具')),
+      `SYSTEM 选项标签应含「已发布 2 工具」标注，实际 ${JSON.stringify(optTexts)}`,
+    )
+    assert(
+      optTexts.some((t) => t.includes('WEATHER') && t.includes('已发布 0 工具')),
+      `WEATHER 选项（0 已发布）也应列出（订阅语义——0 也列出），实际 ${JSON.stringify(optTexts)}`,
+    )
+    await shot(page, 'ag1b-create-mcp-options.png')
+    await mcpDd.locator('.el-select-dropdown__item', { hasText: 'SYSTEM' }).first().click()
+    await page.keyboard.press('Escape')
+    await mcpItem.locator('.el-tag', { hasText: 'SYSTEM' }).waitFor({ state: 'visible', timeout: 5000 })
+    await dlg.getByRole('button', { name: '保存' }).click()
+    await waitToast(page, '新建成功')
+    await waitDialogGone(page, '新建智能体')
+    await waitTableIdle(page)
+    assert(lastCreateBody && typeof lastCreateBody === 'object', 'route 层应记录到创建请求 body')
+    assertEq(JSON.stringify(lastCreateBody.mcp_server_ids), '[1]', '纯订阅创建 body.mcp_server_ids 应为 [1]')
+    assertEq(JSON.stringify(lastCreateBody.tool_ids), '[]', '纯订阅创建 body.tool_ids 应为空数组（并集语义下单选 server 的 body 形态）')
+
+    // b. 列表合并展开（§2.1 修订）：tool_ids 空 + 订阅 SYSTEM → 工具列 = SYSTEM 名下两个已发布工具
+    const rowS = page.locator('.el-table__row', { hasText: AGENT_S }).first()
+    await rowS.waitFor({ state: 'visible', timeout: 5000 })
+    const cellsS = await h.rowCells(rowS)
+    assert(
+      cellsS[1].includes('天气查询') && cellsS[1].includes('数据库查询'),
+      `订阅 SYSTEM 后工具列应合并展开两个已发布工具（§2.1 修订口径），实际 "${cellsS[1]}"`,
+    )
+    await shot(page, 'ag1b-list-expanded.png')
+
+    // c. 编辑回显：detail mcp_server_ids [1]（mcp_server_names 同源）→ MCP 多选选中态回显
+    await rowS.getByRole('button', { name: '编辑' }).click()
+    const editDlg = page.locator('.el-dialog', { hasText: '编辑智能体' }).last()
+    await editDlg.waitFor({ state: 'visible', timeout: 5000 })
+    const editMcpItem = editDlg.locator('.el-form-item', { hasText: 'MCP 服务' })
+    await editMcpItem.locator('.el-tag', { hasText: 'SYSTEM' }).waitFor({ state: 'visible', timeout: 5000 })
+    assert((await editMcpItem.locator('.el-tag').count()) === 1, '回显后 MCP 多选应恰一个选中 tag')
+    // 等 EP 弹窗淡入动画落定再截图（tag 就绪即可断言，但截图抓过渡帧会半透明）
+    await sleep(600)
+    await shot(page, 'ag1b-edit-echo.png')
+
+    // d. 混绑：编辑中再勾直接工具「天气查询」→ 保存 → body 两字段并存（运行面取并集的配置面）
+    const editToolItem = editDlg.locator('.el-form-item', { hasText: '绑定工具' })
+    await editToolItem.locator('.el-select').click()
+    await page.locator('.el-select-dropdown:visible .el-select-dropdown__item', { hasText: '天气查询' }).first().click()
+    await page.keyboard.press('Escape')
+    await editDlg.getByRole('button', { name: '保存' }).click()
+    await waitToast(page, '保存成功')
+    await waitDialogGone(page, '编辑智能体')
+    await waitTableIdle(page)
+    assert(lastUpdateBody && typeof lastUpdateBody === 'object', 'route 层应记录到编辑请求 body')
+    assertEq(JSON.stringify(lastUpdateBody.tool_ids), '[1]', '混绑编辑 body.tool_ids 应为 [1]')
+    assertEq(JSON.stringify(lastUpdateBody.mcp_server_ids), '[1]', '混绑编辑 body.mcp_server_ids 应为 [1]（两字段并存）')
+
+    // e. 状态开关合并提交：双绑定不被清空（PUT 全量语义，漏带即清空——回归点）
+    const rowS2 = page.locator('.el-table__row', { hasText: AGENT_S }).first()
+    await rowS2.locator('.el-switch').click()
+    await waitToast(page, '已停用')
+    assertEq(JSON.stringify(lastUpdateBody.mcp_server_ids), '[1]', '开关合并提交应带回 mcp_server_ids（漏带即清空订阅绑定）')
+    assertEq(JSON.stringify(lastUpdateBody.tool_ids), '[1]', '开关合并提交应带回 tool_ids')
+
+    // f. 删除清理（mock 内存态，脚本结束即清；此处仍走 UI 删除路径收尾）
+    await rowS2.getByRole('button', { name: '删除' }).click()
+    const boxS = page.locator('.el-message-box')
+    await boxS.waitFor({ state: 'visible', timeout: 5000 })
+    await boxS.getByRole('button', { name: '确定' }).click()
+    await boxS.waitFor({ state: 'hidden', timeout: 5000 })
+    await waitToast(page, '删除成功')
+    await waitTableIdle(page)
+  })
+
   // ================= AG2 对话页 =================
   await step('AG2', '对话页：选智能体自动激活 → 新建会话 → 流式问答(3帧+[DONE]) → 乐观标题 → 刷新回显 → 删除会话', async () => {
     // mock 层直种一个启用智能体（对话页数据源；UI 创建路径已由 AG1 覆盖）
@@ -475,6 +611,7 @@ try {
       temperature: 0.7,
       status: 0,
       tool_ids: [],
+      mcp_server_ids: [],
       system_prompt: '纯对话智能体',
       config_version: 1,
       create_time: '2026-10-29 11:20:00',
@@ -594,7 +731,7 @@ try {
   h.summary({
     extras: [
       '\n测试数据: 智能体/会话全在 route mock 内存态（零后端写，脚本结束即清）；admin 种子账号只登录不改，种子菜单零触碰',
-      'mock 面: /api/ai/agent/** 13 端点内存态 + user-nav/auth/me 真实透传增广（186/190 与 ai:agent:* 注入，种子入库后幂等跳过）；登录链走真实 gateway/sso/system，cloud-base-ai 8010 未依赖',
+      'mock 面: /api/ai/agent/** 14 端点内存态 + user-nav/auth/me 真实透传增广（186/190 与 ai:agent:* 注入，种子入库后幂等跳过）；登录链走真实 gateway/sso/system，cloud-base-ai 8010 未依赖',
       '注记: mock 层只验前端行为（请求形态/渲染/权限收敛/403 消费）；真实落库/DeepAgent 执行/服务端权限执法由后端章与集成期真跑覆盖',
     ],
   })

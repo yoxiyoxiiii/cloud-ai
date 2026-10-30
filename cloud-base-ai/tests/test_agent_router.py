@@ -25,6 +25,7 @@ from cloud_base_ai.agent.router import (
 )
 from cloud_base_ai.agent.schemas import (
     AgentAnswerVo,
+    AgentMcpServerOptionVo,
     AgentSessionMessagesVo,
     AgentSessionMessageVo,
     AgentSessionVo,
@@ -65,6 +66,7 @@ def test_no_perms_403_per_router(client: TestClient) -> None:
     cases = [
         ("get", "/agent/list", None, LIST_PERMS),
         ("get", "/agent/tool/list", None, LIST_PERMS),
+        ("get", "/agent/mcp-server/options", None, LIST_PERMS),
         ("get", "/agent/3", None, LIST_PERMS),
         ("get", "/agent/3/runs", None, LIST_PERMS),
         ("post", "/agent", {}, ADD_PERMS),
@@ -131,11 +133,33 @@ def test_detail_ok_and_5015(client: TestClient, monkeypatch: pytest.MonkeyPatch)
     assert body["code"] == 200
     assert body["data"]["system_prompt"] == "你是客服"
     assert body["data"]["config_version"] == 1
+    assert body["data"]["mcp_server_ids"] == [1]  # 双字段回显（契约 §2.3）
+    assert body["data"]["mcp_server_names"] == ["SYSTEM"]
 
     async def raise_5015(agent_id: int):
         raise BusinessException("智能体不存在", 5015)
     monkeypatch.setattr(mgmt, "find_agent_detail", raise_5015)
     assert client.get("/agent/999", headers=LIST_PERMS).json()["code"] == 5015
+
+
+def test_mcp_server_options_ok_and_not_swallowed_by_wildcard(
+        client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    """/mcp-server/options 正常 200，且不被 GET /{agent_id} 通配吞掉（注册顺序先于
+    通配——被吞时本请求会变成 422 而非本断言的 options 数据）。"""
+    async def fake_options():
+        return [AgentMcpServerOptionVo(id=1, name="SYSTEM", description="内置服务",
+                                       published_tool_count=2),
+                AgentMcpServerOptionVo(id=2, name="E2E_EMPTY", description=None,
+                                       published_tool_count=0)]
+    monkeypatch.setattr(mgmt, "list_mcp_server_options", fake_options)
+    resp = client.get("/agent/mcp-server/options", headers=LIST_PERMS)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 200
+    assert body["data"][0] == {"id": 1, "name": "SYSTEM", "description": "内置服务",
+                               "published_tool_count": 2}
+    assert body["data"][1]["published_tool_count"] == 0  # 0 工具 server 也列出
+    assert body["data"][1]["description"] is None
 
 
 def test_create_agent_ok_and_errors(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -385,5 +409,6 @@ def _detail_vo() -> AgentDetailVo:
     return AgentDetailVo(
         id=3, name="e2e_客服助手", description=None, temperature=0.7, status=0,
         tool_names=["查询字典项"], system_prompt="你是客服", tool_ids=[2],
+        mcp_server_ids=[1], mcp_server_names=["SYSTEM"],
         config_version=1, create_time=None, update_time=None,
     )

@@ -10,19 +10,25 @@ from sqlalchemy.exc import IntegrityError
 
 from cloud_base_ai.agent import dao
 from cloud_base_ai.agent.dao import (
+    count_published_tools_by_server,
     delete_agent,
+    delete_agent_mcp_servers,
     delete_agent_tools,
     find_agent_by_id,
     find_agent_by_name,
     find_agent_name_include_deleted,
+    list_bindable_server_ids,
+    list_bound_mcp_servers,
     list_bound_tool_ids,
-    list_bound_tools,
+    list_effective_tools,
+    list_enabled_servers,
     list_tools,
     list_visible_tools,
     page_list_agent_sessions,
     page_list_agents,
     page_list_run_logs,
     rename_first_question,
+    replace_agent_mcp_servers,
     replace_agent_tools,
     save_agent,
     save_agent_session,
@@ -32,6 +38,7 @@ from cloud_base_ai.agent.dao import (
 )
 from cloud_base_ai.agent.entities import (
     AiAgent,
+    AiAgentMcpServer,
     AiAgentRunLog,
     AiAgentSession,
     AiAgentTool,
@@ -238,16 +245,16 @@ async def test_replace_agent_tools_full_replace_and_audit():
         async with s.begin():
             await replace_agent_tools(s, agent.id, [t1, t3])
         async with s.begin():
-            bound = await list_bound_tools(s, agent.id)
+            bound = await list_effective_tools(s, agent.id)
         assert [t.tool_key for t, _srv in bound] == ["t1", "t3"]
         async with s.begin():
             await replace_agent_tools(s, agent.id, [t2])  # 全删全插换绑
         async with s.begin():
-            bound2 = await list_bound_tools(s, agent.id)
+            bound2 = await list_effective_tools(s, agent.id)
         assert [t.tool_key for t, _srv in bound2] == ["t2"]
         async with s.begin():
             await replace_agent_tools(s, agent.id, [])  # 清空绑定
-            assert list(await list_bound_tools(s, agent.id)) == []
+            assert list(await list_effective_tools(s, agent.id)) == []
         # 物理删除：无 deleted 列，删除即行消失（与软删表对照）
         async with s.begin():
             assert await delete_agent_tools(s, agent.id) == 0  # 全删全插已清，二次删 0
@@ -270,10 +277,10 @@ async def test_bound_tools_of_other_agent_invisible():
             tool = (await list_tools(s))[0]
         async with s.begin():
             await replace_agent_tools(s, a1.id, [tool.id])
-        assert [t.tool_key for t, _srv in await list_bound_tools(s, a2.id)] == []
+        assert [t.tool_key for t, _srv in await list_effective_tools(s, a2.id)] == []
 
 
-async def test_list_bound_tools_filters_invisible():
+async def test_effective_tools_filters_invisible():
     """可见口径：草稿工具、停用 server、软删 server 名下的绑定不返回（静默缩窄）。"""
     async with make_db_session() as s:
         async with s.begin():
@@ -296,12 +303,176 @@ async def test_list_bound_tools_filters_invisible():
         async with s.begin():
             await replace_agent_tools(s, agent.id, [t.id for t in tools])
         async with s.begin():
-            bound = await list_bound_tools(s, agent.id)
+            bound = await list_effective_tools(s, agent.id)
         assert [(t.tool_key, srv.name) for t, srv in bound] == [("e2e_vis", "E2E_ON")]
         # 绑定行口径不受过滤影响：四个 id 全量
         async with s.begin():
             ids = list(await list_bound_tool_ids(s, agent.id))
         assert len(ids) == 4
+
+
+# ---------- 生效工具面（并集装配）+ server 绑定（纯关系表） ----------
+
+
+async def test_effective_tools_server_level_expansion():
+    """纯 server 绑定：server 名下已发布工具全量进生效面（订阅语义），草稿不进。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            agent = await save_agent(s, _agent("e2e_服务绑定"))
+            on = _mcp_server("E2E_SB_ON")
+            s.add(on)
+            await s.flush()
+            s.add_all([_tool("s_t1", "一", server_id=on.id),
+                       _tool("s_t2", "二", server_id=on.id),
+                       _tool("s_draft", "草稿", server_id=on.id,
+                             status=AiTool.StatusEnum.DRAFT.value)])
+        async with s.begin():
+            await replace_agent_mcp_servers(s, agent.id, [on.id])
+        async with s.begin():
+            rows = await list_effective_tools(s, agent.id)
+        assert [t.tool_key for t, _srv in rows] == ["s_t1", "s_t2"]
+        assert all(srv.name == "E2E_SB_ON" for _t, srv in rows)
+
+
+async def test_effective_tools_union_and_dual_path_no_dup():
+    """混绑并集：直接绑 ∪ server 展开；同一工具双路径（直接绑 T + 绑其 server）恒一行。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            agent = await save_agent(s, _agent("e2e_混绑"))
+            on = _mcp_server("E2E_UNION")
+            off = _mcp_server("E2E_UNION_OFF")
+            s.add_all([on, off])
+            await s.flush()
+            t1 = _tool("u_t1", "一", server_id=on.id)   # server 内 + 直接绑（双路径）
+            t2 = _tool("u_t2", "二", server_id=on.id)   # 仅 server 展开
+            t3 = _tool("u_t3", "三", server_id=off.id)  # 仅直接绑
+            s.add_all([t1, t2, t3])
+        async with s.begin():
+            await replace_agent_tools(s, agent.id, [t1.id, t3.id])
+        async with s.begin():
+            await replace_agent_mcp_servers(s, agent.id, [on.id])
+        async with s.begin():
+            rows = await list_effective_tools(s, agent.id)
+        assert [t.tool_key for t, _srv in rows] == ["u_t1", "u_t2", "u_t3"]
+
+
+async def test_effective_tools_server_level_narrowing():
+    """server 级绑定缩窄：停用/软删 server 的展开面静默消失（绑定行不动，无报错）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            agent = await save_agent(s, _agent("e2e_服务缩窄"))
+            on = _mcp_server("E2E_NAR_ON")
+            off = _mcp_server("E2E_NAR_OFF", status=1)
+            gone = _mcp_server("E2E_NAR_GONE")
+            s.add_all([on, off, gone])
+            await s.flush()
+            await dao_soft_delete_server(s, gone.id)
+            s.add_all([_tool("n_on", "在", server_id=on.id),
+                       _tool("n_off", "停", server_id=off.id),
+                       _tool("n_gone", "删", server_id=gone.id)])
+        async with s.begin():
+            await replace_agent_mcp_servers(s, agent.id, [on.id, off.id, gone.id])
+        async with s.begin():
+            rows = await list_effective_tools(s, agent.id)
+        assert [t.tool_key for t, _srv in rows] == ["n_on"]
+        # 绑定行本身不动：三个 server 绑定全量回显
+        async with s.begin():
+            bound = await list_bound_mcp_servers(s, agent.id)
+        assert len(bound) == 3
+
+
+async def test_replace_agent_mcp_servers_full_replace_and_clear():
+    set_current_account("admin")
+    async with make_db_session() as s:
+        async with s.begin():
+            agent = await save_agent(s, _agent("e2e_服务换绑"))
+            s1 = _mcp_server("E2E_R1")
+            s2 = _mcp_server("E2E_R2")
+            s.add_all([s1, s2])
+            await s.flush()
+        async with s.begin():
+            await replace_agent_mcp_servers(s, agent.id, [s1.id, s2.id])
+        async with s.begin():
+            rows1 = await list_bound_mcp_servers(s, agent.id)
+        assert rows1 == [(s1.id, "E2E_R1"), (s2.id, "E2E_R2")]  # server_id 升序
+        async with s.begin():
+            await replace_agent_mcp_servers(s, agent.id, [s2.id])  # 全删全插换绑
+        async with s.begin():
+            rows2 = await list_bound_mcp_servers(s, agent.id)
+        assert rows2 == [(s2.id, "E2E_R2")]
+        # 绑定审计人（此后不再插入，实体引用不跨删除/重插周期——SQLite rowid 重用
+        # 会与 identity map 陈旧行冲突告警）
+        from sqlalchemy import select
+        async with s.begin():
+            binding_rows = (await s.execute(select(AiAgentMcpServer))).scalars().all()
+        assert {r.create_by for r in binding_rows} == {"admin"}
+        async with s.begin():
+            assert await delete_agent_mcp_servers(s, agent.id) == 1  # 物理删 rowcount
+        async with s.begin():
+            await replace_agent_mcp_servers(s, agent.id, [])  # 空集=清空（幂等）
+            assert await delete_agent_mcp_servers(s, agent.id) == 0
+        async with s.begin():
+            remaining = (await s.execute(select(AiAgentMcpServer))).scalars().all()
+        assert remaining == []
+
+
+async def test_list_bound_mcp_servers_soft_deleted_name_echo():
+    """detail 回显口径：软删 server 的绑定行照回、名字照带（台账完整）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            agent = await save_agent(s, _agent("e2e_软删回显"))
+            alive = _mcp_server("E2E_ALIVE")
+            gone = _mcp_server("E2E_GONE2")
+            s.add_all([alive, gone])
+            await s.flush()
+            await dao_soft_delete_server(s, gone.id)
+        async with s.begin():
+            await replace_agent_mcp_servers(s, agent.id, [alive.id, gone.id])
+        async with s.begin():
+            rows = await list_bound_mcp_servers(s, agent.id)
+        assert rows == [(alive.id, "E2E_ALIVE"), (gone.id, "E2E_GONE2")]
+
+
+async def test_list_bindable_server_ids_excludes_soft_deleted_only():
+    """5029 校验数据源：未软删全量（含停用行——可绑预绑定），软删排除。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            on = _mcp_server("E2E_BIND_ON")
+            off = _mcp_server("E2E_BIND_OFF", status=1)
+            gone = _mcp_server("E2E_BIND_GONE")
+            s.add_all([on, off, gone])
+            await s.flush()
+            await dao_soft_delete_server(s, gone.id)
+        async with s.begin():
+            ids = list(await list_bindable_server_ids(s))
+        assert ids == sorted([on.id, off.id])  # id 升序：停用在内、软删不在
+
+
+async def test_list_enabled_servers_and_published_counts():
+    """选项端点数据源：仅启用未删；已发布计数三态只计 status=1、空集空 dict。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            on = _mcp_server("E2E_OPT_ON")
+            off = _mcp_server("E2E_OPT_OFF", status=1)
+            gone = _mcp_server("E2E_OPT_GONE")
+            s.add_all([on, off, gone])
+            await s.flush()
+            await dao_soft_delete_server(s, gone.id)
+            s.add_all([
+                _tool("o_pub", "一", server_id=on.id),
+                _tool("o_draft", "草稿", server_id=on.id,
+                      status=AiTool.StatusEnum.DRAFT.value),
+                _tool("o_miss", "失效", server_id=on.id,
+                      status=AiTool.StatusEnum.MISSING.value),
+            ])
+        async with s.begin():
+            rows = await list_enabled_servers(s)
+        assert [r.name for r in rows] == ["E2E_OPT_ON"]
+        async with s.begin():
+            counts = await count_published_tools_by_server(s, [on.id, off.id])
+        assert counts == {on.id: 1}  # 停用 server 不在选项集但计数按入参聚合：0 工具即无键
+        async with s.begin():
+            assert await count_published_tools_by_server(s, []) == {}
 
 
 async def dao_soft_delete_server(session, server_id: int) -> int:

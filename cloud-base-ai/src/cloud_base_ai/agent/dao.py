@@ -17,11 +17,12 @@
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloud_base_ai.agent.entities import (
     AiAgent,
+    AiAgentMcpServer,
     AiAgentRunLog,
     AiAgentSession,
     AiAgentTool,
@@ -189,25 +190,29 @@ async def list_visible_tools(
     return (await session.execute(stmt)).all()
 
 
-# ---------- AiAgentTool（纯关系表：join 查询 + 全删全插） ----------
+# ---------- AiAgentTool / AiAgentMcpServer（纯关系表：生效面查询 + 全删全插） ----------
 
 
-async def list_bound_tools(
+async def list_effective_tools(
         session: AsyncSession, agent_id: int
 ) -> Sequence[tuple[AiTool, AiMcpServer]]:
-    """某智能体绑定的**可见**工具行元组（工具行 + 归属 server 行）：join 绑定表与
-    server 注册表，过滤「已发布且 server 启用未删」——运行装配与列表 tool_names
-    共用的可见性口径（被停用/失效的绑定静默缩窄，绑定行本身不动）。
-    id 升序=注册表序。"""
+    """某智能体的生效工具面（并集：直接绑定 ∪ server 级绑定展开，仅可见行）。
+
+    去重语义：工具表不 join 绑定表（绑定条件走 IN 子查询），同一工具行恒产一行
+    ——直接绑 T 且绑其 server 时 T 只出现一次（SQL 集合语义天然去重）。
+    可见过滤：工具已发布且归属 server 启用未删——运行装配与列表/详情 tool_names
+    共用本口径（被停用/失效/软删静默缩窄，绑定行本身不动）。id 升序=注册表序。"""
+    bound_tools = select(AiAgentTool.tool_id).where(AiAgentTool.agent_id == agent_id)
+    bound_servers = select(AiAgentMcpServer.server_id).where(
+        AiAgentMcpServer.agent_id == agent_id)
     stmt = (
         select(AiTool, AiMcpServer)
-        .join(AiAgentTool, AiAgentTool.tool_id == AiTool.id)
         .join(AiMcpServer, AiMcpServer.id == AiTool.server_id)
         .where(
-            AiAgentTool.agent_id == agent_id,
             AiTool.status == AiTool.StatusEnum.PUBLISHED.value,
             AiMcpServer.status == AiMcpServer.StatusEnum.ENABLED.value,
             AiMcpServer.deleted == SoftDeleteMixin.DeletedEnum.NORMAL,
+            or_(AiTool.id.in_(bound_tools), AiTool.server_id.in_(bound_servers)),
         )
         .order_by(AiTool.id.asc())
     )
@@ -251,6 +256,92 @@ async def delete_agent_tools(session: AsyncSession, agent_id: int) -> int:
     ).execution_options(synchronize_session=False)
     result = await session.execute(stmt)
     return result.rowcount
+
+
+async def list_bound_mcp_servers(
+        session: AsyncSession, agent_id: int
+) -> Sequence[tuple[int, str]]:
+    """某智能体绑定的 server（纯绑定行，server_id 升序）——detail 回显 mcp_server_ids/
+    mcp_server_names 数据源。join ai_mcp_server 不筛 deleted：软删 server 名照回
+    （绑定是配置事实，台账完整）。返回 (server_id, name) 元组序列。"""
+    stmt = (
+        select(AiAgentMcpServer.server_id, AiMcpServer.name)
+        .join(AiMcpServer, AiMcpServer.id == AiAgentMcpServer.server_id)
+        .where(AiAgentMcpServer.agent_id == agent_id)
+        .order_by(AiAgentMcpServer.server_id.asc())
+    )
+    return (await session.execute(stmt)).all()
+
+
+async def replace_agent_mcp_servers(
+    session: AsyncSession, agent_id: int, server_ids: Sequence[int]
+) -> None:
+    """保存 server 绑定 = 按 agent_id 全删全插（与 replace_agent_tools 同构，同一事务
+    由 service 的 @transactional 收口）：先物理 DELETE 全部旧绑定行，再非空批插新行
+    （调用方已查重去重）。create_by 取 current_account、create_time 走 DB DEFAULT
+    CURRENT_TIMESTAMP（审计时间 DB 时钟全仓口径）。"""
+    await delete_agent_mcp_servers(session, agent_id)
+    if not server_ids:
+        return
+    account = current_account()
+    session.add_all(
+        [AiAgentMcpServer(agent_id=agent_id, server_id=sid, create_by=account)
+         for sid in server_ids]
+    )
+    await session.flush()
+
+
+async def delete_agent_mcp_servers(session: AsyncSession, agent_id: int) -> int:
+    """物理删除某智能体全部 server 绑定行（命中 uk_agent_server 前缀）；返回影响行数。"""
+    stmt = delete(AiAgentMcpServer).where(
+        AiAgentMcpServer.agent_id == agent_id
+    ).execution_options(synchronize_session=False)
+    result = await session.execute(stmt)
+    return result.rowcount
+
+
+async def list_bindable_server_ids(session: AsyncSession) -> Sequence[int]:
+    """全部未软删 server 的 id（id 升序）——绑定校验（5029）数据源；不过滤 status
+    （停用可绑=预绑定，配置宽运行严沿 tool_ids 先例）。"""
+    stmt = (
+        select(AiMcpServer.id)
+        .where(AiMcpServer.deleted == SoftDeleteMixin.DeletedEnum.NORMAL)
+        .order_by(AiMcpServer.id.asc())
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def list_enabled_servers(session: AsyncSession) -> Sequence[AiMcpServer]:
+    """启用未删 server 行（id 升序）——绑定选项端点（契约 §2.8）数据源；停用行不可
+    作为新绑定选项（已绑定的停用行回显走 detail 纯绑定口径）。"""
+    stmt = (
+        select(AiMcpServer)
+        .where(
+            AiMcpServer.status == AiMcpServer.StatusEnum.ENABLED.value,
+            AiMcpServer.deleted == SoftDeleteMixin.DeletedEnum.NORMAL,
+        )
+        .order_by(AiMcpServer.id.asc())
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def count_published_tools_by_server(
+    session: AsyncSession, server_ids: Sequence[int]
+) -> dict[int, int]:
+    """按 server 聚合已发布（status=1）工具数——选项端点 published_tool_count 数据源；
+    空集返回空 dict。不复用 mcp_server 域 count_tools_by_server：那是三态计数的
+    管理面摘要语义，此处只要已发布数（独立动词，service 层不跨域引 dao）。"""
+    if not server_ids:
+        return {}
+    stmt = (
+        select(AiTool.server_id, func.count())
+        .where(
+            AiTool.server_id.in_(server_ids),
+            AiTool.status == AiTool.StatusEnum.PUBLISHED.value,
+        )
+        .group_by(AiTool.server_id)
+    )
+    return dict((await session.execute(stmt)).all())
 
 
 # ---------- AiAgentSession（会话元数据：归属校验/列表/首问改题/软删） ----------

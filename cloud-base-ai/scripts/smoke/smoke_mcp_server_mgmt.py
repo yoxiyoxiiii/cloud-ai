@@ -1,5 +1,6 @@
 """MCP Server 配置化管理真连接冒烟：管理面端点 + 外部凭据链路 + 工具同步/审核 +
-agent 经外部 server 真跑 + 内置行同步/停用应急开关 + 清理。
+agent 经外部 server 真跑 + 内置行同步/停用应急开关 + server 级订阅绑定真跑
+（停用缩窄 + 缓存失效实证）+ 清理。
 
 自包含可重跑：脚本自行拉起两个子进程（cloud-base-ai 服务 + 冒烟外部 MCP server），
 凭据经「真实环境变量优先于 .env」注入子进程环境（SMOKETEST/SMOKEEXT 键不落 .env，
@@ -180,6 +181,8 @@ def purge_smoke_residue() -> None:
             cur.execute("DELETE FROM ai_agent_session WHERE agent_id IN "
                         "(SELECT id FROM ai_agent WHERE name LIKE %s)", (agent_pattern,))
             cur.execute("DELETE FROM ai_agent_tool WHERE agent_id IN "
+                        "(SELECT id FROM ai_agent WHERE name LIKE %s)", (agent_pattern,))
+            cur.execute("DELETE FROM ai_agent_mcp_server WHERE agent_id IN "
                         "(SELECT id FROM ai_agent WHERE name LIKE %s)", (agent_pattern,))
             cur.execute("DELETE FROM ai_agent WHERE name LIKE %s", (agent_pattern,))
             cur.execute("DELETE FROM ai_tool WHERE tool_key LIKE %s", (tool_pattern,))
@@ -394,6 +397,95 @@ async def exercise(ai_base: str, admin_jwt: str, ext_url: str) -> None:
            and "system_query_users" in keys,
            "soft-deleted server hides its tools; SYSTEM tools back", str(keys))
     print("[INFO] cleanup done (agent + both smoke server rows)")
+
+    # 7) server 级订阅绑定端到端：agent 绑 SYSTEM server（tool_ids 空）→ 真跑断言
+    #    内置工具经 server 展开被调用 → 停用 SYSTEM 后工具面缩窄为空（缓存失效实证：
+    #    compiled agent 缓存已在停用时被清，无工具的重组装生效）→ 恢复并清理
+    srv_agent = f"e2e_smoke_agent_srv_{stamp}"
+    status, body = api(ai_base, admin_jwt, "POST", "/agent", {
+        "name": srv_agent,
+        "system_prompt": "你是冒烟助手，任何问题都先调用可用工具取数再回答。",
+        "tool_ids": [], "mcp_server_ids": [BUILTIN_SERVER_ID]})
+    if not r_ok(status, body, "create agent bound to SYSTEM server (server-level)"):
+        return
+    srv_agent_id = body["data"]
+    print(f"[INFO] server-bound agent id={srv_agent_id}")
+
+    status, body = api(ai_base, admin_jwt, "GET", "/agent/mcp-server/options")
+    if r_ok(status, body, "mcp-server options endpoint"):
+        opt = next((o for o in body["data"] if o["id"] == BUILTIN_SERVER_ID), None)
+        ok(opt is not None and opt["published_tool_count"] == 2,
+           "options list SYSTEM with published_tool_count=2", str(opt))
+
+    status, body = api(ai_base, admin_jwt, "GET", f"/agent/{srv_agent_id}")
+    if r_ok(status, body, "server-bound agent detail"):
+        d = body["data"]
+        ok(d.get("mcp_server_ids") == [BUILTIN_SERVER_ID]
+           and d.get("mcp_server_names") == ["SYSTEM"]
+           and len(d.get("tool_names", [])) == 2,
+           "detail dual-field echo + merged tool_names",
+           f"mcp_server_ids={d.get('mcp_server_ids')} "
+           f"tool_names={d.get('tool_names')}")
+
+    status, body = api(ai_base, admin_jwt, "POST", f"/agent/{srv_agent_id}/sessions")
+    if not r_ok(status, body, "create session for server-bound agent"):
+        return
+    srv_session = body["data"]["id"]
+
+    status, body = api(ai_base, admin_jwt, "POST", f"/agent/{srv_agent_id}/run",
+                       {"session_id": srv_session,
+                        "question": "请调用工具查询字典 key 为 sex 的字典项，"
+                                    "告诉我每项的值和标签。"},
+                       timeout=180)
+    if r_ok(status, body, "server-level agent run (non-stream)"):
+        ok(bool((body.get("data") or {}).get("answer")),
+           "server-level answer non-empty",
+           f"len={len((body.get('data') or {}).get('answer', ''))}")
+    status, body = api(ai_base, admin_jwt, "GET", f"/agent/{srv_agent_id}/runs")
+    if r_ok(status, body, "server-level agent run logs"):
+        calls = (body["data"]["rows"][0]["tool_calls"] if body["data"]["rows"] else [])
+        hit = any(c.get("tool_key") == "system_query_dict_items" and c.get("ok")
+                  for c in calls)
+        ok(hit, "server-level binding expands builtin tools (tool called)",
+           f"calls={[{'tool_key': c.get('tool_key'), 'ok': c.get('ok')} for c in calls]}")
+
+    status, detail = api(ai_base, admin_jwt, "GET", f"/mcp/server/{BUILTIN_SERVER_ID}")
+    sys_row2 = detail["data"] if isinstance(detail, dict) else {}
+    disable_srv = {"name": "SYSTEM", "url": sys_row2.get("url"),
+                   "transport": sys_row2.get("transport"), "timeout_ms": 30000,
+                   "description": sys_row2.get("description"), "status": 1}
+    status, body = api(ai_base, admin_jwt, "PUT",
+                       f"/mcp/server/{BUILTIN_SERVER_ID}", disable_srv)
+    r_ok(status, body, "disable SYSTEM for server-bound narrowing")
+
+    status, body = api(ai_base, admin_jwt, "POST", f"/agent/{srv_agent_id}/sessions")
+    srv_session2 = body["data"]["id"] if isinstance(body, dict) and body.get("code") == 200 \
+        else None
+    if srv_session2:
+        status, body = api(ai_base, admin_jwt, "POST", f"/agent/{srv_agent_id}/run",
+                           {"session_id": srv_session2,
+                            "question": "请再调用工具查询一次 sex 字典项。"},
+                           timeout=180)
+        if r_ok(status, body, "run with SYSTEM disabled (tool face narrowed)"):
+            ok(bool((body.get("data") or {}).get("answer")),
+               "narrowed answer non-empty (model answers without tools)")
+        status, body = api(ai_base, admin_jwt, "GET", f"/agent/{srv_agent_id}/runs")
+        if r_ok(status, body, "narrowed run logs"):
+            calls = (body["data"]["rows"][0]["tool_calls"] if body["data"]["rows"] else [])
+            ok(calls == [], "no tool call after server disabled (cache invalidated)",
+               str(calls))
+    status, body = api(ai_base, admin_jwt, "GET", "/agent/mcp-server/options")
+    if r_ok(status, body, "options while SYSTEM disabled"):
+        ok(all(o["id"] != BUILTIN_SERVER_ID for o in body["data"]),
+           "disabled server excluded from options",
+           str([o["id"] for o in body["data"]]))
+
+    status, body = api(ai_base, admin_jwt, "PUT", f"/mcp/server/{BUILTIN_SERVER_ID}",
+                       {**disable_srv, "status": 0})
+    r_ok(status, body, "re-enable SYSTEM after narrowing check")
+
+    api(ai_base, admin_jwt, "DELETE", f"/agent/{srv_agent_id}")
+    print("[INFO] server-level binding cleanup done (agent deleted, SYSTEM re-enabled)")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
 /**
  * 平台 Agent 接口（契约 2026-10-29-agent-platform-api，cloud-base-ai，网关前缀 /ai）：
- * 管理面七端点（§2，perms ai:agent:list/add/update/delete）+ 运行非流式（§3.1）+
- * 会话四端点与消息回显（§4，perms ai:agent:run）。
+ * 管理面八端点（§2，perms ai:agent:list/add/update/delete；2026-10-31 修订新增
+ * §2.8 MCP 服务绑定选项）+ 运行非流式（§3.1）+ 会话四端点与消息回显（§4，
+ * perms ai:agent:run）。
  * 流式端点 §3.2 POST /ai/agent/{agent_id}/run/stream 不在本文件——SSE 增量读取
  * 走 utils/sse.ts 的 ssePost（帧协议逐字沿 RAG 对话母契约，sse.ts 为冻结红线零改动）。
  * AI 域出参口径（契约 §0/§2）：字段 snake_case、id/total 为 JSON number（非 Java 域
@@ -11,6 +12,7 @@ import { request } from '../utils/request'
 import type {
   AgentAnswerVo,
   AgentDetailVo,
+  AgentMcpServerOptionVo,
   AgentPageQuery,
   AgentRunPayload,
   AgentRunsPageQuery,
@@ -39,7 +41,8 @@ export function pageAgents(query: AgentPageQuery): Promise<AiPageResult<AgentSum
 
 /**
  * 创建智能体（契约 §2.2，perms ai:agent:add）：返回新智能体 id（JSON number）；
- * 5016 名称已存在 / 5017 tool_ids 含无效项 / 1001 参数由拦截器统一 toast
+ * 5016 名称已存在 / 5017 tool_ids 含无效项 / 5029 mcp_server_ids 含软删或不存在项
+ * （停用行可绑不触发）/ 1001 参数由拦截器统一 toast
  */
 export function createAgent(payload: CreateAgentPayload): Promise<number> {
   return request<number>({ url: '/ai/agent', method: 'post', data: payload })
@@ -55,8 +58,9 @@ export function getAgent(id: number): Promise<AgentDetailVo> {
 
 /**
  * 全量编辑智能体（契约 §2.4，perms ai:agent:update）：入参与创建同构 + status 必填，
- * 不传字段=清空/回默认——前端恒提交完整表单（含状态开关场景：先拉详情再合并提交）；
- * 每次成功编辑服务端 config_version +1；5015/5016/5017/1001 拦截器统一 toast
+ * 不传字段=清空/回默认——前端恒提交完整表单（含 mcp_server_ids 与状态开关场景：
+ * 先拉详情再合并提交）；两类绑定均全删全插替换；每次成功编辑服务端 config_version +1；
+ * 5015/5016/5017/5029/1001 拦截器统一 toast
  */
 export function updateAgent(id: number, payload: UpdateAgentPayload): Promise<null> {
   return request<null>({ url: `/ai/agent/${id}`, method: 'put', data: payload })
@@ -76,6 +80,15 @@ export function deleteAgent(id: number): Promise<null> {
  */
 export function listAgentTools(): Promise<ToolVo[]> {
   return request<ToolVo[]>({ url: '/ai/agent/tool/list', method: 'get' })
+}
+
+/**
+ * MCP 服务绑定选项（契约 §2.8，2026-10-31 新增，perms ai:agent:list）：启用未删
+ * server + 名下已发布工具数（0 也列出——订阅语义）；只读不分页，编辑弹窗
+ * 「MCP 服务」多选的数据源；出参字段收窄无 url/凭据，不依赖 ai:mcp:list
+ */
+export function listAgentMcpServerOptions(): Promise<AgentMcpServerOptionVo[]> {
+  return request<AgentMcpServerOptionVo[]>({ url: '/ai/agent/mcp-server/options', method: 'get' })
 }
 
 /**

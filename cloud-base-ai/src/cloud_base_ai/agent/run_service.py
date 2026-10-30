@@ -113,7 +113,7 @@ async def _load_visible_tools(agent_id: int) -> Sequence[tuple[AiTool, Any]]:
     权限门按工具行侧过滤（visible_tools 鸭子类型只读 required_perms），再把存活
     元组按工具 id 对回——返回 (AiTool, AiMcpServer) 元组序列供运行装配路由。"""
     session = current_session()
-    pairs = list(await dao.list_bound_tools(session, agent_id))
+    pairs = list(await dao.list_effective_tools(session, agent_id))
     identity = current_identity()
     perms = set(identity.perms) if identity is not None else set()
     visible = visible_tools([tool for tool, _server in pairs], perms)

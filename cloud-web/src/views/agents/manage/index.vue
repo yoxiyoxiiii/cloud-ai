@@ -1,9 +1,10 @@
 <script setup lang="ts">
 /**
- * 智能体管理页（/agent/manage，契约 2026-10-29-agent-platform-api §2 管理面七端点）：
+ * 智能体管理页（/agent/manage，契约 2026-10-29-agent-platform-api §2 管理面八端点）：
  * 标准表格管理页——搜索栏（§2.1 name 包含匹配）+ 操作条（§2.2 新增）+ ProTable 列表
  * （名称/工具/温度/状态开关/创建时间/操作）；状态开关走 §2.4 全量编辑（先拉 §2.3 详情
- * 合并提交——列表行无提示词与工具绑定，PUT 全量覆盖语义不能只发 status）；
+ * 合并提交——列表行无提示词与两类绑定，PUT 全量覆盖语义不能只发 status，tool_ids/
+ * mcp_server_ids 须一并带回否则清空绑定）；
  * 编辑/删除/运行历史/试跑四入口分立（perms §1：update/delete/run 按钮级控制）；
  * 错误分支（403/1001/5015/5016/5017）拦截器统一 toast，页面 catch 留空
  */
@@ -119,6 +120,7 @@ async function handleStatusChange(row: AgentSummaryVo, enabled: boolean): Promis
       description: detail.description ?? undefined,
       temperature: detail.temperature,
       tool_ids: detail.tool_ids,
+      mcp_server_ids: detail.mcp_server_ids,
       status: next,
     })
     row.status = next

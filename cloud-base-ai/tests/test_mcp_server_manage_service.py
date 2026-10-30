@@ -1,5 +1,6 @@
 """MCP Server 管理面 service 测试：查重两层 / 5021/5022/5023 / 内置行保护 /
-transport 归一化 / tool_counts 聚合 / test_config 通道替身（5025/透传/双主体）。
+transport 归一化 / tool_counts 聚合 / test_config 通道替身（5025/透传/双主体）/
+server 状态变化后 compiled agent 缓存失效（P3 修复钉死）。
 
 DB 走 SQLite 内存替身（make_service_session_factory + monkeypatch tx.get_session_factory）；
 test_config 的 MCP 客户端以模块属性替身打桩（零网络）。
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.exc import IntegrityError
 
+from cloud_base_ai.agent import runtime
 from cloud_base_ai.agent.entities import AiTool
 from cloud_base_ai.db import tx
 from cloud_base_ai.db.base import set_current_account
@@ -33,6 +35,14 @@ def _reset_account():
     set_current_account(None)
     yield
     set_current_account(None)
+
+
+@pytest.fixture(autouse=True)
+def _reset_agent_cache():
+    """隔离 compiled agent 缓存跨用例泄漏（缓存钉死用例预置哨兵后须回收）。"""
+    runtime._agent_cache.clear()
+    yield
+    runtime._agent_cache.clear()
 
 
 def _req(name: str = "E2E_EXT", **overrides) -> CreateServerReq:
@@ -181,8 +191,52 @@ async def test_delete_server_builtin_5022_and_normal_ok(
         assert [r.name for r in result.rows] == ["SYSTEM"]
 
 
-# ---------- page_list：tool_counts 摘要 ----------
+# ---------- P3 修复钉死：server 状态变化 → 提交后清 compiled agent 缓存 ----------
 
+
+async def test_update_server_clears_agent_cache_on_success(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """停用/启用/编辑成功后清缓存（事务提交后）——修复「停用语义在缓存温热期
+    不成立」的上一轮缺陷（agent 契约 §8 记档）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        runtime._agent_cache[1] = (1, object())  # 哨兵：温热中的 compiled agent
+        server_id = await manage_service.create_server(_req("E2E_CACHE_UPD"))
+        await manage_service.update_server(
+            server_id, _update_req("E2E_CACHE_UPD", status=1))
+        assert runtime._agent_cache == {}
+
+
+async def test_delete_server_clears_agent_cache_on_success(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """软删成功后清缓存（软删使 server 工具面对运行不可见，温热期同样须生效）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        runtime._agent_cache[1] = (1, object())
+        server_id = await manage_service.create_server(_req("E2E_CACHE_DEL"))
+        await manage_service.delete_server(server_id)
+        assert runtime._agent_cache == {}
+
+
+async def test_server_business_error_keeps_cache(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """业务码路径（5021 不存在 / 5022 内置保护）不清缓存——零变更零失效。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        sentinel = (1, object())
+        runtime._agent_cache[1] = sentinel
+        with pytest.raises(BusinessException) as ei:
+            await manage_service.update_server(99999, _update_req("E2E_X"))
+        assert ei.value.code == 5021
+        assert runtime._agent_cache[1] is sentinel  # 未动缓存
+        builtin_id = await _seed_builtin(factory)
+        with pytest.raises(BusinessException) as ei2:
+            await manage_service.delete_server(builtin_id)
+        assert ei2.value.code == 5022
+        assert runtime._agent_cache[1] is sentinel
+
+
+# ---------- page_list：tool_counts 摘要 ----------
 
 async def test_page_list_servers_tool_counts(monkeypatch: pytest.MonkeyPatch) -> None:
     async with make_service_session_factory() as factory:

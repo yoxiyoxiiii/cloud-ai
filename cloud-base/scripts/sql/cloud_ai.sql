@@ -191,6 +191,24 @@ CREATE TABLE ai_agent_tool
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
   COMMENT ='智能体-工具绑定（纯关系表：物理删除，随保存全删全插）';
 
+-- 智能体-MCP服务绑定（2026-10-31 server 级订阅绑定轮新增；增量脚本
+-- 2026-10-31-agent-mcp-server-binding.sql）：纯关系表，沿 ai_agent_tool 先例物理删除、
+-- 保存 = 按 agent_id 全删全插；订阅语义——绑定后该 server 名下已发布工具自动进入
+-- agent 工具面（装配每运行查库，工具同步/审核的缓存失效联动覆盖自动生效）。
+-- uk_agent_server(agent_id, server_id) 三用：保存全删全插 DELETE 前缀 / 装配子查询
+-- 前缀反向扫 / 并发双插查重兜底；按 server 反查暂无消费方不建索引（需求出现再增量）。
+CREATE TABLE ai_agent_mcp_server
+(
+    id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '绑定ID（主键）',
+    agent_id    BIGINT      NOT NULL COMMENT '智能体ID（ai_agent.id，弱引用不建外键；agent 软删不级联，绑定行随软删失去可见入口）',
+    server_id   BIGINT      NOT NULL COMMENT 'MCP服务ID（ai_mcp_server.id，弱引用不建外键；停用行可绑=预绑定，运行期静默过滤；软删行绑定校验拦 5029）',
+    create_by   VARCHAR(30) NULL COMMENT '绑定操作人账号',
+    create_time DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '绑定时间（DB 时钟生成，应用层不传时间值）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_agent_server (agent_id, server_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+  COMMENT ='智能体-MCP服务绑定（纯关系表：物理删除，随保存全删全插；订阅语义——server名下已发布工具自动进agent工具面）';
+
 -- 智能体会话元数据（对齐 ai_chat_session 先例；消息在 Redis Cluster 键 agent:messages:{id}）：
 -- idx_agent_user(agent_id, user_id, deleted) 命中唯一高频查询「某用户在某智能体下的会话列表
 -- （id 倒序）」——二级索引隐式追加主键 id，等值前缀后沿 id 逆序扫描免 filesort；

@@ -18,6 +18,7 @@ __all__ = [
     "CreateAgentReq",
     "UpdateAgentReq",
     "ToolVo",
+    "AgentMcpServerOptionVo",
     "RunLogVo",
     "AgentAnswerVo",
     "AgentSessionVo",
@@ -30,7 +31,8 @@ __all__ = [
 
 
 class AgentSummaryVo(VoTimeMixin):
-    """智能体列表行（契约 §2.1）：tool_names 为绑定工具显示名（空数组=纯对话 agent）。"""
+    """智能体列表行（契约 §2.1）：tool_names 为生效工具显示名（合并展开=直接绑定 ∪
+    MCP 服务级绑定展开，空数组=纯对话 agent）。"""
 
     id: int
     name: str
@@ -43,25 +45,38 @@ class AgentSummaryVo(VoTimeMixin):
 
 
 class AgentDetailVo(AgentSummaryVo):
-    """智能体详情（契约 §2.3）：列表行字段全部 + system_prompt + tool_ids + config_version。"""
+    """智能体详情（契约 §2.3）：列表行字段全部 + system_prompt + 两类绑定纯行回显
+    （mcp_server_names 按绑定行 join server 取名，软删 server 名照回——台账完整）
+    + config_version。"""
 
     system_prompt: str
     tool_ids: list[int]
+    mcp_server_ids: list[int]
+    mcp_server_names: list[str]
     config_version: int
 
 
 class CreateAgentReq(BaseModel):
-    """创建入参（契约 §2.2）。tool_ids 服务端去重；无效项由 service 校验（5017）。"""
+    """创建入参（契约 §2.2）。tool_ids/mcp_server_ids 服务端去重；无效项由 service
+    校验（5017/5029）。mcp_server_ids 是订阅语义绑定——server 名下已发布工具全部
+    进入工具面，停用行可绑（预绑定，运行期静默过滤）。"""
 
     name: str = Field(description="名称（全局唯一）", min_length=1, max_length=50)
     system_prompt: str = Field(description="系统提示词（静态模板）", min_length=1, max_length=8000)
     description: str | None = Field(default=None, description="描述", max_length=512)
     temperature: float = Field(default=0.7, description="LLM 采样温度", ge=0, le=2)
     tool_ids: list[int] = Field(default_factory=list, description="绑定工具ID列表")
+    mcp_server_ids: list[int] = Field(default_factory=list, description="绑定MCP服务ID列表")
 
     @field_validator("tool_ids")
     @classmethod
-    def _dedupe(cls, v: list[int]) -> list[int]:
+    def _dedupe_tools(cls, v: list[int]) -> list[int]:
+        """重复元素静默去重（保序——绑定回显顺序稳定）。"""
+        return list(dict.fromkeys(v))
+
+    @field_validator("mcp_server_ids")
+    @classmethod
+    def _dedupe_servers(cls, v: list[int]) -> list[int]:
         """重复元素静默去重（保序——绑定回显顺序稳定）。"""
         return list(dict.fromkeys(v))
 
@@ -83,6 +98,17 @@ class ToolVo(BaseModel):
     required_perms: list[str]
     server_id: int
     server_name: str
+
+
+class AgentMcpServerOptionVo(BaseModel):
+    """MCP 服务绑定选项行（契约 §2.8）：字段收窄，无 url/凭据回显面——编辑 agent
+    只需 ai:agent:* 权限不依赖 ai:mcp:list；published_tool_count=名下已发布工具数，
+    0 也列出（订阅语义：绑定后同步+审核出工具即自动生效）。"""
+
+    id: int
+    name: str
+    description: str | None
+    published_tool_count: int
 
 
 class RunLogVo(BaseModel):

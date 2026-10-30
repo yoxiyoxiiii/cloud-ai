@@ -20,6 +20,7 @@ from cloud_base_ai.agent import manage_service, run_service
 from cloud_base_ai.agent.schemas import (
     AgentAnswerVo,
     AgentDetailVo,
+    AgentMcpServerOptionVo,
     AgentRunReq,
     AgentSessionMessagesVo,
     AgentSessionVo,
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 DONE_FRAME: str = "data: [DONE]\n\n"
 
-# 管理查询（契约 §2.1/§2.3/§2.6/§2.7）
+# 管理查询（契约 §2.1/§2.3/§2.6/§2.7/§2.8）
 agent_list_router = APIRouter(prefix="/agent",
                               dependencies=[Depends(require_perms("ai:agent:list"))])
 agent_add_router = APIRouter(prefix="/agent",
@@ -86,6 +87,17 @@ async def page_list_agents(
 async def list_tool_registry() -> R[list[ToolVo]]:
     """工具注册表全量（契约 §2.6）：只读不分页（量级个位数）。"""
     vos = await manage_service.list_tool_registry()
+    return R.ok(vos)
+
+
+@agent_list_router.get("/mcp-server/options")
+async def list_mcp_server_options() -> R[list[AgentMcpServerOptionVo]]:
+    """MCP 服务绑定选项（契约 §2.8）：启用未删 server + 已发布工具数，只读不分页。
+
+    注册顺序必须在 GET /{agent_id} 之前——FastAPI 按注册顺序匹配，否则
+    /mcp-server/options 会被 {agent_id} 通配吞掉变 422（沿 /tool/list 先例）。
+    """
+    vos = await manage_service.list_mcp_server_options()
     return R.ok(vos)
 
 

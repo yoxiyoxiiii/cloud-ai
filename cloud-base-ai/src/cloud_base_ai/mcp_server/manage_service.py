@@ -12,6 +12,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy.exc import IntegrityError
 
+from cloud_base_ai.agent import runtime
 from cloud_base_ai.db.tx import current_session, transactional
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.mcp import client as mcp_client
@@ -94,8 +95,16 @@ async def create_server(req: CreateServerReq) -> int:
     return row.id
 
 
-@transactional
 async def update_server(server_id: int, req: UpdateServerReq) -> None:
+    """外壳：内核事务提交后清 compiled agent 缓存——server 启停/编辑改变 agent 生效
+    工具面，停用语义在缓存温热期也须成立。内核抛业务码（5021/5022/5023）路径不清
+    缓存（零变更零失效）；commit 失败（罕见）缓存未清，行为退化到修复前不劣化。"""
+    await _update_server_tx(server_id, req)
+    runtime.reset_cache()
+
+
+@transactional
+async def _update_server_tx(server_id: int, req: UpdateServerReq) -> None:
     """全量编辑 server 行（契约 §2.4）：存在 5021 → 内置行保护（改名 5022）→ 查重
     排除自身 5023 → 全列覆盖 + 审计两值。内置行 url/transport/头配置/启停可编辑。"""
     session = current_session()
@@ -124,8 +133,15 @@ async def update_server(server_id: int, req: UpdateServerReq) -> None:
         raise BusinessException(MSG_SERVER_NOT_EXISTS, CODE_SERVER_NOT_EXISTS)
 
 
-@transactional
 async def delete_server(server_id: int) -> None:
+    """外壳：内核事务提交后清 compiled agent 缓存——软删使 server 工具面对运行
+    不可见，温热期同样须生效。业务码路径不清缓存（零变更零失效）。"""
+    await _delete_server_tx(server_id)
+    runtime.reset_cache()
+
+
+@transactional
+async def _delete_server_tx(server_id: int) -> None:
     """软删 server 行（契约 §2.5）：内置行不可删（5022）；名下工具行与绑定行保留
     （对运行不可见由运行链路过滤）。停用语义请用 PUT status=1。"""
     session = current_session()

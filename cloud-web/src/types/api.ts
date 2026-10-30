@@ -1216,15 +1216,19 @@ export const TABLE_KEY_USER = 'system:user'
 export const TABLE_KEY_DICT = 'system:dict'
 
 /* ===== 平台 Agent 管理（契约 2026-10-29-agent-platform-api）
-   管理面 §2 七端点（perms ai:agent:list/add/update/delete）+ 运行面 §3 两端点与
+   管理面 §2 八端点（perms ai:agent:list/add/update/delete）+ 运行面 §3 两端点与
    会话面 §4 四端点（perms ai:agent:run）。AI 域出参口径同 kb 契约 §1：字段 snake_case、
    id/total 为 JSON number（非 Java 域 Long→String）、分页查询参数名 page/size。
-   流式端点 §3.2 帧协议逐字沿 RAG 对话母契约——前端 utils/sse.ts 零改动直接复用 */
+   流式端点 §3.2 帧协议逐字沿 RAG 对话母契约——前端 utils/sse.ts 零改动直接复用。
+   2026-10-31 修订（agent 绑定 MCP 服务轮）：§2.1/§2.2/§2.3/§2.4 增 mcp_server_ids
+   相关字段、新增 §2.8 绑定选项端点（修订记录见契约 §8） */
 
 /**
  * 智能体列表行 VO（契约 §2.1）：分页 id 倒序、软删不可见；
- * status 语义 0=启用 1=停用；tool_names 为绑定工具显示名（空数组=纯对话 agent）；
- * 列表行不含 system_prompt/tool_ids——编辑回显须走 §2.3 详情端点
+ * status 语义 0=启用 1=停用；tool_names 为生效工具显示名（2026-10-31 修订：合并展开 =
+ * 直接绑定 ∪ MCP 服务级绑定展开，仅可见工具——已发布且归属 server 启用未删，同一工具
+ * 双路径绑定不重复；空数组=纯对话 agent）；
+ * 列表行不含 system_prompt/tool_ids/mcp_server_ids——编辑回显须走 §2.3 详情端点
  */
 export interface AgentSummaryVo {
   /** 智能体 id（AI 域口径：JSON number） */
@@ -1243,19 +1247,27 @@ export interface AgentSummaryVo {
 }
 
 /**
- * 智能体详情 VO（契约 §2.3）：列表行全字段 + 提示词/工具 id 绑定/配置版本；
- * config_version 每次成功编辑 SQL 原子 +1（运行时缓存失效键，前端仅回显展示值不消费）
+ * 智能体详情 VO（契约 §2.3）：列表行全字段 + 提示词/两类绑定 id/配置版本；
+ * config_version 每次成功编辑 SQL 原子 +1（运行时缓存失效键，前端仅回显展示值不消费）。
+ * 2026-10-31 修订：tool_ids/mcp_server_ids 均为纯绑定行（配置事实，不做可见性过滤——
+ * 工具停用/失效、server 停用/软删不改变「绑了什么」）
  */
 export interface AgentDetailVo extends AgentSummaryVo {
   system_prompt: string
   /** 绑定工具 id 集（ai_tool.id）；编辑提交原样回传 */
   tool_ids: number[]
+  /** 绑定 MCP 服务 id 集（ai_mcp_server.id，升序）；编辑提交原样回传 */
+  mcp_server_ids: number[]
+  /** 绑定 MCP 服务名（按绑定行 join server 行取名，软删 server 名照回——台账完整） */
+  mcp_server_names: string[]
   config_version: number
 }
 
 /**
  * 创建智能体入参（契约 §2.2）：name 唯一（重名/墓碑占键 5016）；
- * tool_ids 可选默认 []，含无效项 5017（服务端去重）
+ * tool_ids 可选默认 []，含无效项 5017（服务端去重）；mcp_server_ids 订阅语义
+ * （2026-10-31 修订）：该 server 名下已发布工具全部进入 agent 工具面，停用行可绑
+ * （预绑定，运行期静默过滤），软删/不存在项 5029
  */
 export interface CreateAgentPayload {
   name: string
@@ -1265,6 +1277,8 @@ export interface CreateAgentPayload {
   /** 可选，默认 0.7，0 ≤ x ≤ 2 */
   temperature?: number
   tool_ids?: number[]
+  /** 可选默认 []（服务端去重） */
+  mcp_server_ids?: number[]
 }
 
 /**
@@ -1290,6 +1304,23 @@ export interface ToolVo {
   description: string
   /** 所需权限标识（空数组=登录即可） */
   required_perms: string[]
+}
+
+/**
+ * MCP 服务绑定选项 VO（契约 §2.8，2026-10-31 新增）：编辑弹窗「MCP 服务」多选的
+ * 选项源；只读不分页（id 升序），仅启用未软删行（停用行不可作为新绑定选项，
+ * 已绑定的停用行回显走 §2.3 详情）；字段收窄无 url/凭据——只需 ai:agent:list 权限，
+ * 不依赖 ai:mcp:list
+ */
+export interface AgentMcpServerOptionVo {
+  /** MCP 服务 id（ai_mcp_server.id，AI 域口径：JSON number） */
+  id: number
+  /** 服务名（大写蛇形，如 SYSTEM） */
+  name: string
+  /** 备注；可 null */
+  description: string | null
+  /** 名下已发布（status=1）工具数；0 也列出（订阅语义——绑定后出工具即自动生效） */
+  published_tool_count: number
 }
 
 /**

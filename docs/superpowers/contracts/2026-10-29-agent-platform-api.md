@@ -7,6 +7,8 @@
 > AI 域出参口径：字段 snake_case、id/total 为 JSON number（非 Java 域 Long→String）、分页查询参数名 `page/size`。
 >
 > **§7 为 `2026-10-17-mcp-tools-api.md` §5 的修订版**（真相源换轨 ai_tool 注册表），由主控协调同步进原契约，两端不得单方改。
+>
+> **2026-10-31 修订**（agent 绑定 MCP 服务轮，`2026-10-31-agent-mcp-server-binding-design.md`）：§2.1/§2.2/§2.3/§2.4/§3/§5/新增 §2.8——修订内容与理由全文见本文 §8。
 
 ## 1. 网关路径链与鉴权
 
@@ -18,7 +20,7 @@
 | `ai:agent:add` / `ai:agent:update` / `ai:agent:delete` | §2 对应写端点 | 管理角色（F 按钮） |
 | `ai:agent:run` | §3 运行 + §4 会话全部端点 | 使用者与管理角色按需发放（管理与使用分离；未发放者 playground 同样 403，无特例） |
 
-## 2. 管理面端点（七个）
+## 2. 管理面端点（八个）
 
 ### 2.1 GET /ai/agent/list —— 分页（perms ai:agent:list）
 
@@ -33,7 +35,7 @@
 | data.rows[].description | string\|null | 描述 |
 | data.rows[].temperature | number | 采样温度（0~2） |
 | data.rows[].status | number | 0=启用 1=停用 |
-| data.rows[].tool_names | string[] | 已绑定工具显示名（空数组=纯对话 agent） |
+| data.rows[].tool_names | string[] | 生效工具显示名（2026-10-31 修订：合并展开 = 直接绑定 ∪ MCP 服务级绑定展开，仅可见工具——已发布且归属 server 启用未删；空数组=纯对话 agent） |
 | data.rows[].create_time / update_time | string\|null | `yyyy-MM-dd HH:mm:ss` |
 
 ### 2.2 POST /ai/agent —— 创建（perms ai:agent:add）
@@ -47,16 +49,19 @@
 | description | string | 可选 ≤512 | 描述 |
 | temperature | number | 可选，默认 0.7，0 ≤ x ≤ 2 | LLM 采样温度 |
 | tool_ids | number[] | 可选默认 []，去重 | 绑定工具（ai_tool.id） |
+| mcp_server_ids | number[] | 可选默认 []，去重 | 绑定 MCP 服务（ai_mcp_server.id；2026-10-31 修订）。订阅语义：该 server 名下已发布工具全部进入 agent 工具面，后续审核发布的新工具自动生效。**停用行可绑**（预绑定，运行期静默过滤）；软删/不存在项 → 5029 |
 
-**出参** `R<number>`（新智能体 id）。**错误**：5016 名称已存在（查重+并发兜底）；5017 tool_ids 含无效项；1001 参数。
+**出参** `R<number>`（新智能体 id）。**错误**：5016 名称已存在（查重+并发兜底）；5017 tool_ids 含无效项；5029 mcp_server_ids 含无效项；1001 参数。
 
 ### 2.3 GET /ai/agent/{id} —— 详情（perms ai:agent:list）
 
-**出参** `R<AgentDetailVo>`：§2.1 行字段全部 + `system_prompt`（string）+ `tool_ids`（number[]）+ `config_version`（number）。**错误**：5015 不存在。
+**出参** `R<AgentDetailVo>`：§2.1 行字段全部 + `system_prompt`（string）+ `tool_ids`（number[]）+ `mcp_server_ids`（number[]）+ `mcp_server_names`（string[]）+ `config_version`（number）。**错误**：5015 不存在。
+
+回显口径（2026-10-31 修订）：`tool_ids`/`mcp_server_ids` 均为**纯绑定行**（配置事实，不做可见性过滤——工具停用/失效、server 停用/软删不改变「绑了什么」；id 均升序）；`mcp_server_names` 按绑定行 join server 行取名，**软删 server 的名字照回**（台账完整）；`tool_names` 为合并展开的可见集（与 §2.1 同口径）。
 
 ### 2.4 PUT /ai/agent/{id} —— 全量编辑（perms ai:agent:update）
 
-**入参**：与 §2.2 完全相同 + `status`（number，必填 0|1）。全量覆盖语义（不传字段=清空/回默认，对齐知识库编辑先例）。**服务端行为**：每次成功编辑 `config_version` SQL 原子 +1（运行时缓存失效键）。**出参** `R<null>`。**错误**：5015 / 5016 / 5017 / 1001。
+**入参**：与 §2.2 完全相同（含 2026-10-31 修订的 `mcp_server_ids`）+ `status`（number，必填 0|1）。全量覆盖语义（不传字段=清空/回默认，对齐知识库编辑先例）。**服务端行为**：每次成功编辑 `config_version` SQL 原子 +1（运行时缓存失效键）；两类绑定均全删全插替换。**出参** `R<null>`。**错误**：5015 / 5016 / 5017 / 5029 / 1001。
 
 ### 2.5 DELETE /ai/agent/{id} —— 删除（perms ai:agent:delete）
 
@@ -91,7 +96,22 @@
 | rows[].duration_ms | number | 耗时毫秒 |
 | rows[].create_time | string | 运行结束落库时间 |
 
+### 2.8 GET /ai/agent/mcp-server/options —— MCP 服务绑定选项（perms ai:agent:list；2026-10-31 新增）
+
+agent 编辑弹窗「MCP 服务」多选的选项源。**只返回启用（status=0）且未软删的 server 行**（停用行不可作为新绑定选项；已绑定的停用行回显见 §2.3）。只读、不分页（量级个位数到十位数）。出参与 MCP 管理面（`2026-10-30-mcp-server-mgmt-api.md` §2.1）字段收窄，无 url/凭据回显面——编辑 agent 只需 `ai:agent:*` 权限，不依赖 `ai:mcp:list`。
+
+**出参** `R<AgentMcpServerOptionVo[]>`（id 升序）：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | number | MCP服务ID |
+| name | string | 服务名 |
+| description | string\|null | 备注 |
+| published_tool_count | number | 名下已发布（status=1）工具数；**0 也列出**（订阅语义：绑定后 server 同步+审核出工具即自动生效） |
+
 ## 3. 运行面端点（两个，perms ai:agent:run）
+
+**工具装配口径（2026-10-31 修订，对 §3.1/§3.2 共同生效）**：agent 生效工具面 = **直接绑定工具 ∪ MCP 服务级绑定展开**（server 名下已发布工具）的并集，仅保留可见行（已发布且归属 server 启用未删），同一工具双路径绑定不重复注入。**权限门不变**：并集内每个工具仍按 `required_perms ⊆ 用户 perms` 过滤（server 级展开的工具同样过门，不满足即不注入）。**订阅语义**：server 级绑定的工具面随注册表动态展开——server 后续同步新增并审核发布的工具自动进入 agent 工具面，无需编辑 agent。被过滤的工具不报错（静默缩窄运行，沿既有语义）。
 
 ### 3.1 POST /ai/agent/{agent_id}/run —— 非流式
 
@@ -125,7 +145,7 @@
 
 会话端点对智能体状态的校验口径：**创建会话校验智能体存在且启用**（否则 5015）；**会话列表/回显/删除不校验智能体状态**（停用/已删智能体的历史会话仍可列表、回显、删除——5015 只拦运行与创建会话），路径 `agent_id` 不存在时列表返回空页。
 
-## 5. 错误码总表（本轮新占 5015-5020；5001-5014 既有沿用）
+## 5. 错误码总表（首轮 5015-5020；2026-10-31 修订追加 5029；5001-5014 既有沿用）
 
 | code | 语义 | 触发 |
 |---|---|---|
@@ -134,6 +154,7 @@
 | 5015 | 智能体不存在或已停用 | 管理面按 id 查不存在；运行/创建会话时 agent 不存在或 status=1 |
 | 5016 | 智能体名称已存在 | 创建/编辑重名（查重 + 并发唯一键兜底） |
 | 5017 | 工具不存在 | 创建/编辑时 tool_ids 含无效项 |
+| 5029 | MCP服务不存在或已删除 | 创建/编辑时 mcp_server_ids 含不存在或软删项（2026-10-31；停用行可绑不触发） |
 | 5018 | 智能体运行失败 | 编排层兜底（组装/运行异常；LLM/MCP 既有码优先透传） |
 | 5019 | 会话不存在 | session_id 无对应活会话行 |
 | 5020 | 会话访问被拒 | 会话非本人，或不属于路径 agent_id |
@@ -171,3 +192,18 @@ SELECT 1, id, NOW() FROM sys_menu WHERE id IN (186,187,188,189,190);
 - **真相源**：原「Python 侧硬编码映射 TOOL_PERMS（本契约为唯一对齐物）」改为——**`cloud_ai` 库 `ai_tool` 注册表**（`required_perms` 列）。种子值与本契约 §2 权限档位同步（`system_query_users` → `system:user:list`；`system_query_dict_items` → 空=登录即可）；**工具名/权限档位变更须先修本契约再改种子**，管理面不提供注册表编辑。
 - **实现**：`cloud_base_ai/mcp/perm.py` 的 `visible_tools` 改为按注册表行过滤（签名 `visible_tools(tool_rows, user_perms)`）；agent 运行链路每运行查询一次注册表（量级个位数，不设缓存）。`smoke_mcp_system.py` 同步改造。
 - 过滤规则与防御纵深语义不变：过滤只影响呈现给模型的工具清单，不影响服务端判定；直接调用无权限工具仍由服务端 `PERMISSION_DENIED` 拒绝。
+
+## 8. 修订记录（2026-10-31 agent 绑定 MCP 服务轮）
+
+> 修订依据：`docs/superpowers/specs/2026-10-31-agent-mcp-server-binding-design.md`（用户拍板 P1-P4）；由主控协调修订，两端不得单方改。
+
+**修订理由**：agent 此前只支持按单个工具绑定，本轮增加 MCP server 级绑定（管控粒度=server 级，用户拍板）：agent 绑定整个 server，其名下已发布工具全部进入工具面（订阅语义）。修订内容：
+
+- §2.2/§2.4 入参新增 `mcp_server_ids`（默认 []、去重；软删/不存在 → 5029；**停用行可绑**=预绑定，运行期静默过滤——沿 tool_ids「配置宽、运行严」先例）；两类绑定均全删全插替换。
+- §2.3 detail 出参新增 `mcp_server_ids` / `mcp_server_names`（纯绑定行回显，软删 server 名照回）；`tool_names` 回显口径与列表统一为合并展开。
+- §2.1 列表 `tool_names` 改为**合并展开**口径（直接绑定 ∪ server 展开全集，仅可见行——所见即运行真面，拍板 P2）。
+- 新增 §2.8 `GET /ai/agent/mcp-server/options`（perms ai:agent:list；启用未删 server + 已发布工具数；字段收窄不依赖 ai:mcp:list）。
+- §3 运行面补装配口径：并集装配、权限门不变（server 级展开的工具同样过 required_perms 门）、订阅语义（server 后续审核发布的工具自动生效）。
+- §5 新增 5029「MCP服务不存在或已删除」。
+- **行为修复记档（拍板 P3，无端点变化）**：上一轮（2026-10-30 契约 §4）「server 停用后其工具对 agent 运行不可见」在 compiled agent 缓存温热期不成立——server 停用/启用/软删此前未失效进程内缓存。本轮已在 `mcp_server` service 的 update_server/delete_server 成功路径补 `runtime.reset_cache()`（事务提交后），停用语义全路径成立。MCP 管理契约端点与文档零改动（纯 service 内部行为修复）。
+- 种子/e2e 影响：无新菜单种子（options 端点挂既有 ai:agent:list）；e2e 聚合脚本零同步，`run-agent-e2e.mjs` 扩 AG1 场景（独立入口）。

@@ -4,6 +4,7 @@ from sqlalchemy import UniqueConstraint, inspect
 
 from cloud_base_ai.agent.entities import (
     AiAgent,
+    AiAgentMcpServer,
     AiAgentRunLog,
     AiAgentSession,
     AiAgentTool,
@@ -77,6 +78,24 @@ def test_agent_tool_unique_declarations():
     constraints = [c for c in AiAgentTool.__table__.constraints
                    if isinstance(c, UniqueConstraint)]
     assert any(uc.name == "uk_agent_tool" for uc in constraints)
+
+
+def test_agent_mcp_server_table_and_columns_match_ddl():
+    # 纯关系表（沿 AiAgentTool 先例）：无 deleted/update 审计列——保存=按 agent 全删全插，
+    # 行生命周期只有插入与物理删除；订阅语义：server 名下已发布工具自动进 agent 工具面
+    assert AiAgentMcpServer.__tablename__ == "ai_agent_mcp_server"
+    cols = {c.name for c in inspect(AiAgentMcpServer).columns}
+    assert cols == {"id", "agent_id", "server_id", "create_by", "create_time"}
+    assert not issubclass(AiAgentMcpServer, AuditMixin)
+    assert not issubclass(AiAgentMcpServer, SoftDeleteMixin)
+
+
+def test_agent_mcp_server_unique_declarations():
+    # uk_agent_server(agent_id, server_id) 三用：保存全删全插前缀 / 装配子查询前缀 /
+    # 并发双插查重兜底；不为「按 server 反查绑定 agent」建索引（该查询暂无消费方）
+    constraints = [c for c in AiAgentMcpServer.__table__.constraints
+                   if isinstance(c, UniqueConstraint)]
+    assert any(uc.name == "uk_agent_server" for uc in constraints)
 
 
 def test_agent_session_table_and_columns_match_ddl():
