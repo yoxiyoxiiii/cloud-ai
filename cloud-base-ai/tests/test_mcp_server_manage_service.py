@@ -1,6 +1,7 @@
 """MCP Server 管理面 service 测试：查重两层 / 5021/5022/5023 / 内置行保护 /
 transport 归一化 / tool_counts 聚合 / test_config 通道替身（5025/透传/双主体）/
-server 状态变化后 compiled agent 缓存失效（P3 修复钉死）。
+server 状态变化后 compiled agent 缓存失效（P3 修复钉死）/ 用户授权 get/save
+（5021 / 保序去重 / 全空清空 / 异常回滚）。
 
 DB 走 SQLite 内存替身（make_service_session_factory + monkeypatch tx.get_session_factory）；
 test_config 的 MCP 客户端以模块属性替身打桩（零网络）。
@@ -21,6 +22,7 @@ from cloud_base_ai.mcp_server import dao, manage_service
 from cloud_base_ai.mcp_server.entities import AiMcpServer
 from cloud_base_ai.mcp_server.schemas import (
     CreateServerReq,
+    ServerPermsSaveReq,
     TestConfigReq,
     UpdateServerReq,
 )
@@ -317,3 +319,69 @@ async def test_test_config_platform_auth_dual_principal(
     assert captured["row"].is_builtin == 1
     assert not hasattr(captured["row"], "headers_json")  # 内置形态不走外部头
     assert captured["jwt"] == "e2e-jwt"
+
+
+# ---------- 用户授权 get/save（契约 2026-10-30-mcp-server-permission-api.md §2/§3） ----------
+
+
+def _perms_req(**overrides) -> ServerPermsSaveReq:
+    return ServerPermsSaveReq(**overrides)
+
+
+async def test_get_server_perms_not_exists_5021(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        with pytest.raises(BusinessException) as ei:
+            await manage_service.get_server_perms(99999)
+        assert ei.value.code == 5021
+
+
+async def test_save_server_perms_not_exists_5021(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        with pytest.raises(BusinessException) as ei:
+            await manage_service.save_server_perms(99999, _perms_req(role_ids=[1]))
+        assert ei.value.code == 5021
+
+
+async def test_server_perms_roundtrip_dedupe_and_clear(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """保存 → 回显往返一致；同请求重复 id 服务端静默去重；三组全空 = 清空授权。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        server_id = await manage_service.create_server(_req("E2E_PERMS"))
+        set_current_account("admin")
+        await manage_service.save_server_perms(server_id, _perms_req(
+            role_ids=[3, 3, 1], dept_ids=[5], user_ids=[7, 7]))
+        vo = await manage_service.get_server_perms(server_id)
+        # 去重后落库（3,3,1 只落 3 与 1 两行）；回显按 subject_id 升序
+        assert vo.role_ids == [1, 3]
+        assert vo.dept_ids == [5]
+        assert vo.user_ids == [7]
+        # 三组全空/不传 = 清空授权（回到默认拒绝）
+        await manage_service.save_server_perms(server_id, _perms_req())
+        cleared = await manage_service.get_server_perms(server_id)
+        assert (cleared.role_ids, cleared.dept_ids, cleared.user_ids) == ([], [], [])
+
+
+async def test_save_server_perms_rollback_on_error(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """保存抛异常整体回滚：旧授权行保持原样（全删全插在同一事务）。"""
+    async with make_service_session_factory() as factory:
+        monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
+        server_id = await manage_service.create_server(_req("E2E_PERMS_RB"))
+        set_current_account("admin")
+        await manage_service.save_server_perms(server_id, _perms_req(role_ids=[1]))
+        before = await manage_service.get_server_perms(server_id)
+        assert before.role_ids == [1]
+
+        async def boom(session, server_id_arg, grants):
+            raise RuntimeError("db down")
+
+        monkeypatch.setattr(dao, "save_server_grants", boom)
+        with pytest.raises(RuntimeError):
+            await manage_service.save_server_perms(server_id, _perms_req(role_ids=[2]))
+        after = await manage_service.get_server_perms(server_id)
+        assert after.role_ids == [1]  # 回滚：新行未落、旧行未失

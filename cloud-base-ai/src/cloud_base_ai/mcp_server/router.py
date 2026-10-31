@@ -1,4 +1,5 @@
-"""MCP Server 配置化管理 API 入口（契约 2026-10-30-mcp-server-mgmt-api.md §2）。
+"""MCP Server 配置化管理 API 入口（契约 2026-10-30-mcp-server-mgmt-api.md §2）
++ 用户授权两端点（契约 2026-10-30-mcp-server-permission-api.md §2/§3）。
 
 鉴权沿 agent 域形态：路由级依赖 require_perms——X-User-Perms 缺失经全局 handler
 转 HTTP 200 + R{code:403}；权限五枚分立挂五个 router（list/add/update/delete/sync），
@@ -17,6 +18,8 @@ from cloud_base_ai.mcp_server.schemas import (
     CreateServerReq,
     ReviewToolReq,
     ServerDetailVo,
+    ServerPermsSaveReq,
+    ServerPermsVo,
     ServerSummaryVo,
     SyncReportVo,
     TestConfigReq,
@@ -85,6 +88,23 @@ async def create_server(req: CreateServerReq) -> R[int]:
 async def update_server(server_id: int, req: UpdateServerReq) -> R[None]:
     """全量编辑 server（契约 §2.4）：内置行改名 5022，data 恒 null。"""
     await manage_service.update_server(server_id, req)
+    return R.ok(None)
+
+
+@mcp_server_update_router.get("/{server_id}/perms")
+async def get_server_perms(server_id: int) -> R[ServerPermsVo]:
+    """查询 MCP 服务用户授权（契约 2026-10-30-mcp-server-permission-api.md §2）：按
+    主体类型三组回显，无授权组空数组；权限复用 ai:mcp:update（读授权清单与保存同
+    权限，不开放给 list-only 用户探测授权面）。"""
+    vo = await manage_service.get_server_perms(server_id)
+    return R.ok(vo)
+
+
+@mcp_server_update_router.put("/{server_id}/perms")
+async def save_server_perms(server_id: int, req: ServerPermsSaveReq) -> R[None]:
+    """保存 MCP 服务用户授权（契约 §3）：三组全量覆盖（全空/不传 = 清空授权，回到
+    默认拒绝），重复 id 服务端静默去重，data 恒 null。"""
+    await manage_service.save_server_perms(server_id, req)
     return R.ok(None)
 
 

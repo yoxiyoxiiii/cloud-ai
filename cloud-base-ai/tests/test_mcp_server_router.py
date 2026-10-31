@@ -73,6 +73,8 @@ def test_no_perms_403_per_router(client: TestClient) -> None:
         ("delete", "/mcp/server/3", None, DELETE_PERMS),
         ("post", "/mcp/server/test-config", {}, SYNC_PERMS),
         ("post", "/mcp/server/3/sync", None, SYNC_PERMS),
+        ("get", "/mcp/server/3/perms", None, UPDATE_PERMS),
+        ("put", "/mcp/server/3/perms", {}, UPDATE_PERMS),
         ("get", "/mcp/tool/list", None, LIST_PERMS),
         ("put", "/mcp/tool/5/review", {}, UPDATE_PERMS),
     ]
@@ -287,3 +289,77 @@ def test_review_tool_ok_and_5027(client: TestClient,
                        json={"required_perms": ["bad-perm"]},
                        headers=UPDATE_PERMS).json()
     assert body3["code"] == 1001
+
+
+# ---------- 用户授权两端点（契约 2026-10-30-mcp-server-permission-api.md §2/§3） ----------
+
+
+def test_server_perms_get_ok_and_5021(client: TestClient,
+                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    """GET 回显三组结构（无授权组空数组）；5021 透传。"""
+    from cloud_base_ai.mcp_server.schemas import ServerPermsVo
+
+    async def fake_get(server_id: int):
+        return ServerPermsVo(role_ids=[1, 3], dept_ids=[5], user_ids=[])
+
+    monkeypatch.setattr(manage_service, "get_server_perms", fake_get)
+    body = client.get("/mcp/server/3/perms", headers=UPDATE_PERMS).json()
+    assert body["code"] == 200
+    assert body["data"] == {"role_ids": [1, 3], "dept_ids": [5], "user_ids": []}
+
+    async def raise_5021(server_id: int):
+        raise BusinessException("MCP服务不存在", 5021)
+
+    monkeypatch.setattr(manage_service, "get_server_perms", raise_5021)
+    body2 = client.get("/mcp/server/999/perms", headers=UPDATE_PERMS).json()
+    assert body2["code"] == 5021
+
+
+def test_server_perms_save_ok_and_5021(client: TestClient,
+                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    """PUT 正常保存 data 恒 null（service 收参为 ServerPermsSaveReq）；5021 透传。"""
+    captured: dict[str, object] = {}
+
+    async def fake_save(server_id: int, req):
+        captured.update(server_id=server_id, role_ids=req.role_ids,
+                        dept_ids=req.dept_ids, user_ids=req.user_ids)
+
+    monkeypatch.setattr(manage_service, "save_server_perms", fake_save)
+    body = client.put("/mcp/server/3/perms",
+                      json={"role_ids": [3, 1], "dept_ids": [], "user_ids": [7]},
+                      headers=UPDATE_PERMS).json()
+    assert body["code"] == 200
+    assert body["data"] is None
+    assert captured == {"server_id": 3, "role_ids": [3, 1],
+                        "dept_ids": [], "user_ids": [7]}
+
+    async def raise_5021(server_id: int, req):
+        raise BusinessException("MCP服务不存在", 5021)
+
+    monkeypatch.setattr(manage_service, "save_server_perms", raise_5021)
+    body2 = client.put("/mcp/server/999/perms", json={"role_ids": []},
+                       headers=UPDATE_PERMS).json()
+    assert body2["code"] == 5021
+
+
+def test_server_perms_save_schema_1001(client: TestClient) -> None:
+    """schema 层 1001：数字串（strict 拒收）/ 越界（<1）/ 超 100 上限 / 路径非整数。"""
+    # strict：JSON number 之外（数字串 "3"）拒收
+    body = client.put("/mcp/server/3/perms", json={"role_ids": ["3"]},
+                      headers=UPDATE_PERMS).json()
+    assert body["code"] == 1001
+    # 越界：每元素 >=1
+    body2 = client.put("/mcp/server/3/perms", json={"dept_ids": [0]},
+                       headers=UPDATE_PERMS).json()
+    assert body2["code"] == 1001
+    # 每数组 <=100
+    body3 = client.put("/mcp/server/3/perms",
+                       json={"user_ids": list(range(1, 102))},
+                       headers=UPDATE_PERMS).json()
+    assert body3["code"] == 1001
+    # 路径参数非整数 → 既有 1001 通道
+    body4 = client.put("/mcp/server/abc/perms", json={"role_ids": [1]},
+                       headers=UPDATE_PERMS).json()
+    assert body4["code"] == 1001
+    body5 = client.get("/mcp/server/abc/perms", headers=UPDATE_PERMS).json()
+    assert body5["code"] == 1001

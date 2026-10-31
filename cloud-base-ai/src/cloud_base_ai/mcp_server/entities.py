@@ -1,15 +1,27 @@
 """MCP Server 域 ORM 实体（DDL 真相源：cloud-base/scripts/sql/cloud_ai.sql ai_mcp_server 段，
-增量脚本 2026-10-30-mcp-server-mgmt.sql）。
+增量脚本 2026-10-30-mcp-server-mgmt.sql / 2026-10-30-mcp-server-permission.sql）。
 
-单表 ai_mcp_server：外部/内置 server 连接配置的真相源。凭据红线：headers_json 只收非敏感
-字面值，真值一律走 credential_headers_json 引用 .env 键名（CLOUD_BASE_AI_MCP__SERVERS__<NAME>__<KEY>），
-本实体永不持有凭据真值。内置行（is_builtin=1）不可删不可改名——name 是凭据命名空间锚点。
+两表：ai_mcp_server——外部/内置 server 连接配置的真相源。凭据红线：headers_json 只收
+非敏感字面值，真值一律走 credential_headers_json 引用 .env 键名
+（CLOUD_BASE_AI_MCP__SERVERS__<NAME>__<KEY>），本实体永不持有凭据真值。内置行
+（is_builtin=1）不可删不可改名——name 是凭据命名空间锚点。
+ai_mcp_server_grant——server 级用户授权（默认拒绝 + 管理豁免，2026-10-30 权限轮）。
 """
 
 from datetime import datetime
 from enum import IntEnum
 
-from sqlalchemy import BigInteger, Integer, SmallInteger, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from cloud_base_ai.db.base import AuditMixin, Base, SoftDeleteMixin
@@ -81,4 +93,58 @@ class AiMcpServer(Base, AuditMixin, SoftDeleteMixin):
     status: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, server_default=text("0"),
         comment="状态：0=启用 1=停用（停用后其工具对 agent 运行不可见，行与工具行保留）",
+    )
+
+
+class AiMcpServerGrant(Base):
+    """MCP 服务用户授权（纯关系表：物理删除、无软删无 update 审计列——行只有插入
+    与删除两个生命周期）。保存授权 = 按 server_id 全删全插（同一事务）。
+
+    默认拒绝 + 管理豁免：无授权行的 server 对运行用户不可用，持 ai:mcp:list 者
+    豁免（豁免判定在 security.py，不查本表）。主体弱引用：不校验 role/dept/user
+    存在性（主数据在 cloud_system 库），失效授权永不命中（自愈语义）。
+    """
+
+    __tablename__ = "ai_mcp_server_grant"
+    __table_args__ = (
+        UniqueConstraint("server_id", "subject_type", "subject_id",
+                         name="uk_server_subject"),
+        Index("idx_subject", "subject_type", "subject_id"),
+        {"comment": "MCP服务用户授权（纯关系表：物理删除，随保存全删全插；"
+                    "默认拒绝+管理豁免，运行面实时求值）"},
+    )
+
+    class SubjectTypeEnum(IntEnum):
+        """主体类型（禁魔法数；与知识库域/数据权限域的主体枚举数值语义互不共享——各域自定义）。"""
+
+        ROLE = 0
+        DEPT = 1
+        USER = 2
+
+        @classmethod
+        def of(cls, value: int) -> "AiMcpServerGrant.SubjectTypeEnum | None":
+            try:
+                return cls(value)
+            except ValueError:
+                return None
+
+    id: Mapped[int] = mapped_column(
+        _ID_BIGINTEGER, primary_key=True, autoincrement=True,
+        comment="授权ID（主键）",
+    )
+    server_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False,
+        comment="MCP服务ID（ai_mcp_server.id，弱引用不建外键；内置 SYSTEM 行同样可授权）",
+    )
+    subject_type: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, comment="主体类型：0=角色 1=部门 2=用户",
+    )
+    subject_id: Mapped[int] = mapped_column(
+        BigInteger, nullable=False,
+        comment="主体ID（sys_role.id / sys_dept.id / sys_user.id，主数据在 cloud_system 库）",
+    )
+    create_by: Mapped[str | None] = mapped_column(String(30), comment="授权操作人账号")
+    create_time: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP"),
+        comment="授权时间（DB 时钟生成，应用层插入不传时间值）",
     )

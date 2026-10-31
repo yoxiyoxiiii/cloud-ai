@@ -1,5 +1,6 @@
-"""平台 Agent 运行面 service 测试：校验链（5015/5019/5020）/ 权限门过滤 / 运行与审计
-落库（成功/失败/工具明细）/ 流式半截答收口 / 会话管理与双清。
+"""平台 Agent 运行面 service 测试：校验链（5015/5019/5020）/ 权限门过滤 / server 授权门
+四态（授权命中注入/默认拒绝剔除/豁免短路不触 DAO/与工具门取交集）/ 运行与审计落库
+（成功/失败/工具明细）/ 流式半截答收口 / 会话管理与双清。
 
 DB 走 SQLite 内存替身；Redis（message_store）与 LLM（runtime.get_agent）全 mock，
 零网络。身份经 security.set_current_identity 直接注入（等价 require_perms 的解析结果）。
@@ -22,7 +23,8 @@ from cloud_base_ai.agent.schemas import AgentRunReq
 from cloud_base_ai.config import get_settings
 from cloud_base_ai.db import tx
 from cloud_base_ai.exceptions import BusinessException
-from cloud_base_ai.mcp_server.entities import AiMcpServer
+from cloud_base_ai.mcp_server import dao as mcp_server_dao
+from cloud_base_ai.mcp_server.entities import AiMcpServer, AiMcpServerGrant
 from cloud_base_ai.security import Identity, set_current_identity
 from tests.db_testing import make_service_session_factory
 
@@ -162,14 +164,15 @@ async def test_prepare_run_tool_gate_filters_by_perms(monkeypatch: pytest.Monkey
         agent_id, session_id = await _seed(factory)
         req = AgentRunReq(session_id=session_id, question="退货流程")
 
+        # 身份带 ai:mcp:list 使 server 授权门豁免短路——本用例聚焦工具级 required_perms 门
         # 无对应权限：权限档工具被门拦下，登录即可档保留
-        _identity(perms=())
+        _identity(perms=("ai:mcp:list",))
         prepared = await run_service.prepare_run(agent_id, req)
         assert [t.tool_key for t, _srv in prepared.tool_rows] == \
             ["system_query_dict_items_e2e_运行助手"]
 
         # 持权限：两工具全量注入
-        _identity(perms=("system:user:list",))
+        _identity(perms=("ai:mcp:list", "system:user:list"))
         prepared2 = await run_service.prepare_run(agent_id, req)
         assert [t.tool_key for t, _srv in prepared2.tool_rows] == \
             ["system_query_users_e2e_运行助手", "system_query_dict_items_e2e_运行助手"]
@@ -201,11 +204,102 @@ async def test_prepare_run_filters_unpublished_and_disabled_server(
                                        create_by="e2e_user"),
                            AiAgentTool(agent_id=agent_id, tool_id=t_off.id,
                                        create_by="e2e_user")])
-        _identity(perms=("system:user:list",))  # 权限门全放行，只验存活门
+        # 豁免短路 server 授权门 + 工具门全放行，只验存活门（未发布/归属停用 server）
+        _identity(perms=("ai:mcp:list", "system:user:list"))
         prepared = await run_service.prepare_run(
             agent_id, AgentRunReq(session_id=session_id, question="q"))
         assert [t.tool_key for t, _srv in prepared.tool_rows] == \
             ["system_query_users_e2e_存活门", "system_query_dict_items_e2e_存活门"]
+
+
+# ---------- server 授权门四态（契约 2026-10-30-mcp-server-permission-api.md §4） ----------
+
+
+async def _seed_grant(factory, server_name: str, subject_type: int,
+                      subject_id: int) -> None:
+    """给指定名的 server 落一行授权（server 门用例的数据准备；不豁免才走得进授权表）。"""
+    async with factory() as s:
+        async with s.begin():
+            server = await mcp_server_dao.find_server_by_name(s, server_name)
+            s.add(AiMcpServerGrant(server_id=server.id, subject_type=subject_type,
+                                   subject_id=subject_id, create_by="e2e_user"))
+
+
+async def test_server_grant_hit_injects_tools(monkeypatch: pytest.MonkeyPatch,
+                                              store: _FakeStore) -> None:
+    """态一 授权命中注入：主体被授该 server → 名下已发布工具进入工具面
+    （用户直授与角色 IN 两分支都到达运行面）。"""
+    async with make_service_session_factory() as factory:
+        _bind_tx(monkeypatch, factory)
+        agent_id, session_id = await _seed(factory, name="e2e_授权命中")
+        await _seed_grant(factory, "SRV_e2e_授权命中",
+                          AiMcpServerGrant.SubjectTypeEnum.USER, USER_ID)
+        req = AgentRunReq(session_id=session_id, question="q")
+
+        _identity(perms=("system:user:list",))  # 用户直授分支
+        prepared = await run_service.prepare_run(agent_id, req)
+        assert [t.tool_key for t, _srv in prepared.tool_rows] == [
+            "system_query_users_e2e_授权命中", "system_query_dict_items_e2e_授权命中"]
+
+        # 角色分支：换持角色 3 的身份（无用户直授也命中；perms 补齐使工具门不干扰）
+        set_current_identity(Identity(user_id=USER_ID, account="e2e_user",
+                                      perms=("system:user:list",),
+                                      role_ids=(3,), dept_ids=()))
+        await _seed_grant(factory, "SRV_e2e_授权命中",
+                          AiMcpServerGrant.SubjectTypeEnum.ROLE, 3)
+        prepared2 = await run_service.prepare_run(agent_id, req)
+        assert [t.tool_key for t, _srv in prepared2.tool_rows] == [
+            "system_query_users_e2e_授权命中", "system_query_dict_items_e2e_授权命中"]
+
+
+async def test_server_default_deny_silently_narrows(monkeypatch: pytest.MonkeyPatch,
+                                                    store: _FakeStore) -> None:
+    """态二 默认拒绝剔除：无授权行且不豁免 → 工具面静默清空（不报错，agent 正常运行）。"""
+    async with make_service_session_factory() as factory:
+        _bind_tx(monkeypatch, factory)
+        agent_id, session_id = await _seed(factory, name="e2e_默认拒绝")
+        _identity(perms=("system:user:list",))  # 工具门全放行也拦不住 server 门
+        prepared = await run_service.prepare_run(
+            agent_id, AgentRunReq(session_id=session_id, question="q"))
+        assert prepared.tool_rows == []
+
+
+async def test_server_exempt_short_circuits_dao(monkeypatch: pytest.MonkeyPatch,
+                                                store: _FakeStore) -> None:
+    """态三 豁免短路：持 ai:mcp:list → 不查授权表（DAO 替身断言未调用），全量注入。"""
+    async with make_service_session_factory() as factory:
+        _bind_tx(monkeypatch, factory)
+        agent_id, session_id = await _seed(factory, name="e2e_豁免短路")
+        calls: list[int] = []
+
+        async def spy_list_authorized(session, user_id, role_ids, dept_ids):
+            calls.append(1)
+            return set()
+
+        monkeypatch.setattr(mcp_server_dao, "list_authorized_server_ids",
+                            spy_list_authorized)
+        _identity(perms=("ai:mcp:list", "system:user:list"))
+        prepared = await run_service.prepare_run(
+            agent_id, AgentRunReq(session_id=session_id, question="q"))
+        assert [t.tool_key for t, _srv in prepared.tool_rows] == [
+            "system_query_users_e2e_豁免短路", "system_query_dict_items_e2e_豁免短路"]
+        assert calls == []  # 豁免短路在查库之前：授权表零访问
+
+
+async def test_server_grant_and_tool_gate_intersection(monkeypatch: pytest.MonkeyPatch,
+                                                       store: _FakeStore) -> None:
+    """态四 门与门是交集：server 已授权但工具 required_perms 不满足 → 仍剔除
+    （豁免/授权只免 server 门，工具门对所有人照常生效）。"""
+    async with make_service_session_factory() as factory:
+        _bind_tx(monkeypatch, factory)
+        agent_id, session_id = await _seed(factory, name="e2e_门交集")
+        await _seed_grant(factory, "SRV_e2e_门交集",
+                          AiMcpServerGrant.SubjectTypeEnum.USER, USER_ID)
+        _identity(perms=())  # server 门过、工具门拦：权限档剔除，登录即可档保留
+        prepared = await run_service.prepare_run(
+            agent_id, AgentRunReq(session_id=session_id, question="q"))
+        assert [t.tool_key for t, _srv in prepared.tool_rows] == \
+            ["system_query_dict_items_e2e_门交集"]
 
 
 async def test_prepare_run_persists_question_and_renames_title(

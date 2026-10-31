@@ -41,6 +41,12 @@ CODE_FORBIDDEN: int = 403
 # 豁免只影响可见性；管理动作本身仍由各端点 require_perms 独立裁决（双闸门）。
 MGMT_PERMS: frozenset[str] = frozenset({"ai:kb:add", "ai:kb:update", "ai:kb:delete"})
 
+# MCP server 管理豁免权限集合（2026-10-30 MCP server 权限轮）：持 ai:mcp:list
+# （管理面最小公共权限，管理角色必持）即豁免 server 授权门——能管即能用，全量
+# server 免授权。豁免只免「server 授权门」这一层；工具级 required_perms 门对
+# 所有人（含豁免者）照常生效（拍板：工具级沿用既有，豁免不外溢改写既有门）。
+MCP_SERVER_EXEMPT_PERMS: frozenset[str] = frozenset({"ai:mcp:list"})
+
 
 @dataclass(frozen=True)
 class Identity:
@@ -76,6 +82,15 @@ def is_mgmt_exemption(identity: Identity) -> bool:
     与权限组件同文件内聚：豁免口径消费的就是 perms 解析结果。
     """
     return any(perm in MGMT_PERMS for perm in identity.perms)
+
+
+def is_mcp_server_exempt(identity: Identity) -> bool:
+    """MCP server 授权豁免判定：perms 含 ai:mcp:list（MCP_SERVER_EXEMPT_PERMS）
+    即全量 server 免授权可用（运行面装配门短路，不查授权表）。
+
+    与知识库豁免同文件同形态：豁免口径消费的就是 perms 解析结果。
+    """
+    return any(perm in MCP_SERVER_EXEMPT_PERMS for perm in identity.perms)
 
 
 def _parse_id_header(raw: str | None) -> tuple[int, ...]:

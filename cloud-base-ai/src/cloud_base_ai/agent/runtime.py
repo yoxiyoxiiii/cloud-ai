@@ -12,9 +12,9 @@
    （正常 / 权限拒绝 / 其它错误——错误文本回模型自救不终断运行），每次调用同步
    记入审计收集器。
 3. compiled agent 缓存——contextvar 在 astream 流式任务链的传播性已实证（同
-   examples/agent_poc.py），compiled agent 可跨请求安全复用；按
-   （agent_id → (config_version, agent)）缓存，版本不匹配重建覆盖，上限 32 条 LRU
-   逐最旧（管理面规模冗余充足）。
+   examples/agent_poc.py），compiled agent 可跨请求安全复用；键为
+   (agent_id, config_version, 工具id升序元组)——工具面指纹入键，按用户过滤后的
+   工具面互不串面；上限 32 条 LRU 逐最旧（管理面规模冗余充足）。
 
 安全红线：system_prompt 为管理员静态模板原样传入（不渲染任何变量）；JWT/审计收集器
 经 contextvar 注入（请求开始 set，同 db/tx.py 会话模式），真值绝不进日志。
@@ -223,8 +223,13 @@ def build_mcp_tool(tool_row: AiTool, server_row) -> StructuredTool:
 # ---------- 组装与缓存 ----------
 
 _AGENT_CACHE_LIMIT = 32
-# agent_id → (config_version, compiled_agent)；LRU 逐最旧
-_agent_cache: OrderedDict[int, tuple[int, Any]] = OrderedDict()
+# 键 (agent_id, config_version, 工具id升序元组) → compiled agent；LRU 逐最旧。
+# 键含工具面指纹的原因：工具面是按运行用户过滤的结果（server 授权门 ×
+# required_perms 门），只按 agent_id+版本键存取会在命中时忽略传入 tool_rows——
+# 首个组装用户的工具面被同版本后续用户复用（按用户授权被缓存串面击穿）。
+# 指纹取工具 id 序（list_effective_tools 恒 id 升序，天然确定）；工具行内容变化
+# （同步/审核/启停）由 service 调 reset_cache 显式失效，不依赖指纹变化。
+_agent_cache: OrderedDict[tuple[int, int, tuple[int, ...]], Any] = OrderedDict()
 
 
 def _model_name_of(model: Any) -> str:
@@ -250,20 +255,31 @@ def assemble_agent(agent_row: AiAgent,
     )
 
 
+def _cache_key(agent_row: AiAgent,
+               tool_rows: Sequence[tuple[AiTool, Any]]) -> tuple[int, int, tuple[int, ...]]:
+    """组装缓存键：agent 维度 + 配置版本 + 工具面指纹（工具 id 升序元组）。"""
+    tool_ids = tuple(sorted(tool.id for tool, _server in tool_rows))
+    return (agent_row.id, agent_row.config_version, tool_ids)
+
+
 def get_agent(agent_row: AiAgent,
               tool_rows: Sequence[tuple[AiTool, Any]]) -> Any:
-    """取 compiled agent：缓存命中（config_version 相同）直接复用，否则组装并覆盖缓存。
+    """取 compiled agent：缓存命中（agent+版本+工具面指纹全同）直接复用，否则组装
+    并写入缓存。
 
-    contextvar 跨请求传播性已实证，compiled agent 复用安全；编辑使 config_version+1
-    → 版本不匹配 → 重建；同步/审核使工具面变化由 service 调 reset_cache 显式失效。
+    按用户工具面隔离：工具面经 server 授权门与 required_perms 门按运行用户过滤，
+    指纹不同的用户各得各的 compiled agent，互不串面；授权变化、工具门过滤结果变化
+    直接体现为新键重组装（无需任何显式失效动作）。编辑使 config_version+1 → 新键
+    重组装；同步/审核/启停使工具行内容变化由 service 调 reset_cache 显式失效。
     同步字典操作无 await，单事件循环内原子，免锁。
     """
-    cached = _agent_cache.get(agent_row.id)
-    if cached is not None and cached[0] == agent_row.config_version:
-        _agent_cache.move_to_end(agent_row.id)
-        return cached[1]
+    key = _cache_key(agent_row, tool_rows)
+    cached = _agent_cache.get(key)
+    if cached is not None:
+        _agent_cache.move_to_end(key)
+        return cached
     agent = assemble_agent(agent_row, tool_rows)
-    _agent_cache[agent_row.id] = (agent_row.config_version, agent)
+    _agent_cache[key] = agent
     while len(_agent_cache) > _AGENT_CACHE_LIMIT:
         _agent_cache.popitem(last=False)
     return agent

@@ -1,6 +1,7 @@
 /**
  * MCP Server 配置化管理接口（契约 2026-10-30-mcp-server-mgmt-api，cloud-base-ai，网关前缀 /ai）：
- * 管理面九端点（§0/§2，perms ai:mcp:list/add/update/delete/sync）。
+ * 管理面九端点（§0/§2，perms ai:mcp:list/add/update/delete/sync）；
+ * 用户授权两端点（2026-10-30-mcp-server-permission-api §2/§3，perms 复用 ai:mcp:update）见文件尾。
  * AI 域出参口径（契约沿 agent 契约 §0）：字段 snake_case、id/total 为 JSON number
  * （非 Java 域 Long→String）、分页查询参数名 page/size。本轮无流式端点（utils/sse.ts 冻结）
  */
@@ -10,6 +11,8 @@ import type {
   CreateMcpServerPayload,
   McpServerDetailVo,
   McpServerPageQuery,
+  McpServerPermsSavePayload,
+  McpServerPermsVo,
   McpServerSummaryVo,
   McpSyncReportVo,
   McpTestResultVo,
@@ -103,4 +106,24 @@ export function listMcpTools(query: McpToolListQuery = {}): Promise<McpToolManag
  */
 export function reviewMcpTool(id: number, payload: ReviewMcpToolPayload): Promise<null> {
   return request<null>({ url: `/ai/mcp/tool/${id}/review`, method: 'put', data: payload })
+}
+
+/**
+ * 查询 MCP 服务用户授权（契约 2026-10-30-mcp-server-permission-api §2，perms ai:mcp:update）：
+ * 回显三主体 id 数组；目标服务不存在/软删 5021（拦截器统一 toast）。注意出参 id 为 AI 域
+ * number——与选择器数据源（system 域 subject-options / dept/tree 的 string id）不同轨，
+ * 弹窗内做换轨（沿 kb-perm 契约同款）
+ */
+export function getMcpServerPerms(id: number): Promise<McpServerPermsVo> {
+  return request<McpServerPermsVo>({ url: `/ai/mcp/server/${id}/perms`, method: 'get' })
+}
+
+/**
+ * 保存 MCP 服务用户授权（契约 §3，perms ai:mcp:update）：三组全量覆盖（按 server_id 全删
+ * 全部旧授权行再批插，同一事务），空三数组 = 清空授权（服务回到默认拒绝，仅豁免者可用）；
+ * data 恒 null。入参三数组为 number[]（strict 校验拒数字串，选择器数据源的 string id 须先
+ * 逐个 Number(id) 转换）；5021/1001/403 由拦截器统一 toast
+ */
+export function saveMcpServerPerms(id: number, payload: McpServerPermsSavePayload): Promise<null> {
+  return request<null>({ url: `/ai/mcp/server/${id}/perms`, method: 'put', data: payload })
 }

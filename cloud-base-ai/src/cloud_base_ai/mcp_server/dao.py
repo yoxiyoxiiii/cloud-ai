@@ -1,10 +1,12 @@
 """MCP Server 域 DAO：注册表 CRUD/查重/软删/分页 + 工具计数聚合 + 工具同步面
-（按 server 取行/新增草稿/schema 更新/置失效/撞名归属映射）与审核/清单 join。
+（按 server 取行/新增草稿/schema 更新/置失效/撞名归属映射）与审核/清单 join
++ 用户授权面（回显/全删全插保存/按主体反查可用 server id 集）。
 
 口径（沿 agent/dao.py 全仓约定）：
 - 模块函数收 session：写方法以 flush 收尾、永不 commit——事务边界归 service 的
   @transactional；
 - 软删：读路径显式 filter(deleted == 0)；delete = UPDATE SET deleted=1 + 审计两值；
+- 例外（ai_mcp_server_grant 纯关系表）：无 deleted 列，行生命周期只有插入与物理删除；
 - 异常零转译：IntegrityError（uk_name 撞重/墓碑占键）原样上抛，兜底转译在 service；
 - 分页 clamp：page>=1、1<=size<=MAX_PAGE_SIZE（对齐 Java 分页插件 maxLimit 200）。
 """
@@ -12,7 +14,7 @@
 from collections.abc import Sequence
 from datetime import datetime
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cloud_base_ai.agent.entities import AiTool
@@ -21,7 +23,7 @@ from cloud_base_ai.db.base import (
     current_account,
     fill_create_audit,
 )
-from cloud_base_ai.mcp_server.entities import AiMcpServer
+from cloud_base_ai.mcp_server.entities import AiMcpServer, AiMcpServerGrant
 
 MAX_PAGE_SIZE = 200
 
@@ -276,3 +278,93 @@ async def list_tools_with_server(
     if status is not None:
         stmt = stmt.where(AiTool.status == status)
     return (await session.execute(stmt)).all()
+
+
+# ---------- 用户授权面（ai_mcp_server_grant 纯关系表：物理删除；求值见 list_authorized_server_ids） ----------
+
+
+async def list_server_grants(
+    session: AsyncSession, server_id: int
+) -> Sequence[AiMcpServerGrant]:
+    """某 server 的全部授权行（授权面板回显；命中 uk_server_subject 的 server_id 前缀；
+    排序 subject_type/subject_id 升序仅保证回显与断言稳定）。"""
+    stmt = (
+        select(AiMcpServerGrant)
+        .where(AiMcpServerGrant.server_id == server_id)
+        .order_by(
+            AiMcpServerGrant.subject_type.asc(), AiMcpServerGrant.subject_id.asc()
+        )
+    )
+    return (await session.execute(stmt)).scalars().all()
+
+
+async def save_server_grants(
+    session: AsyncSession, server_id: int, grants: Sequence[AiMcpServerGrant]
+) -> None:
+    """保存授权 = 按 server_id 全删全插（同一事务由 service 的 @transactional 收口）：
+    先物理 DELETE 全部旧授权行，再非空批插新行（空列表 = 清空授权，回到默认拒绝）。
+
+    create_by 取 current_account（contextvar，X-User-Account 来源）；create_time 不设值
+    ——DB DEFAULT CURRENT_TIMESTAMP 时钟生成（审计时间 DB 时钟全仓口径）。
+    """
+    await _delete_grants_by_server(session, server_id)
+    if not grants:
+        return
+    account = current_account()
+    for grant in grants:
+        grant.server_id = server_id
+        grant.create_by = account
+    session.add_all(grants)
+    await session.flush()
+
+
+async def list_authorized_server_ids(
+    session: AsyncSession,
+    user_id: int | None,
+    role_ids: Sequence[int],
+    dept_ids: Sequence[int],
+) -> set[int]:
+    """按主体反查可用 server id 集（运行面 server 授权门求值主路径，命中 idx_subject）。
+
+    三分支独立并集：直授用户（subject_id == user_id）/ 角色 IN / 部门 IN——空列表
+    分支不拼接（防 IN () 非法 SQL）、user_id 为 None 跳过用户分支（身份头缺失=空集
+    语义，非错误）；distinct 防同 server 多主体命中出重复行。返回 set 供调用方做
+    「工具归属 server id ∈ 集」的成员判定。
+    """
+    branches = []
+    if user_id is not None:
+        branches.append(and_(
+            AiMcpServerGrant.subject_type == AiMcpServerGrant.SubjectTypeEnum.USER,
+            AiMcpServerGrant.subject_id == user_id,
+        ))
+    if role_ids:
+        branches.append(and_(
+            AiMcpServerGrant.subject_type == AiMcpServerGrant.SubjectTypeEnum.ROLE,
+            AiMcpServerGrant.subject_id.in_(role_ids),
+        ))
+    if dept_ids:
+        branches.append(and_(
+            AiMcpServerGrant.subject_type == AiMcpServerGrant.SubjectTypeEnum.DEPT,
+            AiMcpServerGrant.subject_id.in_(dept_ids),
+        ))
+    if not branches:
+        return set()
+    stmt = (
+        select(AiMcpServerGrant.server_id)
+        .where(or_(*branches))
+        .distinct()
+    )
+    rows = (await session.execute(stmt)).scalars().all()
+    return set(rows)
+
+
+async def _delete_grants_by_server(session: AsyncSession, server_id: int) -> int:
+    """物理删除某 server 的全部授权行（保存全删全插的删除段；命中 uk_server_subject
+    前缀）；返回影响行数。server 软删不级联清理授权行（行随下次保存自然覆盖）。"""
+    stmt = (
+        delete(AiMcpServerGrant)
+        .where(AiMcpServerGrant.server_id == server_id)
+        .execution_options(synchronize_session=False)
+    )
+    result = await session.execute(stmt)
+    return result.rowcount

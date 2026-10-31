@@ -1,4 +1,5 @@
-"""MCP Server 管理面 service：注册表 CRUD（查重两层/内置行保护）+ 保存前连通测试。
+"""MCP Server 管理面 service：注册表 CRUD（查重两层/内置行保护）+ 保存前连通测试
++ 用户授权 get/save（默认拒绝 + 管理豁免模型，契约 2026-10-30-mcp-server-permission-api.md）。
 
 事务边界 @transactional 收口写路径；test_config 零库访问（保存前探测）不挂事务。
 凭据红线：test_config 的错误 msg 只含异常类型与短摘要、日志只记 url 与键名，绝不落真值。
@@ -17,11 +18,13 @@ from cloud_base_ai.db.tx import current_session, transactional
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.mcp import client as mcp_client
 from cloud_base_ai.mcp_server import dao
-from cloud_base_ai.mcp_server.entities import AiMcpServer
+from cloud_base_ai.mcp_server.entities import AiMcpServer, AiMcpServerGrant
 from cloud_base_ai.mcp_server.schemas import (
     AiPageResult,
     CreateServerReq,
     ServerDetailVo,
+    ServerPermsSaveReq,
+    ServerPermsVo,
     ServerSummaryVo,
     TestConfigReq,
     TestResultVo,
@@ -236,3 +239,55 @@ async def test_config(req: TestConfigReq, caller_jwt: str | None) -> TestResultV
     tools = await mcp_client.list_tools(row, caller_jwt)
     names = [t.name for t in tools]
     return TestResultVo(ok=True, tool_count=len(names), sample_tools=names[:5], error=None)
+
+
+# ---------- 用户授权（契约 2026-10-30-mcp-server-permission-api.md §2/§3） ----------
+
+
+@transactional
+async def get_server_perms(server_id: int) -> ServerPermsVo:
+    """查询 MCP 服务授权（契约 §2）：先校验 server 存在/未软删（5021），再按主体类型
+    三组分型回显；读授权清单与保存同权限（管理配置动作，不开放给 list-only 探测）。"""
+    session = current_session()
+    if await dao.find_server_by_id(session, server_id) is None:
+        raise BusinessException(MSG_SERVER_NOT_EXISTS, CODE_SERVER_NOT_EXISTS)
+    grants = await dao.list_server_grants(session, server_id)
+    role_ids = [g.subject_id for g in grants
+                if g.subject_type == AiMcpServerGrant.SubjectTypeEnum.ROLE]
+    dept_ids = [g.subject_id for g in grants
+                if g.subject_type == AiMcpServerGrant.SubjectTypeEnum.DEPT]
+    user_ids = [g.subject_id for g in grants
+                if g.subject_type == AiMcpServerGrant.SubjectTypeEnum.USER]
+    return ServerPermsVo(role_ids=role_ids, dept_ids=dept_ids, user_ids=user_ids)
+
+
+@transactional
+async def save_server_perms(server_id: int, req: ServerPermsSaveReq) -> None:
+    """保存 MCP 服务授权（契约 §3）：先校验 server 存在（5021），再全量覆盖（按
+    server_id 物理删全部旧授权行 → 批插新行，同一事务）；三组全空/不传 = 清空授权
+    （该 server 回到默认拒绝，仅豁免者可用）——合法语义非错误。
+
+    主体弱引用：不校验 role/dept/user 存在性（主数据在 cloud_system 库），失效授权
+    永不命中（自愈语义）。同请求重复 id 由组装层去重（dict.fromkeys 保序）；并发保存
+    同 server 撞 uk 属极端窗口，事务级回滚走全局 500（契约 §3 分支无专用码）。
+    保存后无需缓存失效动作：compiled agent 缓存键已含工具面指纹，授权变化自然走
+    新键重组装（设计 §2.2）。"""
+    session = current_session()
+    if await dao.find_server_by_id(session, server_id) is None:
+        raise BusinessException(MSG_SERVER_NOT_EXISTS, CODE_SERVER_NOT_EXISTS)
+    await dao.save_server_grants(session, server_id, _build_server_grants(req))
+
+
+def _build_server_grants(req: ServerPermsSaveReq) -> list[AiMcpServerGrant]:
+    """三组 id 保序去重后组装授权行实体（server_id/create_by 由 dao 统一落值，
+    create_time 由 DB DEFAULT 时钟生成——应用层不传时间）。"""
+    grants: list[AiMcpServerGrant] = []
+    for subject_type, ids in (
+        (AiMcpServerGrant.SubjectTypeEnum.ROLE, req.role_ids),
+        (AiMcpServerGrant.SubjectTypeEnum.DEPT, req.dept_ids),
+        (AiMcpServerGrant.SubjectTypeEnum.USER, req.user_ids),
+    ):
+        for subject_id in dict.fromkeys(ids):
+            grants.append(AiMcpServerGrant(subject_type=subject_type.value,
+                                           subject_id=subject_id))
+    return grants

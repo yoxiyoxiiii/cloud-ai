@@ -1,10 +1,11 @@
 """平台 Agent 运行面 service：prepare_run 校验链 + DeepAgent 运行编排 + 会话管理。
 
 运行数据流（设计 §1.2/§4）：agent 校验（5015，含停用）→ 会话校验（5019/5020）→
-绑定工具 join 注册表 → 运行权限门（required_perms ⊆ 用户 perms，不满足即不注入）
-→ Redis 落 user 消息 + 取尾部历史 → 首问改题 → contextvar 注入 JWT/审计收集器
-→ runtime.get_agent（缓存命中或组装）→ ainvoke/astream → finally 落 assistant 消息
-（半截答照落）与运行审计行。
+绑定工具 join 注册表 → server 授权门（管理豁免短路，否则三主体授权命中，未授权
+server 的工具静默剔除——2026-10-30 MCP server 权限轮）→ 运行权限门
+（required_perms ⊆ 用户 perms，不满足即不注入）→ Redis 落 user 消息 + 取尾部历史
+→ 首问改题 → contextvar 注入 JWT/审计收集器 → runtime.get_agent（缓存命中或组装）
+→ ainvoke/astream → finally 落 assistant 消息（半截答照落）与运行审计行。
 
 错误口径：BusinessException 透传（5002 LLM 未配置 / 5009 / 5010 / 5017 组装期）；
 其余异常转 5018 编排兜底；流式收口（msg 帧 + [DONE]）在 router。
@@ -33,7 +34,8 @@ from cloud_base_ai.config import get_settings
 from cloud_base_ai.db.tx import current_session, transactional
 from cloud_base_ai.exceptions import BusinessException
 from cloud_base_ai.mcp.perm import visible_tools
-from cloud_base_ai.security import current_identity
+from cloud_base_ai.mcp_server import dao as mcp_server_dao
+from cloud_base_ai.security import current_identity, is_mcp_server_exempt
 
 logger = logging.getLogger(__name__)
 
@@ -106,19 +108,42 @@ async def _load_owned_agent_session(agent_id: int, session_id: int) -> AiAgentSe
 
 @transactional
 async def _load_visible_tools(agent_id: int) -> Sequence[tuple[AiTool, Any]]:
-    """绑定工具 join 注册表（已发布且 server 启用未删的行）+ 运行权限门：
-    required_perms ⊆ 用户 perms 才注入模型（配置门之外的运行门——三层纵深的中层；
-    服务端 @McpRequirePerm 最终裁决）。
+    """绑定工具 join 注册表（已发布且 server 启用未删的行）+ server 授权门 + 运行
+    权限门，两门按序过滤：
 
-    权限门按工具行侧过滤（visible_tools 鸭子类型只读 required_perms），再把存活
-    元组按工具 id 对回——返回 (AiTool, AiMcpServer) 元组序列供运行装配路由。"""
+    ① server 授权门：管理豁免短路，否则按主体反查授权 server id 集，未授权 server
+    的工具静默剔除（契约 2026-10-30-mcp-server-permission-api §4）；
+    ② 工具级 required_perms 门：required_perms ⊆ 用户 perms 才注入模型（配置门之外
+    的运行门；服务端 @McpRequirePerm 最终裁决）。
+
+    过滤按行侧施加后再把存活元组按工具 id 对回——返回 (AiTool, AiMcpServer) 元组
+    序列供运行装配路由。管理面回显不走本方法（list_effective_tools 直接消费，
+    配置事实不滤授权）。"""
     session = current_session()
     pairs = list(await dao.list_effective_tools(session, agent_id))
     identity = current_identity()
+    pairs = await _filter_by_server_grant(pairs, identity)
     perms = set(identity.perms) if identity is not None else set()
     visible = visible_tools([tool for tool, _server in pairs], perms)
     visible_ids = {tool.id for tool in visible}
     return [pair for pair in pairs if pair[0].id in visible_ids]
+
+
+async def _filter_by_server_grant(
+    pairs: Sequence[tuple[AiTool, Any]], identity
+) -> Sequence[tuple[AiTool, Any]]:
+    """server 授权门（契约 2026-10-30-mcp-server-permission-api §4）：豁免短路；
+    否则按主体反查授权 server id 集，未授权 server 的工具对静默剔除（不报错——
+    agent 静默缩窄工具面运行）。身份缺失=空集语义（沿 kb 先例，非错误）。"""
+    if identity is not None and is_mcp_server_exempt(identity):
+        return pairs
+    session = current_session()
+    user_id = identity.user_id if identity is not None else None
+    role_ids = identity.role_ids if identity is not None else ()
+    dept_ids = identity.dept_ids if identity is not None else ()
+    authorized = await mcp_server_dao.list_authorized_server_ids(
+        session, user_id, role_ids, dept_ids)
+    return [pair for pair in pairs if pair[1].id in authorized]
 
 
 @transactional

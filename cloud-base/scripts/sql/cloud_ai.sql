@@ -282,3 +282,32 @@ CREATE TABLE ai_mcp_server
 -- 内置行的调用头自动注入当次用户 JWT + X-MCP-Client-Secret（.env 既有键），credential_headers_json 恒 NULL。
 INSERT INTO ai_mcp_server (id, name, description, url, transport, timeout_ms, is_builtin, status) VALUES
 (1, 'SYSTEM', '平台内置 cloud-system MCP 服务', 'http://127.0.0.1:9202/mcp', 'http', 30000, 1, 0);
+
+-- ========== MCP Server 用户级权限（2026-10-30 MCP server 权限轮，增量脚本 2026-10-30-mcp-server-permission.sql） ==========
+-- 契约 docs/superpowers/contracts/2026-10-30-mcp-server-permission-api.md；设计 2026-10-30-mcp-server-permission-design.md §1.1
+
+-- MCP 服务用户授权（纯关系表，沿 ai_kb_grant 先例：物理删除、无 deleted 列、无 update
+-- 审计列；保存 = 按 server_id 全删全插，同一事务由 service 收口）。
+-- 默认拒绝 + 管理豁免：无授权行的 server 对运行用户不可用；持 ai:mcp:list 者豁免
+-- （能管即能用，豁免只免本授权门——工具级 required_perms 门对所有人照常生效）。
+-- uk_server_subject 兼查重与授权回显（server_id 前缀）；idx_subject 命中运行面主路径
+-- 「按主体反查可用 server id 集」（三分支 OR + distinct，每运行至多一次）；
+-- 主体弱引用不建外键（主数据在 cloud_system 库），失效授权永不命中（自愈语义）。
+CREATE TABLE ai_mcp_server_grant
+(
+    id           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '授权ID（主键）',
+    server_id    BIGINT       NOT NULL COMMENT 'MCP服务ID（ai_mcp_server.id，弱引用不建外键；内置 SYSTEM 行同样可授权）',
+    subject_type TINYINT      NOT NULL COMMENT '主体类型：0=角色 1=部门 2=用户',
+    subject_id   BIGINT       NOT NULL COMMENT '主体ID（sys_role.id / sys_dept.id / sys_user.id，主数据在 cloud_system 库）',
+    create_by    VARCHAR(30)  NULL COMMENT '授权操作人账号',
+    create_time  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '授权时间（DB 时钟口径，应用层不传时间）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_server_subject (server_id, subject_type, subject_id),
+    KEY idx_subject (subject_type, subject_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
+  COMMENT ='MCP服务用户授权（纯关系表：物理删除，随保存全删全插；默认拒绝+管理豁免，运行面实时求值）';
+
+-- 初始授权一行：内置 SYSTEM server 授内置管理员角色（sys_role id=1，基线种子恒存在）。
+-- 管理员本就持 ai:mcp:list 豁免，此行价值是授权状态在面板可见、豁免口径收紧时不回退
+-- 管理员可用性（设计 §1.3 取舍）；业务用户上线后需管理员手工授权（默认拒绝的已接受代价）。
+INSERT INTO ai_mcp_server_grant (server_id, subject_type, subject_id) VALUES (1, 0, 1);

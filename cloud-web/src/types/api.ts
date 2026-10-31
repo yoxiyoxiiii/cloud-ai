@@ -1591,3 +1591,32 @@ export interface McpToolListQuery {
   /** 0=草稿 1=已发布 2=已失效；不传=全部 */
   status?: number
 }
+
+/* ===== MCP Server 用户授权（契约 2026-10-30-mcp-server-permission-api，权限标识复用 ai:mcp:update 零新增） ===== */
+
+/**
+ * MCP 服务授权回显 VO（契约 §2，perms ai:mcp:update）：按主体类型分三组的当前全部授权行。
+ * 注意 id 类型换轨（沿 kb-perm 契约同款）：本 VO 三数组为 AI 域 JSON number，而选择器
+ * 数据源（system 域 subject-options / dept/tree）出参 id 为 string（Java Long→String）——
+ * 弹窗内回显 Number→String 进勾选态、提交前 String→Number 转换
+ */
+export interface McpServerPermsVo {
+  /** 被授权角色 id 集合（sys_role.id）；无则 [] */
+  role_ids: number[]
+  /** 被授权部门 id 集合（sys_dept.id，仅被勾选节点——子树语义由服务端求值侧生效）；无则 [] */
+  dept_ids: number[]
+  /** 被授权用户 id 集合（sys_user.id）；无则 [] */
+  user_ids: number[]
+}
+
+/**
+ * 保存 MCP 服务授权入参（契约 §3）：全量覆盖语义（按 server_id 物理删全部旧行后批插，
+ * 同一事务）；三数组可选缺省 []，全空/不传 = 清空授权（服务回到默认拒绝，仅持 ai:mcp:list
+ * 豁免者可用）；每元素整数 ≥1 且必须 JSON number（数字串拒收）、每数组 ≤100（后端 1001
+ * 权威，前端友好提示同值）；重复元素服务端静默去重
+ */
+export interface McpServerPermsSavePayload {
+  role_ids?: number[]
+  dept_ids?: number[]
+  user_ids?: number[]
+}

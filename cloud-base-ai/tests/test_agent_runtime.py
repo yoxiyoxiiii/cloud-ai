@@ -279,6 +279,44 @@ def test_get_agent_cache_hit_and_version_mismatch(stub_model):
     assert runtime.get_agent(edited, []) is second  # 新版本复用
 
 
+def _tool_row_with_id(tool_id: int, tool_key: str) -> AiTool:
+    """带主键的工具行（缓存键指纹取工具 id 序——无 id 的构造行进不了指纹断言）。"""
+    row = _tool_row('{"type":"object","properties":{}}', tool_key=tool_key)
+    row.id = tool_id
+    return row
+
+
+def test_cache_key_isolates_tool_faces(stub_model):
+    """缓存键含工具面指纹（2026-10-30 MCP server 权限轮修复钉死）：同 agent 同
+    config_version，两个不同工具面各得其所——互不串面（原缺陷：键只有
+    agent_id+版本，缓存命中忽略传入工具面，首个用户的过滤结果被后续用户复用）。"""
+    agent_row = _agent_row(config_version=1)
+    tool_a = _tool_row_with_id(1, "e2e_face_a")
+    tool_b = _tool_row_with_id(2, "e2e_face_b")
+    face_full = [(tool_a, _server_row()), (tool_b, _server_row())]
+    face_a = [(tool_a, _server_row())]
+    full = runtime.get_agent(agent_row, face_full)
+    only_a = runtime.get_agent(agent_row, face_a)
+    assert only_a is not full  # 不同工具面不得复用同一 compiled agent（修复点）
+    assert runtime.get_agent(agent_row, face_full) is full  # 同面命中复用
+    assert runtime.get_agent(agent_row, face_a) is only_a
+    # 键形态钉死：(agent_id, config_version, 工具id升序元组)
+    assert set(k[2] for k in runtime._agent_cache) == {(1, 2), (1,)}
+
+
+def test_cache_reassembles_on_tool_face_change(stub_model):
+    """授权变化 → 工具面变化 → 指纹不同 → 新键未命中重组装（无需任何显式失效
+    动作）；旧键条目滞留至 LRU 逐出，再次命中时面相正确。"""
+    agent_row = _agent_row(config_version=1)
+    tool_a = _tool_row_with_id(1, "e2e_revoke")
+    granted = runtime.get_agent(agent_row, [(tool_a, _server_row())])
+    revoked = runtime.get_agent(agent_row, [])  # 授权收回后工具面变空
+    assert revoked is not granted
+    assert runtime.get_agent(agent_row, []) is revoked  # 空面自身命中
+    # 重新授权回旧面：旧键仍可用（面相匹配，不是串面）
+    assert runtime.get_agent(agent_row, [(tool_a, _server_row())]) is granted
+
+
 def test_get_agent_lru_eviction(stub_model):
     # 33 个不同 id 触发逐最旧：id=101（最早）被逐出，重建后是新对象
     first = runtime.get_agent(_agent_row(config_version=1), [])

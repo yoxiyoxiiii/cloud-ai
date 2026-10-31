@@ -16,6 +16,7 @@ import type { CreateMcpServerPayload, McpServerSummaryVo } from '../../../types/
 import { hasPerm } from '../../../stores/perm'
 import ServerEditDialog from './components/ServerEditDialog.vue'
 import type { ServerEditMode } from './components/ServerEditDialog.vue'
+import ServerPermsDialog from './components/ServerPermsDialog.vue'
 import ToolReviewDrawer from './components/ToolReviewDrawer.vue'
 
 /** = pathToRouteName('/mcp/manage')，keep-alive include 依赖，不可省 */
@@ -208,6 +209,16 @@ async function handleDelete(row: McpServerSummaryVo): Promise<void> {
   }
 }
 
+/* ============ 用户授权弹窗（2026-10-30-mcp-server-permission-api §2/§3，perms ai:mcp:update） ============ */
+
+const permsVisible = ref(false)
+const permsServer = ref<McpServerSummaryVo>()
+
+function openPerms(row: McpServerSummaryVo): void {
+  permsServer.value = row
+  permsVisible.value = true
+}
+
 /* ============ 工具审核抽屉（契约 §2.8/§2.9） ============ */
 
 const drawerVisible = ref(false)
@@ -304,6 +315,8 @@ onMounted(() => {
       <el-table-column label="操作" width="280" fixed="right">
         <template #default="{ row }">
           <el-button v-perms="'ai:mcp:update'" link type="primary" @click="openEdit(rowOf(row))">编辑</el-button>
+          <!-- 用户授权（契约 2026-10-30-mcp-server-permission-api §0）：读授权与保存同挂 ai:mcp:update -->
+          <el-button v-perms="'ai:mcp:update'" link type="primary" @click="openPerms(rowOf(row))">授权</el-button>
           <!-- 保存后测试与同步同挂 ai:mcp:sync（契约 §0 分段表） -->
           <el-button v-perms="'ai:mcp:sync'" link type="primary" @click="handleTest(rowOf(row))">测试</el-button>
           <el-button v-perms="'ai:mcp:sync'" link type="primary" @click="handleSync(rowOf(row))">同步</el-button>
@@ -322,6 +335,8 @@ onMounted(() => {
     </ProTable>
 
     <ServerEditDialog v-model="formVisible" :mode="formMode" :server="formServer" @success="handleFormSuccess" />
+    <!-- 授权弹窗不监听 success 刷新列表：授权不改变列表行数据（契约 §4 管理面零变化） -->
+    <ServerPermsDialog v-model="permsVisible" :server="permsServer" />
     <ToolReviewDrawer v-model="drawerVisible" :server="drawerServer" @reviewed="handleReviewed" />
   </el-card>
 </template>

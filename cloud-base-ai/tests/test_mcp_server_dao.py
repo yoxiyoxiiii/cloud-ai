@@ -1,5 +1,5 @@
 """MCP Server 域 DAO 测试（SQLite 内存替身）：每动词至少一例 + 软删/审计/uk 撞重/
-分页钳制/工具计数分组/按 id 集批查。
+分页钳制/工具计数分组/按 id 集批查/用户授权三动词（回显排序、全删全插、按主体反查）。
 
 事务姿势沿 test_agent_dao：写路径 async with s.begin(): 包裹；撞重用例以 begin 块 +
 pytest.raises 捕获（块异常自动 rollback）。
@@ -15,6 +15,8 @@ from cloud_base_ai.mcp_server.dao import (
     find_server_by_id,
     find_server_by_name,
     find_tool_by_id,
+    list_authorized_server_ids,
+    list_server_grants,
     list_servers_by_ids,
     list_tools_by_server,
     list_tools_with_server,
@@ -23,12 +25,13 @@ from cloud_base_ai.mcp_server.dao import (
     page_list_servers,
     review_publish_tool,
     save_server,
+    save_server_grants,
     save_tool,
     soft_delete_server,
     update_server,
     update_tool_schema,
 )
-from cloud_base_ai.mcp_server.entities import AiMcpServer
+from cloud_base_ai.mcp_server.entities import AiMcpServer, AiMcpServerGrant
 from tests.db_testing import make_db_session
 
 pytestmark = pytest.mark.anyio
@@ -315,3 +318,134 @@ async def test_list_tools_with_server_join_and_filters():
         async with s.begin():
             after = await list_tools_with_server(s)
         assert ("e2e_j1", "E2E_TJ1") in [(t.tool_key, srv.name) for t, srv in after]
+
+
+# ---------- 用户授权面（ai_mcp_server_grant 纯关系表：物理删除，无软删列） ----------
+
+
+def _grant(server_id: int, subject_type: int, subject_id: int) -> AiMcpServerGrant:
+    return AiMcpServerGrant(subject_type=subject_type, subject_id=subject_id)
+
+
+async def test_save_server_grants_full_replace_and_create_by():
+    """全删全插 + create_by 落 current_account + server_id 由 dao 统一落值；
+    空列表保存 = 清空该 server 全部授权行（回到默认拒绝）。"""
+    set_current_account("admin")
+    async with make_db_session() as s:
+        async with s.begin():
+            s1 = await save_server(s, _server("E2E_GRANT_A"))
+            s2 = await save_server(s, _server("E2E_GRANT_B"))
+            await save_server_grants(s, s1.id, [
+                _grant(s1.id, AiMcpServerGrant.SubjectTypeEnum.ROLE, 1),
+                _grant(s1.id, AiMcpServerGrant.SubjectTypeEnum.USER, 7),
+            ])
+            await save_server_grants(s, s2.id, [
+                _grant(s2.id, AiMcpServerGrant.SubjectTypeEnum.DEPT, 5),
+            ])
+        # 读组包 begin：防隐式事务悬挂
+        async with s.begin():
+            rows = await list_server_grants(s, s1.id)
+            assert [(g.subject_type, g.subject_id, g.create_by) for g in rows] == [
+                (AiMcpServerGrant.SubjectTypeEnum.ROLE, 1, "admin"),
+                (AiMcpServerGrant.SubjectTypeEnum.USER, 7, "admin"),
+            ]
+            assert all(g.server_id == s1.id for g in rows)
+            # 其它 server 的授权行不受全删全插影响
+            other = await list_server_grants(s, s2.id)
+            assert [g.subject_id for g in other] == [5]
+        # 二次保存全量替换：旧两行（角色 1/用户 7）消失，只剩新行
+        async with s.begin():
+            await save_server_grants(s, s1.id, [
+                _grant(s1.id, AiMcpServerGrant.SubjectTypeEnum.DEPT, 9),
+            ])
+        async with s.begin():
+            rows2 = await list_server_grants(s, s1.id)
+            assert [(g.subject_type, g.subject_id) for g in rows2] == [
+                (AiMcpServerGrant.SubjectTypeEnum.DEPT, 9)]
+        # 空列表 = 清空
+        async with s.begin():
+            await save_server_grants(s, s1.id, [])
+        async with s.begin():
+            assert await list_server_grants(s, s1.id) == []
+
+
+async def test_list_server_grants_echo_sorted():
+    """回显按 subject_type、subject_id 升序（乱序插入验证排序稳定）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            s1 = await save_server(s, _server("E2E_GRANT_S"))
+            await save_server_grants(s, s1.id, [
+                _grant(s1.id, AiMcpServerGrant.SubjectTypeEnum.USER, 7),
+                _grant(s1.id, AiMcpServerGrant.SubjectTypeEnum.ROLE, 3),
+                _grant(s1.id, AiMcpServerGrant.SubjectTypeEnum.DEPT, 5),
+                _grant(s1.id, AiMcpServerGrant.SubjectTypeEnum.ROLE, 2),
+            ])
+        async with s.begin():
+            rows = await list_server_grants(s, s1.id)
+            assert [(g.subject_type, g.subject_id) for g in rows] == [
+                (AiMcpServerGrant.SubjectTypeEnum.ROLE, 2),
+                (AiMcpServerGrant.SubjectTypeEnum.ROLE, 3),
+                (AiMcpServerGrant.SubjectTypeEnum.DEPT, 5),
+                (AiMcpServerGrant.SubjectTypeEnum.USER, 7),
+            ]
+
+
+async def test_save_server_grants_uk_collision_raises():
+    """uk_server_subject 撞重原样上抛 IntegrityError（去重责任在 service 组装层，
+    uk 是并发/绕过 service 直插的兜底）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            s1 = await save_server(s, _server("E2E_GRANT_UK"))
+        with pytest.raises(IntegrityError):
+            async with s.begin():
+                s.add_all([
+                    AiMcpServerGrant(server_id=s1.id,
+                                     subject_type=AiMcpServerGrant.SubjectTypeEnum.ROLE,
+                                     subject_id=1, create_by="admin"),
+                    AiMcpServerGrant(server_id=s1.id,
+                                     subject_type=AiMcpServerGrant.SubjectTypeEnum.ROLE,
+                                     subject_id=1, create_by="admin"),
+                ])
+                await s.flush()
+
+
+async def test_list_authorized_server_ids_three_branches():
+    """三分支独立并集（用户直授 / 角色 IN / 部门 IN），多主体同 server distinct 去重；
+    空身份空集；命中 id 不同主体类型不串（subject_type 等值先行）。"""
+    async with make_db_session() as s:
+        async with s.begin():
+            srv_user = await save_server(s, _server("E2E_AZ_USER"))
+            srv_role = await save_server(s, _server("E2E_AZ_ROLE"))
+            srv_dept = await save_server(s, _server("E2E_AZ_DEPT"))
+            srv_both = await save_server(s, _server("E2E_AZ_BOTH"))  # 同 server 多主体命中
+            srv_only_role_id7 = await save_server(s, _server("E2E_AZ_R7"))  # 角色 7（防与用户 7 串）
+            await save_server_grants(s, srv_user.id, [
+                _grant(srv_user.id, AiMcpServerGrant.SubjectTypeEnum.USER, 7)])
+            await save_server_grants(s, srv_role.id, [
+                _grant(srv_role.id, AiMcpServerGrant.SubjectTypeEnum.ROLE, 3)])
+            await save_server_grants(s, srv_dept.id, [
+                _grant(srv_dept.id, AiMcpServerGrant.SubjectTypeEnum.DEPT, 5)])
+            await save_server_grants(s, srv_both.id, [
+                _grant(srv_both.id, AiMcpServerGrant.SubjectTypeEnum.ROLE, 3),
+                _grant(srv_both.id, AiMcpServerGrant.SubjectTypeEnum.USER, 7),
+            ])
+            await save_server_grants(s, srv_only_role_id7.id, [
+                _grant(srv_only_role_id7.id, AiMcpServerGrant.SubjectTypeEnum.ROLE, 7)])
+        async with s.begin():
+            # 用户分支单命中（role/dept 空列表不拼 IN ()）
+            assert await list_authorized_server_ids(s, 7, [], []) == \
+                {srv_user.id, srv_both.id}
+            # 角色分支单命中（user_id None 跳过用户分支）
+            assert await list_authorized_server_ids(s, None, [3], []) == \
+                {srv_role.id, srv_both.id}
+            # 部门分支单命中
+            assert await list_authorized_server_ids(s, None, [], [5]) == {srv_dept.id}
+            # 三分支并集（srv_both 多主体命中只出一个 id）
+            assert await list_authorized_server_ids(s, 7, [3], [5]) == \
+                {srv_user.id, srv_role.id, srv_dept.id, srv_both.id}
+            # 主体类型不串：用户 7 不命中「角色 7」的授权行
+            assert srv_only_role_id7.id not in await list_authorized_server_ids(s, 7, [], [])
+            # 空身份空集（无任何分支可拼）
+            assert await list_authorized_server_ids(s, None, [], []) == set()
+            # 无命中
+            assert await list_authorized_server_ids(s, 99, [98], [97]) == set()
