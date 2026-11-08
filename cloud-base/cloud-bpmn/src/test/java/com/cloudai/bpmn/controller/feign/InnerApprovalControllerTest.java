@@ -3,6 +3,7 @@ package com.cloudai.bpmn.controller.feign;
 import com.cloudai.bpmn.api.domain.ApprovalCancelInnerRequest;
 import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
 import com.cloudai.bpmn.api.domain.ApprovalStatusQueryInnerRequest;
+import com.cloudai.bpmn.mq.ApprovalNotifyPublisher;
 import com.cloudai.bpmn.service.ApprovalWorkflowService;
 import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
 import com.cloudai.bpmn.api.domain.InnerApprovalStatusVo;
@@ -21,13 +22,16 @@ import static org.mockito.Mockito.when;
 
 /**
  * /inner 审批端点委托单测（契约 2026-10-08-approval-platform-api §4）：
- * Feign 专用通道无 @PreAuthorize（网关 inner-block-bpmn 屏蔽外访），三端点纯委托编排服务。
+ * Feign 专用通道无 @PreAuthorize（网关 inner-block-bpmn 屏蔽外访），三端点纯委托编排服务；
+ * create 在发起事务提交后触发首节点任务到达站内信通知（契约 2026-11-08-approval-notify-mq-api §1.3）。
  */
 @ExtendWith(MockitoExtension.class)
 class InnerApprovalControllerTest {
 
     @Mock
     private ApprovalWorkflowService workflowService;
+    @Mock
+    private ApprovalNotifyPublisher notifyPublisher;
     @InjectMocks
     private InnerApprovalController controller;
 
@@ -42,6 +46,8 @@ class InnerApprovalControllerTest {
         R<InnerApprovalCreateVo> result = controller.create(req);
 
         verify(workflowService).createApproval(req);
+        // 发起事务提交点后的首节点任务到达通知（发布器吞异常，不影响端点返回）
+        verify(notifyPublisher).publishTasksForApproval(12L);
         assertThat(result.getCode()).isEqualTo(200);
         assertThat(result.getData().getApprovalId()).isEqualTo("12");
         assertThat(result.getData().getStatus()).isEqualTo("0");

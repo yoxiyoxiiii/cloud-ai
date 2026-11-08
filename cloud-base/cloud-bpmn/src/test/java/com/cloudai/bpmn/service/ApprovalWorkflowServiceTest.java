@@ -14,6 +14,7 @@ import com.cloudai.bpmn.mapper.BpmnApprovalMapper;
 import com.cloudai.bpmn.mq.ApprovalCancelTxExecutor;
 import com.cloudai.bpmn.mq.ApprovalCompleteTxExecutor;
 import com.cloudai.bpmn.mq.ApprovalEventPublisher;
+import com.cloudai.bpmn.mq.ApprovalNotifyPublisher;
 import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
 import com.cloudai.bpmn.api.domain.InnerApprovalStatusVo;
 import com.cloudai.common.core.domain.R;
@@ -63,7 +64,8 @@ import static org.mockito.Mockito.when;
  * 通用审批编排单测（契约 2026-10-08-approval-platform-api §4/§3/§2.3 + 2026-10-09 MQ 事务消息 §1.3）：
  * createApproval 4010-4017 全触发 + 平台四变量注入（消费侧业务 @Transactional 不变）；
  * completeTask/cancelApproval 编排化断言面——前置校验失败零发送即抛（4016/4010/4012/4011）、
- * TERMINAL 半消息发送参数（topic/tag/KEYS/事件体/通道/bizArg）、TxMessageSendException→1002 系转译。
+ * TERMINAL 半消息发送参数（topic/tag/KEYS/事件体/通道/bizArg）、TxMessageSendException→1002 系转译；
+ * 站内信通知钩子（契约 2026-11-08-approval-notify-mq-api §1.3）只出现在 sendTerminalEvent 正常返回之后。
  */
 @ExtendWith(MockitoExtension.class)
 class ApprovalWorkflowServiceTest {
@@ -86,6 +88,8 @@ class ApprovalWorkflowServiceTest {
     @Spy
     private ApprovalEventPublisher eventPublisher =
             new ApprovalEventPublisher(new RocketMQTemplate(), new JsonPayloads(new ObjectMapper()));
+    @Mock
+    private ApprovalNotifyPublisher notifyPublisher;
     @InjectMocks
     private ApprovalWorkflowService service;
 
@@ -122,6 +126,9 @@ class ApprovalWorkflowServiceTest {
         // 消费入口不直接发事件——SUCCESS 补偿事件由 ApprovalCreateConsumer 负责（契约 §1.2）
         verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
                 any(), anyString(), any());
+        // createApproval 事务方法体内零通知（事务边界红线：发起通知由调用方在提交点后触发）
+        verify(notifyPublisher, never()).publishTasksForApproval(any());
+        verify(notifyPublisher, never()).publishTerminalResult(any(), any());
     }
 
     @Test
@@ -335,6 +342,9 @@ class ApprovalWorkflowServiceTest {
         // 引擎删实例与置 3 已迁入 executor（本地事务内）——service 不再直接写
         verify(runtimeService, never()).deleteProcessInstance(anyString(), anyString());
         verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any());
+        // executor 事务提交后撤销结果通知申请人（撤销删实例无后续任务，不涉任务到达通知）
+        verify(notifyPublisher).publishTerminalResult(5L, StatusEnum.CANCELLED.getCode());
+        verify(notifyPublisher, never()).publishTasksForApproval(any());
     }
 
     @Test
@@ -349,6 +359,8 @@ class ApprovalWorkflowServiceTest {
         // 半消息发送失败本地零写——1002 系（bpmn 无 3xxx 账本，契约 §3 只增 system 3025）
         assertThat(ex.getMessage()).isEqualTo("消息服务不可用");
         assertThat(ex.getCode()).isEqualTo(1002);
+        // 半消息失败=本地零写未提交——通知必不发（回滚必不发通知不变式）
+        verify(notifyPublisher, never()).publishTerminalResult(any(), any());
     }
 
     @Test
@@ -380,6 +392,8 @@ class ApprovalWorkflowServiceTest {
         verify(txMessageSender).sendTransactional(eq(ApprovalMqTopics.TOPIC_APPROVAL_EVENT_NOTIFY),
                 eq(ApprovalMqTopics.TAG_TERMINAL), eq("leave:7:TERMINAL"), any(),
                 eq(ApprovalCancelTxExecutor.CHANNEL), any(ApprovalCancelTxExecutor.CancelCommand.class));
+        // /inner 撤销通道复用 id 撤销编排——通知行为同款
+        verify(notifyPublisher).publishTerminalResult(5L, StatusEnum.CANCELLED.getCode());
     }
 
     // ---- completeTask（编排化断言面） ----
@@ -396,6 +410,9 @@ class ApprovalWorkflowServiceTest {
                 .isEqualTo(4016);
         verify(txMessageSender, never()).sendTransactional(anyString(), anyString(), anyString(),
                 any(), anyString(), any());
+        // 前置校验失败零通知（未提交即无通知可发）
+        verify(notifyPublisher, never()).publishTasksForApproval(any());
+        verify(notifyPublisher, never()).publishTerminalResult(any(), any());
     }
 
     @Test
@@ -422,6 +439,10 @@ class ApprovalWorkflowServiceTest {
         // 引擎推进已迁 executor——service 不再直接写引擎/审批表
         verify(taskService, never()).complete(anyString(), anyMap());
         verify(approvalMapper, never()).updateStatusById(anyLong(), any(), any(), any());
+        // executor 事务提交后：后续任务通知（单节点已终态=发布器空集零发）+ 审批结果通知
+        // （terminalStatus 用发送前推断值，executor 内已验证一致——不一致整体回滚此行不可达）
+        verify(notifyPublisher).publishTasksForApproval(12L);
+        verify(notifyPublisher).publishTerminalResult(12L, StatusEnum.APPROVED.getCode());
     }
 
     @Test
@@ -435,6 +456,8 @@ class ApprovalWorkflowServiceTest {
         verify(txMessageSender).sendTransactional(anyString(), anyString(), anyString(), event.capture(),
                 eq(ApprovalCompleteTxExecutor.CHANNEL), any());
         assertThat(event.getValue().getTerminalStatus()).isEqualTo("2");
+        // 拒绝分支结果通知 status=2（推断值与 executor 验证值一致）
+        verify(notifyPublisher).publishTerminalResult(12L, StatusEnum.REJECTED.getCode());
     }
 
     @Test
@@ -473,6 +496,9 @@ class ApprovalWorkflowServiceTest {
 
         assertThat(ex.getMessage()).isEqualTo("消息服务不可用");
         assertThat(ex.getCode()).isEqualTo(1002);
+        // 半消息失败本地零写未提交——通知必不发
+        verify(notifyPublisher, never()).publishTasksForApproval(any());
+        verify(notifyPublisher, never()).publishTerminalResult(any(), any());
     }
 
     // ---- 脚手架 ----

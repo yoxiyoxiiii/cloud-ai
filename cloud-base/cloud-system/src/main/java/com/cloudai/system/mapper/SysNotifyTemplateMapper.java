@@ -15,6 +15,9 @@ public interface SysNotifyTemplateMapper {
 
     SysNotifyTemplate findById(@Param("id") Long id);
 
+    /** 模板编码精确查询（MQ 消费域按 code 定位内置模板；uk_code 命中，LIMIT 1 唯一键防御） */
+    SysNotifyTemplate findByCode(@Param("code") String code);
+
     /** 分页查询：无 LIMIT，由 PaginationInnerInterceptor 追加；name/code 模糊 + type 精确 */
     IPage<SysNotifyTemplate> pageList(Page<SysNotifyTemplate> page, @Param("query") NotifyTemplatePageQuery query);
 

@@ -512,13 +512,20 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (198, 19, '删除模板', 'system:notify:remove', 'F', '', '', 3, 1, NOW()),
 (199, 19, '发送通知', 'system:notify:send',   'F', '', '', 4, 1, NOW());
 
--- 内置模板种子（契约 §5：欢迎公告无变量 / 审批提醒含 ${nickname} 演示变量链路；is_builtin=1 禁删可改）
+-- 内置模板种子（欢迎公告无变量；审批提醒/审批结果与增量脚本 2026-11-08-approval-notify-integration.sql 同值，
+-- 变量集以契约 2026-11-08-approval-notify-mq-api §2 为准；is_builtin=1 禁删可改）
 INSERT INTO sys_notify_template (id, code, name, title_template, content_template, type, level,
                                  variables_desc, is_builtin, create_by, create_time, update_by, update_time)
 VALUES (1, 'welcome_notice', '欢迎公告', '欢迎加入',
         '欢迎使用本平台，祝你工作顺利！', 1, 0, '', 1, 'admin', NOW(), 'admin', NOW()),
        (2, 'approval_remind', '审批提醒', '审批待办提醒',
-        '您好 ${nickname}，您有一条新的审批任务待处理，请及时查看。', 2, 1, 'nickname=用户昵称', 1, 'admin', NOW(), 'admin', NOW());
+        '您好 ${nickname}，${applyUserName} 提交的「${title}」（${businessTypeName}）有待办任务待您审批（节点：${taskName}），请及时处理。',
+        2, 1, 'nickname=收件人昵称；applyUserName=申请人昵称（账号已删回退账号）；title=单据标题；businessTypeName=业务类型名；taskName=待办节点名',
+        1, 'admin', NOW(), 'admin', NOW()),
+       (3, 'approval_result', '审批结果通知', '审批结果通知',
+        '您好 ${nickname}，您提交的「${title}」（${businessTypeName}）已${resultText}。',
+        2, 0, 'nickname=收件人昵称；title=单据标题；businessTypeName=业务类型名；resultText=审批结果（已通过/已拒绝/已撤销）',
+        1, 'admin', NOW(), 'admin', NOW());
 
 -- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价；
 -- mobile/email 示例值与增量脚本 2026-10-22-dataperm-user-columns.sql 语义等价）

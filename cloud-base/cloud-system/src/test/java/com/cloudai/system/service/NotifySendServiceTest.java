@@ -99,6 +99,29 @@ class NotifySendServiceTest {
                 .getAnnotation(Transactional.class);
         assertThat(tx).isNotNull();
         assertThat(tx.rollbackFor()).contains(Exception.class);
+        // 双参重载（MQ 消费域直调，不经单参入口）同样独立标注——自调用不走代理时的兜底
+        Transactional operatorTx = NotifySendService.class
+                .getMethod("saveNotify", NotifySendRequest.class, String.class)
+                .getAnnotation(Transactional.class);
+        assertThat(operatorTx).isNotNull();
+        assertThat(operatorTx.rollbackFor()).contains(Exception.class);
+    }
+
+    @Test
+    void saveNotify_operatorOverload_usesExplicitOperatorForAudit() {
+        // MQ 消费域无登录态：双参重载显式传操作人，消息主表与收件行 create_by 均用该值
+        stubTemplateFound();
+        when(userMapper.listActiveUserIds()).thenReturn(List.of(1L));
+
+        service.saveNotify(allRequest(), "bpmn-notify");
+
+        ArgumentCaptor<SysNotifyMessage> messageCaptor = ArgumentCaptor.forClass(SysNotifyMessage.class);
+        verify(messageMapper).save(messageCaptor.capture());
+        assertThat(messageCaptor.getValue().getCreateBy()).isEqualTo("bpmn-notify");
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<SysNotifyUserMessage>> receipts = ArgumentCaptor.forClass(List.class);
+        verify(userMessageMapper).saveBatch(receipts.capture());
+        assertThat(receipts.getValue().get(0).getCreateBy()).isEqualTo("bpmn-notify");
     }
 
     @Test

@@ -5,6 +5,7 @@ import com.cloudai.bpmn.api.domain.ApprovalCreateInnerRequest;
 import com.cloudai.bpmn.api.domain.ApprovalStatusQueryInnerRequest;
 import com.cloudai.bpmn.api.domain.InnerApprovalCreateVo;
 import com.cloudai.bpmn.api.domain.InnerApprovalStatusVo;
+import com.cloudai.bpmn.mq.ApprovalNotifyPublisher;
 import com.cloudai.bpmn.service.ApprovalWorkflowService;
 import com.cloudai.common.core.domain.R;
 import jakarta.validation.Valid;
@@ -27,11 +28,15 @@ import java.util.List;
 public class InnerApprovalController {
 
     private final ApprovalWorkflowService workflowService;
+    private final ApprovalNotifyPublisher notifyPublisher;
 
     /** 发起审批（查重→insert→启动实例→回填，同事务）；返回审批单 id 与初始状态 */
     @PostMapping("/create")
     public R<InnerApprovalCreateVo> create(@Valid @RequestBody ApprovalCreateInnerRequest req) {
         InnerApprovalCreateVo created = workflowService.createApproval(req);
+        // 发起事务已提交（createApproval 返回即 COMMIT）：首节点任务到达站内信通知
+        // （发布器吞异常，不影响本端点返回；发布器为通知生产组件非 mapper，不违分层约束）
+        notifyPublisher.publishTasksForApproval(Long.valueOf(created.getApprovalId()));
         return R.ok(created);
     }
 

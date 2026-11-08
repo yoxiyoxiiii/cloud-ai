@@ -81,6 +81,9 @@ cloud:
         event:
           dlq-topic: "%DLQ%g_system_approval_event"
           group: g_system_dlq_watch_event
+        notify:                                             # 审批任务通知流（来源组 g_system_notify）
+          dlq-topic: "%DLQ%g_system_notify"
+          group: g_system_dlq_watch_notify
       resend-max: 5          # 单行重投上限（超限自动置已放弃）
       retention-days: 30     # 终态行清理保留天数（待处理行永不清）
     # 通知中心（2026-11-08，通知中心设计 §6：架构口径非密钥仓库化，Nacos 可覆盖）：

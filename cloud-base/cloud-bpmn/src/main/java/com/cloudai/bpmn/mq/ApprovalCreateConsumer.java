@@ -40,6 +40,7 @@ public class ApprovalCreateConsumer implements RocketMQListener<MessageExt> {
     private final ApprovalWorkflowService workflowService;
     private final ApprovalEventPublisher eventPublisher;
     private final JsonPayloads jsonPayloads;
+    private final ApprovalNotifyPublisher notifyPublisher;
 
     @Override
     public void onMessage(MessageExt msg) {
@@ -53,6 +54,9 @@ public class ApprovalCreateConsumer implements RocketMQListener<MessageExt> {
         }
         publishCreateResult(eventPublisher.createResultSuccess(
                 req.getBusinessType(), req.getBusinessKey(), created), true);
+        // 审批单已提交（createApproval @Transactional 返回即 COMMIT）：首节点任务到达通知
+        // （结果事件之后；发送失败由发布器吞掉，不影响本消息 ACK）
+        notifyPublisher.publishTasksForApproval(Long.valueOf(created.getApprovalId()));
     }
 
     /** 确定性失败分流：4015 补发收敛（必达性补强）；白名单发 FAILED 事件；其余（系统态）重抛走重试 */
@@ -87,6 +91,9 @@ public class ApprovalCreateConsumer implements RocketMQListener<MessageExt> {
                 req.getBusinessType(), req.getBusinessKey(), existing.getId());
         eventPublisher.sendPlain(eventPublisher.createResultSuccess(
                 req.getBusinessType(), req.getBusinessKey(), toCreateVo(existing)));
+        // 必达性补强：首投若在「提交后、通知发送前」崩溃，重投至此补发首节点任务通知；
+        // 重复由消费端去重表按消息键吸收（与上方补发 SUCCESS 事件同款论证）
+        notifyPublisher.publishTasksForApproval(existing.getId());
     }
 
     /** 行数据 → 发起出参（补发事件只取 approvalId/pid 两字段，status 语义不进事件） */

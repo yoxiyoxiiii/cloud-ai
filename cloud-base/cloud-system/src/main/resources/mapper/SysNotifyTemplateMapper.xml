@@ -16,6 +16,14 @@
          WHERE id = #{id} AND deleted = 0
     </select>
 
+    <!-- 按编码定位模板（MQ 消费域无 templateId，按 code 取内置模板）：uk_code 等值命中，LIMIT 1 唯一键防御 -->
+    <select id="findByCode" resultType="com.cloudai.system.entity.SysNotifyTemplate">
+        SELECT <include refid="allColumns"/>
+          FROM sys_notify_template
+         WHERE code = #{code} AND deleted = 0
+         LIMIT 1
+    </select>
+
     <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT；
          name/code 模糊 + type 精确（模板表量级极小，筛选走全扫，设计索引取舍不建 idx_type） -->
     <select id="pageList" resultType="com.cloudai.system.entity.SysNotifyTemplate">

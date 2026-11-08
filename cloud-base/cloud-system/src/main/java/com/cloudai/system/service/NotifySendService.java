@@ -33,6 +33,7 @@ import java.util.stream.Collectors;
  * 通知发送门面（契约 2026-11-08-notify-api §2.1 / 通知中心设计 §4）：
  * 解析模板 → 校验变量 → 三档展开收件人 → 消息主表 1 行 + 收件 N 行 + 统计表计数维护同事务落库。
  * 消息内容为解析后快照（与模板此后变更解耦）；按角色/全员为发送时点快照（之后入离职不回溯）。
+ * 双参重载供无登录态调用方（MQ 消费域）显式传操作人做审计；单参入口取登录态（管理端）。
  * 未来 inner Feign 发送接口（按 templateCode）直接复用本门面（契约 §6 预留）。
  */
 @Slf4j
@@ -64,11 +65,22 @@ public class NotifySendService {
     private final SysUserMapper userMapper;
 
     /**
-     * 发送通知（多表写：消息主表 1 行 + 收件 N 行，@Transactional 保证原子）。
-     * 校验顺序：1001 参数配套 → 3044 模板 → 3045 变量缺失 → 3046 解析超长 → 3047 收件人空。
+     * 发送通知——管理端入口（操作人取当前登录态）。
+     * 同类内部调双参重载不走代理，但本方法已开事务，事务语义不受自调用影响；
+     * 双参重载独立标注 @Transactional，MQ 消费域直调时事务同样生效。
      */
     @Transactional(rollbackFor = Exception.class)
     public NotifySendResultVo saveNotify(NotifySendRequest req) {
+        return saveNotify(req, SecurityUtils.currentAccount());
+    }
+
+    /**
+     * 发送通知（多表写：消息主表 1 行 + 收件 N 行，@Transactional 保证原子）——操作人显式传入
+     * （MQ 消费域无登录态，审计列 create_by 传系统账号）。
+     * 校验顺序：1001 参数配套 → 3044 模板 → 3045 变量缺失 → 3046 解析超长 → 3047 收件人空。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public NotifySendResultVo saveNotify(NotifySendRequest req, String operator) {
         assertRequestValid(req);
         SysNotifyTemplate template = requireTemplate(req.getTemplateId());
         Map<String, String> variables = req.getVariables() == null ? Map.of() : req.getVariables();
@@ -77,8 +89,8 @@ public class NotifySendService {
         if (receiverIds.isEmpty()) {
             throw new BusinessException(ERR_RECEIVER_EMPTY, "接收人列表为空");
         }
-        SysNotifyMessage message = saveMessage(template, req, rendered, receiverIds.size());
-        saveReceipts(message.getId(), receiverIds);
+        SysNotifyMessage message = saveMessage(template, req, rendered, receiverIds.size(), operator);
+        saveReceipts(message.getId(), receiverIds, operator);
         NotifySendResultVo vo = new NotifySendResultVo();
         vo.setMessageId(message.getId());
         vo.setReceiverCount(receiverIds.size());
@@ -154,9 +166,10 @@ public class NotifySendService {
         return new ArrayList<>(receiverIds);
     }
 
-    /** 消息主表落一行：解析后文案 + 模板 type/level + linkUrl/receiverType/receiverCount 快照 */
+    /** 消息主表落一行：解析后文案 + 模板 type/level + linkUrl/receiverType/receiverCount 快照；
+     *  操作人显式传入（管理端=登录态，消费端=系统账号） */
     private SysNotifyMessage saveMessage(SysNotifyTemplate template, NotifySendRequest req,
-                                         RenderedMessage rendered, int receiverCount) {
+                                         RenderedMessage rendered, int receiverCount, String operator) {
         SysNotifyMessage message = new SysNotifyMessage();
         message.setTemplateId(template.getId());
         message.setTitle(rendered.title());
@@ -166,15 +179,15 @@ public class NotifySendService {
         message.setLinkUrl(req.getLinkUrl());
         message.setReceiverType(req.getReceiverType());
         message.setReceiverCount(receiverCount);
-        message.setCreateBy(SecurityUtils.currentAccount());
+        message.setCreateBy(operator);
         messageMapper.save(message);
         return message;
     }
 
-    /** 收件行批量落库（500/批，create_by 统一=发送人）并同批维护未读统计（同事务）；
+    /** 收件行批量落库（500/批，create_by 统一=操作人）并同批维护未读统计（同事务）；
      *  uk 防御层冲突吸收（发送前已去重，常态不触发；冲突批统计一并跳过，由每日对账收敛） */
-    private void saveReceipts(Long messageId, List<Long> receiverIds) {
-        String sender = SecurityUtils.currentAccount();
+    private void saveReceipts(Long messageId, List<Long> receiverIds, String operator) {
+        String sender = operator;
         for (int start = 0; start < receiverIds.size(); start += BATCH_SIZE) {
             List<Long> batch = receiverIds.subList(start, Math.min(start + BATCH_SIZE, receiverIds.size()));
             List<SysNotifyUserMessage> rows = new ArrayList<>(batch.size());

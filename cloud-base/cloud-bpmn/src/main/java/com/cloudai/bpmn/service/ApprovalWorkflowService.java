@@ -16,6 +16,7 @@ import com.cloudai.bpmn.mapper.BpmnApprovalMapper;
 import com.cloudai.bpmn.mq.ApprovalCancelTxExecutor;
 import com.cloudai.bpmn.mq.ApprovalCompleteTxExecutor;
 import com.cloudai.bpmn.mq.ApprovalEventPublisher;
+import com.cloudai.bpmn.mq.ApprovalNotifyPublisher;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.rocketmq.tx.TxMessageSendException;
@@ -73,6 +74,7 @@ public class ApprovalWorkflowService {
     private final SystemUserClient systemUserClient;
     private final TxMessageSender txMessageSender;
     private final ApprovalEventPublisher eventPublisher;
+    private final ApprovalNotifyPublisher notifyPublisher;
 
     /** 发起审批（契约 §4.1）：配置校验 4014 → 审批人校验 4013 → uk 查重 4015 →
      *  insert bpmn_approval(审批中) → 启动实例（businessKey=id，平台四变量+variables）→ 同事务回填实例关联 */
@@ -124,6 +126,9 @@ public class ApprovalWorkflowService {
         BpmnApproval approval = findCancelableApproval(id, operator);
         sendTerminalEvent(approval, StatusEnum.CANCELLED.getCode(),
                 ApprovalCancelTxExecutor.CHANNEL, new ApprovalCancelTxExecutor.CancelCommand(id, operator));
+        // executor 本地事务已提交（sendTerminalEvent 正常返回）：撤销结果通知申请人
+        // （撤销删实例无后续任务，不涉任务到达通知；发送失败由发布器吞掉不影响撤销结果）
+        notifyPublisher.publishTerminalResult(approval.getId(), StatusEnum.CANCELLED.getCode());
     }
 
     /** 按业务键撤销（契约 §4.3 /inner 通道）：(businessType, businessKey) 定位 → 4010 → 复用 id 撤销编排 */
@@ -152,6 +157,11 @@ public class ApprovalWorkflowService {
         sendTerminalEvent(approval, expected, ApprovalCompleteTxExecutor.CHANNEL,
                 new ApprovalCompleteTxExecutor.CompleteCommand(
                         task.getId(), req.getApprove(), req.getComment(), opUser, expected));
+        // executor 本地事务已提交（sendTerminalEvent 正常返回）：先通知后续节点任务（多节点前向兼容，
+        // 当前单节点实例已结束=空集零发送），再通知申请人审批结果——terminalStatus 用发送前推断值，
+        // executor 内已验证实际值与之一致（不一致整体回滚，此行不可达）
+        notifyPublisher.publishTasksForApproval(approval.getId());
+        notifyPublisher.publishTerminalResult(approval.getId(), expected);
     }
 
     // ---- 发起脚手架 ----

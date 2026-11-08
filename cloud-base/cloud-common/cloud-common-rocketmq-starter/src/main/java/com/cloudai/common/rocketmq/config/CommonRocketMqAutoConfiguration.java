@@ -88,13 +88,15 @@ public class CommonRocketMqAutoConfiguration {
         return new RocketMqTxListener(registry, txLogDao, jsonPayloads, transactionManager);
     }
 
-    /** 两表清理（dedup 段仅事件消费方执行：无 DedupRocketMQListener bean 时传 null 跳过） */
+    /** 两表清理（dedup 段仅事件消费方执行：无 DedupRocketMQListener bean 时传 null 跳过）。
+     *  存在性判断走 stream().findAny()——getIfAvailable() 是唯一性语义，宿主出现第二个消费者
+     *  bean 时会抛 NoSuchBeanDefinitionException 使服务起不来 */
     @Bean
     @ConditionalOnMissingBean
     public MqTableCleanJob mqTableCleanJob(TxLogDao txLogDao, ConsumeDedupDao consumeDedupDao,
                                            CommonRocketMqProperties properties,
                                            ObjectProvider<DedupRocketMQListener> dedupListeners) {
-        ConsumeDedupDao effective = dedupListeners.getIfAvailable() == null ? null : consumeDedupDao;
+        ConsumeDedupDao effective = dedupListeners.stream().findAny().isPresent() ? consumeDedupDao : null;
         return new MqTableCleanJob(txLogDao, effective, properties);
     }
 }

@@ -34,6 +34,9 @@ public class CloudSystemMqDlqProperties {
 
         /** event 流死信监听（来源组 g_system_approval_event） */
         private Endpoint event = new Endpoint();
+
+        /** notify 流死信监听（来源组 g_system_notify，审批任务通知） */
+        private Endpoint notify = new Endpoint();
     }
 
     /** 单个 watch endpoint：DLQ topic + watch 消费组 */

@@ -35,7 +35,8 @@ import static org.mockito.Mockito.when;
 /**
  * 发起审批消费单测（契约 2026-10-09 §1.2 结果分流 + 投影轮设计 D5 必达性补强：
  * 成功→SUCCESS 事件（含 pid）/ 4015→查行补发 SUCCESS 事件（行不在防御 log+ACK）/ 白名单→FAILED 事件 /
- * 系统态重抛重试；补偿事件发送失败不对称处置：SUCCESS 仅记档、FAILED/补发重抛）。
+ * 系统态重抛重试；补偿事件发送失败不对称处置：SUCCESS 仅记档、FAILED/补发重抛；
+ * 成功与 4015 补发分支后各挂首节点任务到达通知（契约 2026-11-08-approval-notify-mq-api §1.3））。
  */
 @ExtendWith(MockitoExtension.class)
 class ApprovalCreateConsumerTest {
@@ -46,6 +47,8 @@ class ApprovalCreateConsumerTest {
     @Spy
     private ApprovalEventPublisher eventPublisher =
             new ApprovalEventPublisher(new RocketMQTemplate(), new JsonPayloads(new ObjectMapper()));
+    @Mock
+    private ApprovalNotifyPublisher notifyPublisher;
 
     private final JsonPayloads jsonPayloads = new JsonPayloads(new ObjectMapper());
 
@@ -53,7 +56,7 @@ class ApprovalCreateConsumerTest {
 
     @BeforeEach
     void setUp() {
-        consumer = new ApprovalCreateConsumer(workflowService, eventPublisher, jsonPayloads);
+        consumer = new ApprovalCreateConsumer(workflowService, eventPublisher, jsonPayloads, notifyPublisher);
         // 默认发送成功（零事件分支不触达——lenient 防严格桩误报）
         lenient().doNothing().when(eventPublisher).sendPlain(any());
     }
@@ -71,6 +74,8 @@ class ApprovalCreateConsumerTest {
         assertThat(captor.getValue().getApprovalId()).isEqualTo("12");
         assertThat(captor.getValue().getProcessInstanceId()).isEqualTo("pid-9");
         assertThat(captor.getValue().getBusinessKey()).isEqualTo("7");
+        // 任务到达通知紧跟结果事件之后（审批单已提交）：KEYS 由发布器自取数组装
+        verify(notifyPublisher).publishTasksForApproval(12L);
     }
 
     @Test
@@ -96,6 +101,8 @@ class ApprovalCreateConsumerTest {
         assertThat(captor.getValue().getResult()).isEqualTo("SUCCESS");
         assertThat(captor.getValue().getApprovalId()).isEqualTo("12");
         assertThat(captor.getValue().getProcessInstanceId()).isEqualTo("pid-9");
+        // 必达性补强同款：首投若在「提交后、通知发送前」崩溃，重投至此补发首节点任务通知
+        verify(notifyPublisher).publishTasksForApproval(12L);
     }
 
     @Test
@@ -107,6 +114,8 @@ class ApprovalCreateConsumerTest {
 
         assertThatCode(() -> consumer.onMessage(msg(request()))).doesNotThrowAnyException();
         verify(eventPublisher, never()).sendPlain(any());
+        // 行不在无 approvalId 可发——零通知
+        verify(notifyPublisher, never()).publishTasksForApproval(any());
     }
 
     @Test
@@ -134,6 +143,8 @@ class ApprovalCreateConsumerTest {
         assertThat(captor.getValue().getResult()).isEqualTo("FAILED");
         assertThat(captor.getValue().getApprovalId()).isNull();
         assertThat(captor.getValue().getReason()).isEqualTo("审批人无效: ghost");
+        // 确定性失败未建审批单——无任务可通知
+        verify(notifyPublisher, never()).publishTasksForApproval(any());
     }
 
     @Test
