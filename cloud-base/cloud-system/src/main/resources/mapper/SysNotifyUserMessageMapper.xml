@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.SysNotifyUserMessageMapper">
+
+    <!-- 写扩散流水表（无 deleted 列、无业务删除入口，沿 mq_consume_dedup 先例）：
+         未读统计与已读操作只碰本表；read_flag/read_time 落 DDL 默认（0/NULL），批量插入不写 -->
+    <insert id="saveBatch">
+        INSERT INTO sys_notify_user_message (message_id, user_id, create_by, create_time) VALUES
+        <foreach collection="list" item="item" separator=",">
+            (#{item.messageId}, #{item.userId}, #{item.createBy}, NOW())
+        </foreach>
+    </insert>
+
+    <!-- 未读计数：30s 轮询最热查询，命中 idx_user_read（user_id 等值 + read_flag 等值） -->
+    <select id="countUnread" resultType="long">
+        SELECT COUNT(*)
+          FROM sys_notify_user_message
+         WHERE user_id = #{userId} AND read_flag = 0
+    </select>
+
+    <!-- 用户最新收件行 id（前端水位）；无收件 MAX 返回 NULL 由 Service 转 "0" -->
+    <select id="findLatestId" resultType="java.lang.Long">
+        SELECT MAX(id)
+          FROM sys_notify_user_message
+         WHERE user_id = #{userId}
+    </select>
+
+    <!-- 用户消息分页：JOIN 主表取文案快照与 type/level/link_url，send_time=主表 create_time；
+         收件行按 id 倒序（新消息在前）；分页 LIMIT 由 PaginationInnerInterceptor 追加；
+         INNER JOIN 安全：清理任务仅删无收件行的孤儿主表行，有收件行的消息必在 -->
+    <select id="pageList" resultType="com.cloudai.system.vo.NotifyUserMessageVo">
+        SELECT um.id, um.message_id, m.title, m.content, m.type, m.level, m.link_url,
+               um.read_flag, um.read_time, m.create_time AS send_time
+          FROM sys_notify_user_message um
+          JOIN sys_notify_message m ON m.id = um.message_id
+         WHERE um.user_id = #{userId}
+        <if test="query.type != null">
+            AND m.type = #{query.type}
+        </if>
+        <if test="query.readFlag != null">
+            AND um.read_flag = #{query.readFlag}
+        </if>
+         ORDER BY um.id DESC
+    </select>
+
+    <!-- 已读归属校验：id + userId 双键定位，非本人/不存在一律返回 null（契约 §3.3：同文案不泄露他人数据存在性） -->
+    <select id="findByIdAndUser" resultType="com.cloudai.system.entity.SysNotifyUserMessage">
+        SELECT id, message_id, user_id, read_flag, read_time, create_by, create_time, update_by, update_time
+          FROM sys_notify_user_message
+         WHERE id = #{id} AND user_id = #{userId}
+    </select>
+
+    <!-- 单条已读条件写：read_flag=0 才更新（重复已读 0 行幂等成功）；审计时间 SQL NOW() -->
+    <update id="updateRead">
+        UPDATE sys_notify_user_message
+           SET read_flag = 1,
+               read_time = NOW()
+               <if test="account != null">
+                   , update_by = #{account}
+               </if>
+               , update_time = NOW()
+         WHERE id = #{id} AND user_id = #{userId} AND read_flag = 0
+    </update>
+
+    <!-- 全部已读：当前用户全部未读行置已读，返回影响行数（前端 toast「已读 N 条」） -->
+    <update id="updateReadAll">
+        UPDATE sys_notify_user_message
+           SET read_flag = 1,
+               read_time = NOW()
+               <if test="account != null">
+                   , update_by = #{account}
+               </if>
+               , update_time = NOW()
+         WHERE user_id = #{userId} AND read_flag = 0
+    </update>
+
+    <!-- 清理任务第一步：物理删过期已读行（未读行永不删——删未读=丢用户消息）；
+         read_time 范围扫命中 idx_read_time 后回表核 read_flag -->
+    <delete id="deleteReadBefore">
+        DELETE FROM sys_notify_user_message
+         WHERE read_flag = 1 AND read_time &lt; #{cutoff}
+    </delete>
+</mapper>

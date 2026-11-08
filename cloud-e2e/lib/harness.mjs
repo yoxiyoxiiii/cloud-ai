@@ -142,18 +142,17 @@ export function createHarness({ base, artDir }) {
   async function waitToast(page, text, type = 'success', timeout = 8000) {
     const t0 = Date.now()
     while (Date.now() - t0 < timeout) {
-      const msgs = page.locator('.el-message')
+      const msgs = page.locator('.el-message').filter({ hasText: text })
       const n = await msgs.count()
       for (let i = 0; i < n; i++) {
-        // toast 淡出动画中元素瞬时 not visible，innerText 默认等 30s 必卡——短超时失败即跳过该条
-        let t = ''
-        try {
-          t = (await msgs.nth(i).innerText({ timeout: 1000 })).trim()
-        } catch {
-          continue
-        }
-        if (t.includes(text) && (await msgs.nth(i).getAttribute('class')).includes(`el-message--${type}`)) {
-          return t
+        // toast 3s 淡出与轮询读取有竞争：文本过滤已绑定同一元素，class/innerText 断言用短超时——
+        // 元素在两次调用间被移除时立刻跳过该条继续轮询，勿用默认 30s 卡死整个场景
+        const target = msgs.nth(i)
+        const cls = await target.getAttribute('class', { timeout: 500 }).catch(() => null)
+        if (cls && cls.includes(`el-message--${type}`)) {
+          // 返回完整 toast 文本（bpmn 场景断言契约 msg 逐字，长于检索子串）
+          const t = await target.innerText({ timeout: 500 }).catch(() => null)
+          return (t ?? text).trim()
         }
       }
       await sleep(150)

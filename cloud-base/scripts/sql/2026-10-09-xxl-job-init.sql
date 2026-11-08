@@ -261,4 +261,16 @@ VALUES (10, 3, 'system-dlq-log-clean', now(), now(), 'cloudai', '', 'CRON', '0 3
         'DO_NOTHING', 'FIRST', 'dlqLogCleanJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '',
         1);
 
+-- 通知中心清理任务（2026-11-08 通知中心轮增补）：①物理删收件表过期已读行（未读行永不删——删未读=丢用户消息）
+-- ②物理删无收件行残留的消息主表行；CRON 每日 03:40 错峰 03:00 MQ 两表清理 / 03:30 死信清理；
+-- handler 对应 cloud-system job 包 @XxlJob("notifyCleanJobHandler")；保留天数 cloud.system.notify.retention-days
+INSERT INTO `xxl_job_info`(`id`, `job_group`, `name`, `add_time`, `update_time`, `author`, `alarm_email`,
+                           `schedule_type`, `schedule_conf`, `misfire_strategy`, `executor_route_strategy`,
+                           `executor_handler`, `executor_param`, `executor_block_strategy`, `executor_timeout`,
+                           `executor_fail_retry_count`, `glue_type`, `glue_source`, `glue_remark`, `glue_updatetime`,
+                           `child_jobid`, `trigger_status`)
+VALUES (11, 3, 'system-notify-clean', now(), now(), 'cloudai', '', 'CRON', '0 40 3 * * ?',
+        'DO_NOTHING', 'FIRST', 'notifyCleanJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '',
+        1);
+
 commit;

@@ -303,15 +303,15 @@ try {
     //      含父目录 id（10/15/16/17/18/20/30 等）；
     //      E1 扩容：admin 绑定是封闭集（基线 INSERT...SELECT 全量式），保持全量精确不宽松——非清单断言）----
     // 互指义务：与 run-menu-e2e.mjs CLEANUP 的 SEED_MENU_IDS 各自维护、改菜单种子段时 grep 两脚本同步改（计划 E1 共享常量决策）
-    const SEED_MENU_IDS = ['10', '11', '12', '13', '111', '112', '113', '114', '115', '121', '122', '123', '124', '131', '132', '133', '14', '141', '142', '143', '15', '151', '152', '153', '16', '161', '162', '17', '171', '172', '173', '18', '181', '182', '183', '184', '185', '186', '187', '188', '189', '190', '191', '192', '193', '194', '195', '20', '21', '211', '30', '31', '32', '33', '311', '312', '321', '331', '34', '341']
+    const SEED_MENU_IDS = ['10', '11', '12', '13', '111', '112', '113', '114', '115', '121', '122', '123', '124', '131', '132', '133', '14', '141', '142', '143', '15', '151', '152', '153', '16', '161', '162', '17', '171', '172', '173', '18', '181', '182', '183', '184', '185', '186', '187', '188', '189', '19', '190', '191', '192', '193', '194', '195', '196', '197', '198', '199', '20', '21', '211', '30', '31', '32', '33', '311', '312', '321', '331', '34', '341']
     const bound = await directApi('GET', '/system/role/1/menus')
     log(`  直连 GET /system/role/1/menus: HTTP ${bound.httpStatus} code=${bound.body.code} data=${JSON.stringify(bound.body.data)}`)
     assertEq(bound.httpStatus, 200, '契约：HTTP 恒 200')
     assertEq(bound.body.code, 200, '角色菜单绑定查询业务码应为 200')
     assert(Array.isArray(bound.body.data), `data 应为数组，实际 ${typeof bound.body.data}`)
-    assertEq(bound.body.data.length, 60, `admin 绑定应恰 60 个种子菜单 id 全量（Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段 + 平台 Agent 管理轮 186-190 段 + MCP Server 管理轮 191-195 段），实际 ${bound.body.data.length}`)
+    assertEq(bound.body.data.length, 65, `admin 绑定应恰 65 个种子菜单 id 全量（Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段 + 平台 Agent 管理轮 186-190 段 + MCP Server 管理轮 191-195 段 + 通知中心轮 19/196-199 段），实际 ${bound.body.data.length}`)
     const boundIds = bound.body.data.map(String)
-    assertEq([...boundIds].sort().join(','), [...SEED_MENU_IDS].sort().join(','), `admin 绑定应为 60 个种子菜单 id 全量精确封闭集（含父目录与 331/34/341 与 15/16/17/18/182-185/186-190/191-195 段），实际 ${JSON.stringify(boundIds)}`)
+    assertEq([...boundIds].sort().join(','), [...SEED_MENU_IDS].sort().join(','), `admin 绑定应为 65 个种子菜单 id 全量精确封闭集（含父目录与 331/34/341 与 15/16/17/18/182-185/186-190/191-195/196-199 段），实际 ${JSON.stringify(boundIds)}`)
     for (const pid of ['10', '20', '30', '11', '111']) {
       assert(boundIds.includes(pid), `绑定应含父目录/菜单 id ${pid}（存量绑定含父目录语义）`)
     }

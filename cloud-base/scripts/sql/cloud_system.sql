@@ -21,6 +21,9 @@ DROP TABLE IF EXISTS mq_consume_dedup;
 DROP TABLE IF EXISTS approval_projection;
 DROP TABLE IF EXISTS mq_dlq_log;
 DROP TABLE IF EXISTS sys_table_config;
+DROP TABLE IF EXISTS sys_notify_user_message;
+DROP TABLE IF EXISTS sys_notify_message;
+DROP TABLE IF EXISTS sys_notify_template;
 
 -- 用户
 CREATE TABLE sys_user (
@@ -339,6 +342,65 @@ CREATE TABLE sys_table_config (
     UNIQUE KEY uk_user_table (user_id, table_key)
 ) ENGINE = InnoDB COMMENT = '用户表格列配置（个人视图偏好：列顺序/显隐/列宽；权限是硬边界，隐藏列由列级数据权限在前端合并时另行过滤，本表只存偏好；GET 无行=页面默认列序；PUT 整体覆盖 upsert；DELETE 物理删行=恢复默认——沿 sys_data_perm_rule 配置态物理删先例无 deleted 列；无 create_by/update_by 冗余——操作人恒为 user_id 本人）';
 
+-- ---------- 站内信通知中心三表（2026-11-08 通知中心轮，与增量脚本 2026-11-08-notify-center.sql 同步落同一份定义） ----------
+-- 模型：模板(软删) + 消息主表(发送流水,无 deleted) + 用户收件表(写扩散,无 deleted)——设计 §2.3 取舍：
+--   配置域软删可追溯，流水域物理删保持表薄（沿 mq_tx_log/mq_consume_dedup 先例）；
+--   消息内容为解析后快照，与模板此后变更解耦；收件行不冗余文案（列表 JOIN 主表）。
+-- 索引取舍（设计 §2.2）：模板表 uk_code 兼查重（小表不建 idx_type）；消息主表本轮仅 insert 走 PK；
+--   收件表 uk_message_user=批量插入幂等防御+清理孤儿判断最左前缀 / idx_user_read=未读计数+用户分页+全部已读三查询共享 /
+--   idx_read_time=清理任务范围删。
+CREATE TABLE sys_notify_template (
+    id               BIGINT        NOT NULL AUTO_INCREMENT COMMENT '模板ID',
+    code             VARCHAR(50)   NOT NULL COMMENT '模板编码（业务引用键，如 welcome_notice；内置模板供未来 inner 接口按 code 引用）',
+    name             VARCHAR(50)   NOT NULL COMMENT '模板名称（管理列表展示）',
+    title_template   VARCHAR(100)  NOT NULL COMMENT '标题模板（支持 ${var} 占位符）',
+    content_template VARCHAR(1000) NOT NULL COMMENT '内容模板（支持 ${var} 占位符）',
+    type             TINYINT       NOT NULL DEFAULT 1 COMMENT '消息类型：1公告 2提醒（发送时快照到消息表）',
+    level            TINYINT       NOT NULL DEFAULT 0 COMMENT '消息级别：0普通 1重要 2紧急（发送时快照；映射前端弹框样式与停留时长）',
+    variables_desc   VARCHAR(500)  NOT NULL DEFAULT '' COMMENT '变量说明（人工维护的变量名与含义文本，仅文档用途；变量集合以模板内容正则解析为准，不重复存储）',
+    is_builtin       TINYINT       NOT NULL DEFAULT 0 COMMENT '内置标记：1=内置模板（禁删，内容可改）0=用户创建',
+    create_by        VARCHAR(30)   DEFAULT NULL COMMENT '创建人（登录账号）',
+    create_time      DATETIME      DEFAULT NULL COMMENT '创建时间',
+    update_by        VARCHAR(30)   DEFAULT NULL COMMENT '更新人（登录账号）',
+    update_time      DATETIME      DEFAULT NULL COMMENT '更新时间',
+    deleted          TINYINT       NOT NULL DEFAULT 0 COMMENT '逻辑删除：0未删除 1已删除',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_code (code)
+) ENGINE = InnoDB COMMENT = '站内信模板表（管理域：逻辑删除）';
+
+CREATE TABLE sys_notify_message (
+    id             BIGINT        NOT NULL AUTO_INCREMENT COMMENT '消息ID',
+    template_id    BIGINT        NOT NULL COMMENT '来源模板ID（sys_notify_template.id，发送时快照）',
+    title          VARCHAR(100)  NOT NULL COMMENT '消息标题（模板解析后最终文本，快照）',
+    content        VARCHAR(1000) NOT NULL COMMENT '消息内容（模板解析后最终文本，快照）',
+    type           TINYINT       NOT NULL COMMENT '消息类型：1公告 2提醒（模板快照）',
+    level          TINYINT       NOT NULL COMMENT '消息级别：0普通 1重要 2紧急（模板快照）',
+    link_url       VARCHAR(200)  DEFAULT NULL COMMENT '前端跳转路由（相对 path 如 /bpmn/task；NULL=纯展示无跳转）',
+    receiver_type   TINYINT      NOT NULL COMMENT '接收人维度：1按用户 2按角色 3全员（发送时快照，审计用）',
+    receiver_count INT           NOT NULL COMMENT '实际展开收件人数（发送时快照，审计用）',
+    create_by      VARCHAR(30)   DEFAULT NULL COMMENT '发送人（登录账号）',
+    create_time    DATETIME      DEFAULT NULL COMMENT '发送时间',
+    update_by      VARCHAR(30)   DEFAULT NULL COMMENT '更新人（本表不可编辑，恒 NULL，列保留对齐审计基线）',
+    update_time    DATETIME      DEFAULT NULL COMMENT '更新时间（本表不可编辑，恒 NULL）',
+    PRIMARY KEY (id)
+) ENGINE = InnoDB COMMENT = '站内信消息表（发送流水：不可编辑、无业务删除入口；过期由清理任务物理删，沿 mq_tx_log 流水表先例）';
+
+CREATE TABLE sys_notify_user_message (
+    id          BIGINT      NOT NULL AUTO_INCREMENT COMMENT '收件记录ID（用户侧列表行与已读操作的目标标识）',
+    message_id  BIGINT      NOT NULL COMMENT '消息ID（sys_notify_message.id）',
+    user_id     BIGINT      NOT NULL COMMENT '收件用户ID（sys_user.id）',
+    read_flag   TINYINT     NOT NULL DEFAULT 0 COMMENT '已读标记：0未读 1已读（未读=未处理，单状态口径）',
+    read_time   DATETIME    DEFAULT NULL COMMENT '已读时间（未读为 NULL）',
+    create_by   VARCHAR(30) DEFAULT NULL COMMENT '创建人（=发送人账号，批量展开时统一填写）',
+    create_time DATETIME    DEFAULT NULL COMMENT '投递时间（=发送时间）',
+    update_by   VARCHAR(30) DEFAULT NULL COMMENT '更新人（已读操作时=操作用户账号）',
+    update_time DATETIME    DEFAULT NULL COMMENT '更新时间',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_message_user (message_id, user_id),
+    KEY idx_user_read (user_id, read_flag),
+    KEY idx_read_time (read_time)
+) ENGINE = InnoDB COMMENT = '站内信用户收件表（写扩散：一条消息 N 行；无业务删除入口，过期由清理任务物理删，沿 mq_consume_dedup 先例）';
+
 -- ---------- 初始数据 ----------
 -- 内置种子一律显式 is_builtin=1（内置保护契约 §1：后续新增内置种子 SQL 须带 is_builtin=1）
 INSERT INTO sys_role (id, name, role_key, is_builtin, create_time) VALUES (1, '管理员', 'admin', 1, NOW());
@@ -426,6 +488,24 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (193, 191, '编辑',        'ai:mcp:update', 'F', '',            '',               2, 1, NOW()),
 (194, 191, '删除',        'ai:mcp:delete', 'F', '',            '',               3, 1, NOW()),
 (195, 191, '测试与同步',  'ai:mcp:sync',   'F', '',            '',               4, 1, NOW());
+
+-- 通知中心菜单（19 段 5 行，2026-11-08 通知中心轮；与增量脚本 2026-11-08-notify-center.sql 段③ 语义等价，
+-- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定；
+-- 用户侧消息中心页 /notify/center 不挂 sys_menu——全员功能走前端静态路由，契约 2026-11-08-notify-api §5）
+INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_builtin, create_time) VALUES
+(19,  10, '通知管理', 'system:notify:list',   'C', '/system/notify', 'Bell', 8, 1, NOW()),
+(196, 19, '新增模板', 'system:notify:add',    'F', '', '', 1, 1, NOW()),
+(197, 19, '修改模板', 'system:notify:edit',   'F', '', '', 2, 1, NOW()),
+(198, 19, '删除模板', 'system:notify:remove', 'F', '', '', 3, 1, NOW()),
+(199, 19, '发送通知', 'system:notify:send',   'F', '', '', 4, 1, NOW());
+
+-- 内置模板种子（契约 §5：欢迎公告无变量 / 审批提醒含 ${nickname} 演示变量链路；is_builtin=1 禁删可改）
+INSERT INTO sys_notify_template (id, code, name, title_template, content_template, type, level,
+                                 variables_desc, is_builtin, create_by, create_time, update_by, update_time)
+VALUES (1, 'welcome_notice', '欢迎公告', '欢迎加入',
+        '欢迎使用本平台，祝你工作顺利！', 1, 0, '', 1, 'admin', NOW(), 'admin', NOW()),
+       (2, 'approval_remind', '审批提醒', '审批待办提醒',
+        '您好 ${nickname}，您有一条新的审批任务待处理，请及时查看。', 2, 1, 'nickname=用户昵称', 1, 'admin', NOW(), 'admin', NOW());
 
 -- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价；
 -- mobile/email 示例值与增量脚本 2026-10-22-dataperm-user-columns.sql 语义等价）

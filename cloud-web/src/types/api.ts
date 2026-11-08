@@ -1620,3 +1620,140 @@ export interface McpServerPermsSavePayload {
   dept_ids?: number[]
   user_ids?: number[]
 }
+
+/* ============ 通知中心域（契约 2026-11-08-notify-api §1-§3） ============ */
+
+/** 消息类型（契约 §1.1 type 字段）：1=公告 2=提醒；标签/下拉共用映射 */
+export const NOTIFY_TYPE_MAP: Record<number, string> = {
+  1: '公告',
+  2: '提醒',
+}
+
+/**
+ * 消息级别（契约 §1.1 level 字段）：0=普通 1=重要 2=紧急。
+ * tag 颜色与弹框样式共用值域——NOTIFY_LEVEL_TAG 管列表/下拉色点，
+ * 弹框 (type, duration) 映射在 notify store（0:(info,4500) / 1:(warning,8000) / 2:(error,常驻)）
+ */
+export const NOTIFY_LEVEL_MAP: Record<number, string> = {
+  0: '普通',
+  1: '重要',
+  2: '紧急',
+}
+
+/** 消息级别→tag 颜色（固定映射）：0 普通 info / 1 重要 warning / 2 紧急 danger */
+export const NOTIFY_LEVEL_TAG: Record<number, 'info' | 'warning' | 'danger'> = {
+  0: 'info',
+  1: 'warning',
+  2: 'danger',
+}
+
+/** 已读标记（契约 §3.2 readFlag 字段）：0=未读 1=已读（单状态口径） */
+export const NOTIFY_READ_MAP: Record<number, string> = {
+  0: '未读',
+  1: '已读',
+}
+
+/**
+ * 通知模板 VO（契约 §1.1，列表与详情共用同构）：type 1公告 2提醒 / level 0普通 1重要 2紧急；
+ * isBuiltin 1=内置模板（禁删可改，删除按钮置灰——后端 3049 亦拦）0=用户创建；
+ * titleTemplate/contentTemplate 含 `${var}` 占位符（发送弹窗前端解析生成变量表单）
+ */
+export interface NotifyTemplateVo {
+  id: string
+  code: string
+  name: string
+  titleTemplate: string
+  contentTemplate: string
+  type: number
+  level: number
+  /** 变量说明（人工维护文档文本，可空串） */
+  variablesDesc: string
+  isBuiltin: number
+  createBy: string
+  createTime: string
+  updateTime: string
+}
+
+/**
+ * 模板分页查询入参（契约 §1.1）：name/code 均为模糊匹配，type 精确（1/2）；三项全可选
+ */
+export interface NotifyTemplatePageQuery {
+  pageNum: number
+  pageSize: number
+  name?: string
+  code?: string
+  type?: number
+}
+
+/**
+ * 新增模板入参（契约 §1.3）：code 2-50 位且 `^[a-z][a-z0-9_]*$`（小写下划线编码）；
+ * titleTemplate 1-100 / contentTemplate 1-1000 / variablesDesc ≤500 可空；撞 code 得 3043
+ */
+export interface NotifyTemplateSavePayload {
+  code: string
+  name: string
+  titleTemplate: string
+  contentTemplate: string
+  type: number
+  level: number
+  variablesDesc: string
+}
+
+/** 修改模板入参（契约 §1.4）：新增全字段 + id 置首；code 可改（同样查重 3043），不存在 3044 */
+export interface NotifyTemplateEditPayload extends NotifyTemplateSavePayload {
+  id: string
+}
+
+/**
+ * 发送通知入参（契约 §2.1）：receiverType 1按用户（userIds 必填非空）2按角色（roleIds
+ * 必填非空）3全员；variables 键须匹配 `^[a-zA-Z][a-zA-Z0-9_]*$`（缺失必填变量 3045，
+ * 多余忽略）；linkUrl 前端相对路由（非空必须 / 开头），null=纯展示
+ */
+export interface NotifySendRequest {
+  templateId: string
+  receiverType: number
+  userIds?: string[]
+  roleIds?: string[]
+  variables?: Record<string, string>
+  linkUrl?: string
+}
+
+/** 发送结果 VO（契约 §2.1）：receiverCount=实际展开收件人数（剔除无效用户后） */
+export interface NotifySendResultVo {
+  messageId: string
+  receiverCount: number
+}
+
+/**
+ * 未读摘要 VO（契约 §3.1，30s 轮询唯一接口）：unreadCount 为 Long→String（消费侧 Number()）；
+ * latestId 是水位锚——无任何收件="0"，变化才拉 §3.2 弹框（增量去重依据）
+ */
+export interface NotifySummaryVo {
+  unreadCount: string
+  latestId: string
+}
+
+/**
+ * 我的消息行 VO（契约 §3.2，按收件行 id 倒序）：id 是**收件行ID**（已读操作目标，
+ * 非 messageId）；title/content 为发送时快照；linkUrl null=纯展示；sendTime=主表创建时间
+ */
+export interface NotifyUserMessageVo {
+  id: string
+  messageId: string
+  title: string
+  content: string
+  type: number
+  level: number
+  linkUrl: string | null
+  readFlag: number
+  readTime: string | null
+  sendTime: string
+}
+
+/** 我的消息分页查询入参（契约 §3.2）：type 1公告 2提醒 / readFlag 0未读 1已读，均可选 */
+export interface NotifyUserMessagePageQuery {
+  pageNum: number
+  pageSize: number
+  type?: number
+  readFlag?: number
+}

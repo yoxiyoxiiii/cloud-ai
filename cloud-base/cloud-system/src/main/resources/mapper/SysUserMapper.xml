@@ -119,6 +119,27 @@
            </foreach>
     </select>
 
+    <!-- 通知全员档收件人展开（通知中心设计 §4）：全部有效用户 id；按用户档发送亦以本结果集过滤无效用户
+         （停用/已删剔除）。有效口径 status=0 AND deleted=0 与 listEnabledOptions 同源 -->
+    <select id="listActiveUserIds" resultType="long">
+        SELECT id
+          FROM sys_user
+         WHERE status = 0 AND deleted = 0
+    </select>
+
+    <!-- 通知按角色档收件人展开：角色 → 用户-角色 → 有效用户 DISTINCT（多角色并集去重）；
+         roleIds 空集由 Service 前置校验拦截（receiverType=2 时必填非空），不到达本查询 -->
+    <select id="listUserIdsByRoleIds" resultType="long">
+        SELECT DISTINCT ur.user_id
+          FROM sys_user_role ur
+          JOIN sys_user u ON u.id = ur.user_id
+         WHERE u.status = 0 AND u.deleted = 0
+           AND ur.role_id IN
+           <foreach collection="roleIds" item="roleId" open="(" separator="," close=")">
+               #{roleId}
+           </foreach>
+    </select>
+
     <insert id="save" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_user (account, nickname, mobile, email, dept_id, password, status,
                               create_by, create_time, update_by, update_time)

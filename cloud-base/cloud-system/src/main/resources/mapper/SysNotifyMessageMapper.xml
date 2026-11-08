@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.SysNotifyMessageMapper">
+
+    <!-- 发送流水表（无 deleted 列、不可编辑，沿 mq_tx_log 先例）：发送 insert 一行，
+         标题/内容为模板解析后快照；update_by/update_time 恒 NULL（列保留对齐审计基线，INSERT 不写） -->
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO sys_notify_message (template_id, title, content, type, level, link_url,
+                                        receiver_type, receiver_count, create_by, create_time)
+        VALUES (#{templateId}, #{title}, #{content}, #{type}, #{level}, #{linkUrl},
+                #{receiverType}, #{receiverCount}, #{createBy}, NOW())
+    </insert>
+
+    <!-- 清理任务第二步：物理删无收件行残留的消息主表行（第一步删空收件行的消息随之收敛；
+         子查询命中收件表 uk_message_user 最左前缀） -->
+    <delete id="deleteOrphanMessages">
+        DELETE m FROM sys_notify_message m
+         WHERE NOT EXISTS (
+                   SELECT 1 FROM sys_notify_user_message u WHERE u.message_id = m.id
+               )
+    </delete>
+</mapper>

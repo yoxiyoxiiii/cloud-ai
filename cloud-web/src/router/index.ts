@@ -20,6 +20,7 @@ import type { RouteRecordRaw } from 'vue-router'
 import Layout from '../layouts/Layout.vue'
 import LoginView from '../views/login/index.vue'
 import DashboardView from '../views/dashboard/index.vue'
+import NotifyCenterView from '../views/notify/center.vue'
 import RedirectView from '../views/redirect/index.vue'
 import NotFoundView from '../views/error/NotFound.vue'
 import MenuErrorView from '../views/error/MenuError.vue'
@@ -60,6 +61,14 @@ const routes: RouteRecordRaw[] = [
         name: 'Dashboard',
         component: DashboardView,
         meta: { title: '工作台', icon: 'Monitor' },
+      },
+      {
+        // 消息中心（契约 2026-11-08-notify-api §5）：用户侧全员功能——不挂 sys_menu
+        // （菜单按角色绑定分发，全员不能靠菜单树），走静态路由登录即可，入口=铃铛下拉「查看全部」
+        path: 'notify/center',
+        name: 'NotifyCenter',
+        component: NotifyCenterView,
+        meta: { title: '消息中心' },
       },
       {
         // 刷新中转路由（升级设计 D6）：挂在 Layout children 下不闪布局骨架；

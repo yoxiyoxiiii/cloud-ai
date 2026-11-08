@@ -46,6 +46,12 @@ public interface SysUserMapper {
     /** 批量名称回填：数据权限规则分页行 subjectName（ids 空集由 Service 跳过，防 IN ()） */
     List<SysUser> listByIds(@Param("ids") List<Long> ids);
 
+    /** 通知全员档收件人展开：全部有效用户 id（status=0 未删；通知发送设计 §4） */
+    List<Long> listActiveUserIds();
+
+    /** 通知按角色档收件人展开：角色→有效用户 DISTINCT（多角色并集去重；roleIds 空集由 Service 跳过，防 IN ()） */
+    List<Long> listUserIdsByRoleIds(@Param("roleIds") List<Long> roleIds);
+
     int save(SysUser user);
 
     /** 动态更新（仅非空列，等价原 updateById NOT_NULL 策略） */

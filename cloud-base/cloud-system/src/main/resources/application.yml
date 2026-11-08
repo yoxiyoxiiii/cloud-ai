@@ -83,6 +83,10 @@ cloud:
           group: g_system_dlq_watch_event
       resend-max: 5          # 单行重投上限（超限自动置已放弃）
       retention-days: 30     # 终态行清理保留天数（待处理行永不清）
+    # 通知中心（2026-11-08，通知中心设计 §6：架构口径非密钥仓库化，Nacos 可覆盖）：
+    # xxl-job 任务 id 11 每日 03:40 清理——已读收件行保留 N 天后物理删（未读行永不删），孤儿消息主表行随之收敛
+    notify:
+      retention-days: 30     # 已读收件行清理保留天数
 
 mybatis-plus:
   configuration:
