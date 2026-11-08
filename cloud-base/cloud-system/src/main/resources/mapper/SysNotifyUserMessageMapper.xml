@@ -3,8 +3,10 @@
 <mapper namespace="com.cloudai.system.mapper.SysNotifyUserMessageMapper">
 
     <!-- 写扩散流水表（无 deleted 列、无业务删除入口，沿 mq_consume_dedup 先例）：
-         未读统计与已读操作只碰本表；read_flag/read_time 落 DDL 默认（0/NULL），批量插入不写 -->
-    <insert id="saveBatch">
+         已读操作只碰本表（未读统计走 sys_notify_user_stat 派生计数）；
+         read_flag/read_time 落 DDL 默认（0/NULL），批量插入不写；
+         useGeneratedKeys 回填收件行 id——发送路径以批内最大 id 作统计表水位 -->
+    <insert id="saveBatch" useGeneratedKeys="true" keyProperty="id">
         INSERT INTO sys_notify_user_message (message_id, user_id, create_by, create_time) VALUES
         <foreach collection="list" item="item" separator=",">
             (#{item.messageId}, #{item.userId}, #{item.createBy}, NOW())
@@ -80,4 +82,14 @@
         DELETE FROM sys_notify_user_message
          WHERE read_flag = 1 AND read_time &lt; #{cutoff}
     </delete>
+
+    <!-- 对账取数：按用户聚合未读数与最新收件行 id（只读聚合；列别名对齐 SysNotifyUserStat 驼峰映射复用实体，
+         清空+重灌的写编排由 Service 层完成） -->
+    <select id="listUnreadAgg" resultType="com.cloudai.system.entity.SysNotifyUserStat">
+        SELECT user_id,
+               SUM(read_flag = 0) AS unread_count,
+               IFNULL(MAX(id), 0) AS last_receipt_id
+          FROM sys_notify_user_message
+         GROUP BY user_id
+    </select>
 </mapper>

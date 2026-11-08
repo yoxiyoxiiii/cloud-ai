@@ -5,9 +5,11 @@ import com.cloudai.system.dto.NotifySendRequest;
 import com.cloudai.system.entity.SysNotifyMessage;
 import com.cloudai.system.entity.SysNotifyTemplate;
 import com.cloudai.system.entity.SysNotifyUserMessage;
+import com.cloudai.system.entity.SysNotifyUserStat;
 import com.cloudai.system.mapper.SysNotifyMessageMapper;
 import com.cloudai.system.mapper.SysNotifyTemplateMapper;
 import com.cloudai.system.mapper.SysNotifyUserMessageMapper;
+import com.cloudai.system.mapper.SysNotifyUserStatMapper;
 import com.cloudai.system.mapper.SysUserMapper;
 import com.cloudai.system.vo.NotifySendResultVo;
 import org.junit.jupiter.api.Test;
@@ -28,7 +30,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -39,7 +43,9 @@ import static org.mockito.Mockito.when;
 /**
  * 发送门面单测（契约 2026-11-08-notify-api §2.1 / §4）：
  * 1001 参数分支（三档配套/linkUrl/变量键）/ 3044→3045→3046→3047 校验顺序 / 三档展开
- * （无效用户过滤+去重、ROLE、ALL）/ 批量分批 500 / DuplicateKey 吸收 / 事务注解存在（反射断言）。
+ * （无效用户过滤+去重、ROLE、ALL）/ 批量分批 500 / DuplicateKey 吸收 / 事务注解存在（反射断言）/
+ * 统计表 Java 编排维护（按用户分组递增、水位=该用户批内最大收件行 id、
+ * 统计行缺失走 save 建行、并发首建撞键重试递增、冲突批统计跳过）。
  */
 @ExtendWith(MockitoExtension.class)
 class NotifySendServiceTest {
@@ -52,6 +58,8 @@ class NotifySendServiceTest {
     private SysNotifyMessageMapper messageMapper;
     @Mock
     private SysNotifyUserMessageMapper userMessageMapper;
+    @Mock
+    private SysNotifyUserStatMapper statMapper;
     @Mock
     private SysUserMapper userMapper;
     @InjectMocks
@@ -250,6 +258,7 @@ class NotifySendServiceTest {
         stubTemplateFound();
         List<Long> receivers = LongStream.rangeClosed(1, 501).boxed().toList();
         when(userMapper.listActiveUserIds()).thenReturn(receivers);
+        when(statMapper.updateIncrease(anyLong(), anyInt(), anyLong())).thenReturn(1);
 
         service.saveNotify(allRequest());
 
@@ -258,6 +267,71 @@ class NotifySendServiceTest {
         verify(userMessageMapper, times(2)).saveBatch(captor.capture());
         assertThat(captor.getAllValues().get(0)).hasSize(BATCH_SIZE);
         assertThat(captor.getAllValues().get(1)).hasSize(1);
+        // 统计维护 Java 按用户分组：501 个用户各一次递增（发送去重保证每用户单行）
+        verify(statMapper, times(501)).updateIncrease(anyLong(), anyInt(), anyLong());
+    }
+
+    @Test
+    void saveNotify_increasesStatPerUserWithOwnMaxIdAsWatermark() {
+        stubTemplateFound();
+        when(userMapper.listActiveUserIds()).thenReturn(List.of(1L, 2L, 3L));
+        // 模拟 useGeneratedKeys 回填收件行 id（4001-4003），水位断言才有真实输入
+        doAnswer(inv -> {
+            List<SysNotifyUserMessage> rows = inv.getArgument(0);
+            for (int i = 0; i < rows.size(); i++) {
+                rows.get(i).setId(4001L + i);
+            }
+            return rows.size();
+        }).when(userMessageMapper).saveBatch(anyList());
+        when(statMapper.updateIncrease(anyLong(), anyInt(), anyLong())).thenReturn(1);
+
+        service.saveNotify(allRequest());
+
+        // 按用户分组递增：每用户一次 updateIncrease(userId, 批内该用户收件数, 该用户最大收件行 id)
+        verify(statMapper).updateIncrease(1L, 1, 4001L);
+        verify(statMapper).updateIncrease(2L, 1, 4002L);
+        verify(statMapper).updateIncrease(3L, 1, 4003L);
+        // 统计行已存在（递增命中 1 行），不走建行分支
+        verify(statMapper, never()).save(any(SysNotifyUserStat.class));
+    }
+
+    @Test
+    void saveNotify_missingStatRowCreatesRowBySave() {
+        stubTemplateFound();
+        when(userMapper.listActiveUserIds()).thenReturn(List.of(1L));
+        doAnswer(inv -> {
+            List<SysNotifyUserMessage> rows = inv.getArgument(0);
+            rows.get(0).setId(4001L);
+            return 1;
+        }).when(userMessageMapper).saveBatch(anyList());
+        // 统计行不存在（该用户首条收件）：递增 0 行 → save 建行
+        when(statMapper.updateIncrease(1L, 1, 4001L)).thenReturn(0);
+
+        service.saveNotify(allRequest());
+
+        ArgumentCaptor<SysNotifyUserStat> captor = ArgumentCaptor.forClass(SysNotifyUserStat.class);
+        verify(statMapper).save(captor.capture());
+        assertThat(captor.getValue().getUserId()).isEqualTo(1L);
+        assertThat(captor.getValue().getUnreadCount()).isEqualTo(1);
+        assertThat(captor.getValue().getLastReceiptId()).isEqualTo(4001L);
+    }
+
+    @Test
+    void saveNotify_duplicateKeyOnStatRowSaveRetriesIncrease() {
+        stubTemplateFound();
+        when(userMapper.listActiveUserIds()).thenReturn(List.of(1L));
+        doAnswer(inv -> {
+            List<SysNotifyUserMessage> rows = inv.getArgument(0);
+            rows.get(0).setId(4001L);
+            return 1;
+        }).when(userMessageMapper).saveBatch(anyList());
+        // 并发同用户首建：递增 0 行 + save 撞主键 → 吸收冲突重试递增一次（计数不丢）
+        when(statMapper.updateIncrease(1L, 1, 4001L)).thenReturn(0);
+        doThrow(new DuplicateKeyException("PRIMARY")).when(statMapper).save(any(SysNotifyUserStat.class));
+
+        service.saveNotify(allRequest());
+
+        verify(statMapper, times(2)).updateIncrease(1L, 1, 4001L);
     }
 
     @Test
@@ -272,6 +346,8 @@ class NotifySendServiceTest {
 
         assertThatCode(() -> service.saveNotify(req)).doesNotThrowAnyException();
         verify(messageMapper).save(any(SysNotifyMessage.class));
+        // 冲突批收件行未落库，统计一并跳过（漂移由每日对账收敛）
+        verify(statMapper, never()).updateIncrease(anyLong(), anyInt(), anyLong());
     }
 
     @Test

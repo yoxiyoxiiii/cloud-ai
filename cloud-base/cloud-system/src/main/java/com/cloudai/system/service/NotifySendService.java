@@ -6,9 +6,11 @@ import com.cloudai.system.dto.NotifySendRequest;
 import com.cloudai.system.entity.SysNotifyMessage;
 import com.cloudai.system.entity.SysNotifyTemplate;
 import com.cloudai.system.entity.SysNotifyUserMessage;
+import com.cloudai.system.entity.SysNotifyUserStat;
 import com.cloudai.system.mapper.SysNotifyMessageMapper;
 import com.cloudai.system.mapper.SysNotifyTemplateMapper;
 import com.cloudai.system.mapper.SysNotifyUserMessageMapper;
+import com.cloudai.system.mapper.SysNotifyUserStatMapper;
 import com.cloudai.system.mapper.SysUserMapper;
 import com.cloudai.system.util.NotifyTemplateParser;
 import com.cloudai.system.vo.NotifySendResultVo;
@@ -22,12 +24,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * 通知发送门面（契约 2026-11-08-notify-api §2.1 / 通知中心设计 §4）：
- * 解析模板 → 校验变量 → 三档展开收件人 → 消息主表 1 行 + 收件 N 行同事务落库。
+ * 解析模板 → 校验变量 → 三档展开收件人 → 消息主表 1 行 + 收件 N 行 + 统计表计数维护同事务落库。
  * 消息内容为解析后快照（与模板此后变更解耦）；按角色/全员为发送时点快照（之后入离职不回溯）。
  * 未来 inner Feign 发送接口（按 templateCode）直接复用本门面（契约 §6 预留）。
  */
@@ -56,6 +60,7 @@ public class NotifySendService {
     private final SysNotifyTemplateMapper templateMapper;
     private final SysNotifyMessageMapper messageMapper;
     private final SysNotifyUserMessageMapper userMessageMapper;
+    private final SysNotifyUserStatMapper statMapper;
     private final SysUserMapper userMapper;
 
     /**
@@ -166,7 +171,8 @@ public class NotifySendService {
         return message;
     }
 
-    /** 收件行批量落库（500/批，create_by 统一=发送人）；uk 防御层冲突吸收（发送前已去重，常态不触发） */
+    /** 收件行批量落库（500/批，create_by 统一=发送人）并同批维护未读统计（同事务）；
+     *  uk 防御层冲突吸收（发送前已去重，常态不触发；冲突批统计一并跳过，由每日对账收敛） */
     private void saveReceipts(Long messageId, List<Long> receiverIds) {
         String sender = SecurityUtils.currentAccount();
         for (int start = 0; start < receiverIds.size(); start += BATCH_SIZE) {
@@ -181,9 +187,42 @@ public class NotifySendService {
             }
             try {
                 userMessageMapper.saveBatch(rows);
+                increaseStat(rows);
             } catch (DuplicateKeyException e) {
                 log.error("收件行唯一键冲突（uk_message_user 防御层，本批部分跳过）: messageId={}", messageId, e);
             }
+        }
+    }
+
+    /** 批后维护统计：Java 按用户分组逐用户递增，水位=批内该用户最大收件行 id（id 单调递增，直接覆盖）；
+     *  统计行不存在（递增 0 行）则建行。id 由收件批插 useGeneratedKeys 回填，生产恒非空，
+     *  判空兜底仅防御未回填的调用形态 */
+    private void increaseStat(List<SysNotifyUserMessage> rows) {
+        Map<Long, List<SysNotifyUserMessage>> byUser = rows.stream()
+                .collect(Collectors.groupingBy(SysNotifyUserMessage::getUserId));
+        byUser.forEach((userId, list) -> {
+            long maxId = list.stream().map(SysNotifyUserMessage::getId)
+                    .filter(Objects::nonNull).max(Long::compareTo).orElse(0L);
+            int delta = list.size();
+            int updated = statMapper.updateIncrease(userId, delta, maxId);
+            if (updated == 0) {
+                saveStatRow(userId, delta, maxId);
+            }
+        });
+    }
+
+    /** 建统计行（发送路径该用户首条收件）：并发同用户首建撞主键时吸收冲突，
+     *  log.error 记根因后重试递增一次（另一事务已建行，计数不丢） */
+    private void saveStatRow(Long userId, int delta, long maxId) {
+        SysNotifyUserStat stat = new SysNotifyUserStat();
+        stat.setUserId(userId);
+        stat.setUnreadCount(delta);
+        stat.setLastReceiptId(maxId);
+        try {
+            statMapper.save(stat);
+        } catch (DuplicateKeyException e) {
+            log.error("统计行并发首建冲突，重试递增: userId={}", userId, e);
+            statMapper.updateIncrease(userId, delta, maxId);
         }
     }
 

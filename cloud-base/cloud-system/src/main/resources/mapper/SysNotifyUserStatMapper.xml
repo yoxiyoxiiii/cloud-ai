@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.cloudai.system.mapper.SysNotifyUserStatMapper">
+
+    <!-- 派生计数表（无 deleted 列、无业务删除入口）：真相源收件表，本表写路径同事务维护+每日对账重建。
+         语句集只做单表单键简单读写：分组、建行、对账编排全在 Java 层（Service），
+         SQL 仅保留 unread_count ± delta 单行原子增减（保并发正确性）与普通 INSERT/SELECT/DELETE -->
+
+    <!-- 单行 PK 查询：summary 30s 轮询取数（无行=该用户无收件，Service 兜底 0/0） -->
+    <select id="findByUser" resultType="com.cloudai.system.entity.SysNotifyUserStat">
+        SELECT user_id, unread_count, last_receipt_id, update_time
+          FROM sys_notify_user_stat
+         WHERE user_id = #{userId}
+    </select>
+
+    <!-- 单行 INSERT：发送路径该用户首条收件建行（并发建行由 Java 层 catch 吸收重试） -->
+    <insert id="save">
+        INSERT INTO sys_notify_user_stat (user_id, unread_count, last_receipt_id, update_time)
+        VALUES (#{userId}, #{unreadCount}, #{lastReceiptId}, NOW())
+    </insert>
+
+    <!-- 普通多行 INSERT：对账重灌专用（前一步已 deleteAll，无冲突） -->
+    <insert id="saveBatch">
+        INSERT INTO sys_notify_user_stat (user_id, unread_count, last_receipt_id, update_time) VALUES
+        <foreach collection="list" item="item" separator=",">
+            (#{item.userId}, #{item.unreadCount}, #{item.lastReceiptId}, NOW())
+        </foreach>
+    </insert>
+
+    <!-- 发送路径：单用户原子递增 + 水位直接覆盖（收件行 id 单调递增，Java 传批内该用户最大 id） -->
+    <update id="updateIncrease">
+        UPDATE sys_notify_user_stat
+           SET unread_count = unread_count + #{delta},
+               last_receipt_id = #{lastReceiptId},
+               update_time = NOW()
+         WHERE user_id = #{userId}
+    </update>
+
+    <!-- 已读路径：按实际影响行数守卫递减（防负数；统计行缺失时 0 行，留给每日对账收敛） -->
+    <update id="updateDecrease">
+        UPDATE sys_notify_user_stat
+           SET unread_count = unread_count - #{delta},
+               update_time = NOW()
+         WHERE user_id = #{userId} AND unread_count &gt;= #{delta}
+    </update>
+
+    <!-- 对账第一步：清空统计表（随后 Java 组装 saveBatch 重灌；同一事务） -->
+    <delete id="deleteAll">
+        DELETE FROM sys_notify_user_stat
+    </delete>
+</mapper>

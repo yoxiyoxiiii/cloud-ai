@@ -30,28 +30,30 @@ cloud-system(:9202)
 
 【用户链路（登录即可，无 perms）】
 cloud-web Navbar 铃铛 + Pinia notify store（30s 轮询）
-    │ GET /system/notify/summary   ← 未读数 + 最新收件行 id（水位）
+    │ GET /system/notify/summary   ← 未读数 + 最新收件行 id（水位，读统计表单行）
     │ GET /system/notify/page      ← 水位变化时拉第一页，id > 水位的行触发弹框
     │ PUT /system/notify/read/{id} / read-all
     ▼
-cloud-system NotifyUserController ─→ NotifyUserMessageService ─→ SysNotifyUserMessageMapper
+cloud-system NotifyUserController ─→ NotifyUserMessageService ─┬→ SysNotifyUserStatMapper（summary 单行/已读递减）
+                                                               └→ SysNotifyUserMessageMapper（分页/已读条件写）
     （数据按 X-User-Id（SecurityUtils.currentUser().userId()）隔离，越权访问等同"不存在"）
 
 【清理链路】
 xxl-job admin(容器 :18081, 任务 id 11) ──► cloud-system executor(:19202) NotifyCleanJobHandler
-    ① 物理删收件表过期已读行 ② 物理删无收件行残留的消息主表行
+    ① 物理删收件表过期已读行 ② 物理删无收件行残留的消息主表行 ③ 统计表对账全量重建
 ```
 
 核心模型决策（后文展开）：**消息表（1 行/次发送）+ 用户收件表（N 行/次发送）写扩散**。未读统计与已读操作只碰收件表；模板内容在发送时解析为最终文本快照进消息表，此后与模板解耦（模板修改/删除不影响已发消息）。
 
 ## 2. 数据模型（DDL 与索引设计）
 
-### 2.1 三表 DDL
+### 2.1 四表 DDL
 
 ```sql
 -- =====================================================================
--- 站内信通知中心三表（2026-11-08，设计 docs/superpowers/specs/2026-11-08-notify-center-design.md）
+-- 站内信通知中心四表（2026-11-08，设计 docs/superpowers/specs/2026-11-08-notify-center-design.md）
 -- 模型：模板(软删) + 消息主表(流水,无 deleted) + 用户收件表(写扩散,无 deleted)
+--      + 未读统计表(派生计数,2026-11-08 未读统计优化轮增补)
 -- =====================================================================
 USE cloud_system;
 
@@ -106,7 +108,18 @@ CREATE TABLE sys_notify_user_message (
     KEY idx_user_read (user_id, read_flag),
     KEY idx_read_time (read_time)
 ) ENGINE = InnoDB COMMENT = '站内信用户收件表（写扩散：一条消息 N 行；无业务删除入口，过期由清理任务物理删，沿 mq_consume_dedup 先例）';
+
+-- 第 4 表：未读统计表（2026-11-08 未读统计优化轮增补，增量脚本 2026-11-08-notify-unread-stat.sql 同款）
+CREATE TABLE sys_notify_user_stat (
+    user_id         BIGINT      NOT NULL COMMENT '用户ID（sys_user.id，主键=每用户一行）',
+    unread_count    INT         NOT NULL DEFAULT 0 COMMENT '未读数（发送+1、已读按影响行数递减；每日对账重建兜底）',
+    last_receipt_id BIGINT      NOT NULL DEFAULT 0 COMMENT '该用户最新收件行 id（summary 轮询水位；0=无任何收件）',
+    update_time     DATETIME    DEFAULT NULL COMMENT '最近维护时间',
+    PRIMARY KEY (user_id)
+) ENGINE = InnoDB COMMENT = '站内信未读统计表（收件表派生计数：真相源 sys_notify_user_message，写路径同事务维护+每日对账）';
 ```
+
+**统计表三句口径**：真相源不变——收件表 `sys_notify_user_message` 仍是未读态的唯一事实，统计表只是派生计数。**SQL 只做单表单键简单读写（2026-11-08 统计表修订轮口径：分组/建行/对账编排全上 Java 层，禁 ODKU/`VALUES()`/`GREATEST`/`INSERT...SELECT` 写入形态）**——发送路径 Service 按用户分组调单行原子递增（`unread_count = unread_count + delta`，水位直接覆盖为批内该用户最大收件行 id），统计行不存在（递增 0 行）则单行 INSERT 建行，并发同用户首建撞主键由 catch 吸收后重试递增一次；已读路径按实际影响行数守卫递减（`unread_count >= delta` 防负数，统计行缺失时 0 行不报错）；对账自愈——xxl-job 任务 11 每日触发 service 编排（聚合只读 → 清空 → 重灌，同一事务原子），兜底写路径漂移与发送防御层跳过批。
 
 ### 2.2 索引设计与取舍（逐个注明命中的查询）
 
@@ -117,6 +130,7 @@ CREATE TABLE sys_notify_user_message (
 | `sys_notify_user_message.uk_message_user (message_id, user_id)` | ① 发送批量插入的幂等防御（同消息同用户只一行）② 清理任务第二步孤儿主表判断 `NOT EXISTS (... WHERE message_id = m.id)`（最左前缀命中） | 发送前 Set 去重保证常态不撞；uk 是并发/重试防御层，DuplicateKeyException 兜底转业务码 |
 | `sys_notify_user_message.idx_user_read (user_id, read_flag)` | ① summary 未读计数 `COUNT(*) WHERE user_id=? AND read_flag=0`（30s 轮询高频，最热的查询）② 用户分页列表 `WHERE user_id=? [AND read_flag=?] ORDER BY id DESC`（二级索引叶子含 PK，前缀等值 + 反向扫，实现时 EXPLAIN 抽查）③ 全部已读 `UPDATE ... WHERE user_id=? AND read_flag=0` | 三查询共享一个复合索引；read_flag 放第二列因所有查询都带 user_id 等值前缀 |
 | `sys_notify_user_message.idx_read_time (read_time)` | 清理任务第一步 `DELETE ... WHERE read_flag=1 AND read_time < ?` | 每日一次低频，但收件表是全库行数最大的表（用户数×消息数），无索引则全表扫已读行回表过滤；read_time 范围扫后回表核 read_flag，代价可接受。不建 (read_flag, read_time) 复合——read_flag=1 恰好是 idx_read_time 命中行集的全集，前缀无过滤增益 |
+| `sys_notify_user_stat` 仅 PK (`user_id`) | ① summary 单行查询 `findByUser`（30s 轮询最热路径，取代收件表 COUNT/MAX——优化轮动机）② 发送递增与建行 / 已读递减 / 对账清空均按 user_id 定位 | 每用户一行（≈用户数量级，远小于收件表），PK 即全部查询路径，无需二级索引（2026-11-08 统计表轮增补） |
 
 ### 2.3 模型取舍记档
 
@@ -160,7 +174,7 @@ send(NotifySendRequest)  [@Transactional(rollbackFor = Exception.class)，多表
 
 ## 5. 用户侧轮询与防骚扰（前端机制，接口见契约 §3）
 
-- **单一轮询接口 summary**（30s）：返回 `{ unreadCount, latestId }`（latestId=该用户最新收件行 id，MAX 主键，无收件=0）。角标与"有无新消息"判定共用一次请求，不为弹框单独拉详情——轮询成本每用户每 2 分钟 1 个轻请求。
+- **单一轮询接口 summary**（30s）：返回 `{ unreadCount, latestId }`（未读统计表单行 PK 取数——latestId=统计表维护的最新收件行水位，无收件=0）。角标与"有无新消息"判定共用一次请求，不为弹框单独拉详情——轮询成本每用户每 2 分钟 1 个轻请求。
 - **水位机制**：Pinia store（`stores/notify.ts`）内存水位 `poppedId`。登录首拉 summary 时**初始化水位=latestId（不弹存量）**；此后轮询发现 latestId > 水位 → 拉 page 第一页 → 取 `id > 水位` 的行弹框 → 水位推进到最大 id。刷新页面重置为首拉值，天然不重弹历史。
 - **合并限流**：单轮增量逐条弹 ElNotification，**最多 3 条**（按 id 降序取最新 3 条），其余仅累进角标；多轮各弹各（30s 自然节流）。
 - **弹框样式按时长映射 level**：0 普通 → info 型 4.5s；1 重要 → warning 型 8s；2 紧急 → error 型 duration 0（常驻手动关闭）。
@@ -172,11 +186,12 @@ send(NotifySendRequest)  [@Transactional(rollbackFor = Exception.class)，多表
 ## 6. 定时清理（xxl-job）
 
 - handler：`job/NotifyCleanJobHandler`（@XxlJob("notifyCleanJobHandler")，落 job/ 包守护规则），admin 任务 **id 11、组 3（cloud-system）、CRON 每日 03:40**（错峰 03:00 MQ 两表清理 / 03:30 死信清理）。
-- 两步（同一次执行内顺序完成，无事务包裹——清理幂等，中断重跑无害）：
+- 三步（同一次执行内顺序完成，步间不包事务——清理两步幂等、对账单步事务原子，中断重跑无害）：
   1. 物理删收件表：`DELETE WHERE read_flag=1 AND read_time < NOW() - N 天`（**未读行永不删**——删未读=丢用户消息）。命中 `idx_read_time`。
   2. 物理删孤儿主表：`DELETE FROM sys_notify_message m WHERE NOT EXISTS (SELECT 1 FROM sys_notify_user_message u WHERE u.message_id = m.id)`（第 1 步删空收件行的消息随之收敛）。命中 `uk_message_user` 最左前缀。
+  3. 统计表对账全量重建：`NotifyUserMessageService.resetUnreadStat()` service 编排（2026-11-08 统计表修订轮：对账 SQL 只留简单语句）——收件表聚合只读 `listUnreadAgg`（GROUP BY 取每用户未读数与最新收件行 id）→ `deleteAll` 清空统计表 → `saveBatch` 重灌，清空+重灌同一事务原子——以收件表现势重建统计行，兜底写路径漂移与发送防御层跳过批；幂等可重跑。
 - 配置：`CloudSystemNotifyProperties`（@ConfigurationProperties("cloud.system.notify")，规范 6 对象封装），`retention-days` 默认 30（仓库 application.yml 默认值 + Nacos 可覆盖，沿 CloudSystemMqDlqProperties 先例）。
-- 删除行数 log.info 记档；不抛异常即成功（xxl 缺省口径，沿 DlqLogCleanJobHandler）。
+- 删除/重建行数 log.info 记档（receiptRows / orphanMessageRows / statRows）；不抛异常即成功（xxl 缺省口径，沿 DlqLogCleanJobHandler）。
 
 ## 7. 错误码与权限标识
 

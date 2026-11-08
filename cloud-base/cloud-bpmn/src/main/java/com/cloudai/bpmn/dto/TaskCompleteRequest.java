@@ -9,6 +9,7 @@ import java.io.Serializable;
 
 /**
  * 办理任务入参（契约 2026-10-07-bpmn-leave-api §3.3：同意/拒绝意见均可空——宽松语义记档）。
+ * @author jy-root
  */
 @Data
 public class TaskCompleteRequest implements Serializable {

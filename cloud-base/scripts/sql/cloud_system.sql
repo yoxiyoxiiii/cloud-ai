@@ -21,6 +21,7 @@ DROP TABLE IF EXISTS mq_consume_dedup;
 DROP TABLE IF EXISTS approval_projection;
 DROP TABLE IF EXISTS mq_dlq_log;
 DROP TABLE IF EXISTS sys_table_config;
+DROP TABLE IF EXISTS sys_notify_user_stat;
 DROP TABLE IF EXISTS sys_notify_user_message;
 DROP TABLE IF EXISTS sys_notify_message;
 DROP TABLE IF EXISTS sys_notify_template;
@@ -342,10 +343,12 @@ CREATE TABLE sys_table_config (
     UNIQUE KEY uk_user_table (user_id, table_key)
 ) ENGINE = InnoDB COMMENT = '用户表格列配置（个人视图偏好：列顺序/显隐/列宽；权限是硬边界，隐藏列由列级数据权限在前端合并时另行过滤，本表只存偏好；GET 无行=页面默认列序；PUT 整体覆盖 upsert；DELETE 物理删行=恢复默认——沿 sys_data_perm_rule 配置态物理删先例无 deleted 列；无 create_by/update_by 冗余——操作人恒为 user_id 本人）';
 
--- ---------- 站内信通知中心三表（2026-11-08 通知中心轮，与增量脚本 2026-11-08-notify-center.sql 同步落同一份定义） ----------
--- 模型：模板(软删) + 消息主表(发送流水,无 deleted) + 用户收件表(写扩散,无 deleted)——设计 §2.3 取舍：
+-- ---------- 站内信通知中心四表（2026-11-08 通知中心轮 + 同日未读统计表轮，前三表与增量脚本
+--   2026-11-08-notify-center.sql、统计表与 2026-11-08-notify-unread-stat.sql 同步落同一份定义） ----------
+-- 模型：模板(软删) + 消息主表(发送流水,无 deleted) + 用户收件表(写扩散,无 deleted) + 未读统计表(派生计数)——设计 §2.3 取舍：
 --   配置域软删可追溯，流水域物理删保持表薄（沿 mq_tx_log/mq_consume_dedup 先例）；
---   消息内容为解析后快照，与模板此后变更解耦；收件行不冗余文案（列表 JOIN 主表）。
+--   消息内容为解析后快照，与模板此后变更解耦；收件行不冗余文案（列表 JOIN 主表）；
+--   统计表取代 summary 的收件表 COUNT/MAX（30s 轮询最热路径），每日对账重建兜底。
 -- 索引取舍（设计 §2.2）：模板表 uk_code 兼查重（小表不建 idx_type）；消息主表本轮仅 insert 走 PK；
 --   收件表 uk_message_user=批量插入幂等防御+清理孤儿判断最左前缀 / idx_user_read=未读计数+用户分页+全部已读三查询共享 /
 --   idx_read_time=清理任务范围删。
@@ -400,6 +403,16 @@ CREATE TABLE sys_notify_user_message (
     KEY idx_user_read (user_id, read_flag),
     KEY idx_read_time (read_time)
 ) ENGINE = InnoDB COMMENT = '站内信用户收件表（写扩散：一条消息 N 行；无业务删除入口，过期由清理任务物理删，沿 mq_consume_dedup 先例）';
+
+-- 未读统计表：收件表派生计数（真相源不变），发送/已读写路径同事务维护 + 清理任务第三步每日对账全量重建兜底；
+-- 仅主键（user_id 每用户一行）——summary 30s 轮询单行 PK 查询取代收件表 COUNT/MAX
+CREATE TABLE sys_notify_user_stat (
+    user_id         BIGINT      NOT NULL COMMENT '用户ID（sys_user.id，主键=每用户一行）',
+    unread_count    INT         NOT NULL DEFAULT 0 COMMENT '未读数（发送+1、已读按影响行数递减；每日对账重建兜底）',
+    last_receipt_id BIGINT      NOT NULL DEFAULT 0 COMMENT '该用户最新收件行 id（summary 轮询水位；0=无任何收件）',
+    update_time     DATETIME    DEFAULT NULL COMMENT '最近维护时间',
+    PRIMARY KEY (user_id)
+) ENGINE = InnoDB COMMENT = '站内信未读统计表（收件表派生计数：真相源 sys_notify_user_message，写路径同事务维护+每日对账）';
 
 -- ---------- 初始数据 ----------
 -- 内置种子一律显式 is_builtin=1（内置保护契约 §1：后续新增内置种子 SQL 须带 is_builtin=1）

@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.system.dto.NotifyUserMessagePageQuery;
 import com.cloudai.system.entity.SysNotifyUserMessage;
+import com.cloudai.system.entity.SysNotifyUserStat;
 import com.cloudai.system.vo.NotifyUserMessageVo;
 import org.apache.ibatis.annotations.Param;
 
@@ -45,4 +46,7 @@ public interface SysNotifyUserMessageMapper {
 
     /** 清理任务第一步：物理删过期已读行（未读行永不删——删未读=丢用户消息；命中 idx_read_time） */
     int deleteReadBefore(@Param("cutoff") LocalDateTime cutoff);
+
+    /** 对账取数：按用户聚合未读数与最新收件行 id（只读；复用 SysNotifyUserStat 承载，列别名对齐驼峰映射） */
+    List<SysNotifyUserStat> listUnreadAgg();
 }
