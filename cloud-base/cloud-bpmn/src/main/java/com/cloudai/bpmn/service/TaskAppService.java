@@ -6,26 +6,33 @@ import com.cloudai.bpmn.mapper.BpmnApprovalMapper;
 import com.cloudai.bpmn.util.BpmnDateUtil;
 import com.cloudai.bpmn.vo.TaskDoneVo;
 import com.cloudai.bpmn.vo.TaskVo;
+import com.cloudai.common.core.domain.PageQuery;
+import com.cloudai.common.core.domain.PageResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.flowable.common.engine.api.query.Query;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.TaskService;
 import org.flowable.engine.history.HistoricProcessInstance;
 import org.flowable.engine.task.Comment;
 import org.flowable.task.api.Task;
+import org.flowable.task.api.TaskQuery;
 import org.flowable.task.api.history.HistoricTaskInstance;
+import org.flowable.task.api.history.HistoricTaskInstanceQuery;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 /**
  * 任务查询通用化（契约 2026-10-08-approval-platform-api §2.1/§2.2）：ACT_RU_TASK 待办 +
  * ACT_HI_TASKINST 已办，businessKey（=审批单 id）回查 bpmn_approval 快照 + 配置表渲染，
- * 零业务表回查、零跨服务。不分页（个人量级小，additive 演进项记移交）；businessKey 需经
- * HistoricProcessInstance 取（Task 接口无投影，历史实例对运行中实例同样有痕）。只读服务不加事务注解。
+ * 零业务表回查、零跨服务。引擎 listPage+count 分页，total=引擎 count 含防御态脏行（脏行常态为零，
+ * 仅历史脏数据时 total 虚大——契约记档口径）；businessKey 需经 HistoricProcessInstance 取
+ * （Task 接口无投影，历史实例对运行中实例同样有痕）。只读服务不加事务注解。
  */
 @Slf4j
 @Service
@@ -40,41 +47,65 @@ public class TaskAppService {
     private final BpmnApprovalMapper approvalMapper;
     private final BusinessTypeRegistry businessTypeRegistry;
 
-    /** 待办列表（assignee=当前登录人，任务创建时间倒序）；审批单缺失/键异常行跳过（记档不炸列表） */
-    public List<TaskVo> listTodo(String assignee) {
-        List<Task> tasks = taskService.createTaskQuery()
+    /** 待办分页（assignee=当前登录人，任务创建时间倒序）；审批单缺失/键异常行跳过并补拉凑满当页 */
+    public PageResult<TaskVo> pageListTodo(String assignee, PageQuery query) {
+        TaskQuery taskQuery = taskService.createTaskQuery()
                 .taskAssignee(assignee)
-                .orderByTaskCreateTime().desc()
-                .list();
-        List<TaskVo> out = new ArrayList<>();
+                .orderByTaskCreateTime().desc();
+        long total = taskQuery.count();
         Map<String, BpmnBusinessType> configCache = new HashMap<>();
-        for (Task task : tasks) {
-            BpmnApproval approval = findApproval(task.getProcessInstanceId());
-            if (approval == null) {
-                continue;
+        List<TaskVo> rows = collectPageRows(taskQuery, total, query, task -> buildTodoVoOrNull(task, configCache));
+        return PageResult.of(total, rows);
+    }
+
+    /** 已办分页（taskAssignee=当前登录人且 finished，办理时间倒序）；审批单缺失行跳过并补拉凑满当页 */
+    public PageResult<TaskDoneVo> pageListDone(String assignee, PageQuery query) {
+        HistoricTaskInstanceQuery taskQuery = historyService.createHistoricTaskInstanceQuery()
+                .taskAssignee(assignee)
+                .finished()
+                .orderByHistoricTaskInstanceEndTime().desc();
+        long total = taskQuery.count();
+        Map<String, BpmnBusinessType> configCache = new HashMap<>();
+        List<TaskDoneVo> rows = collectPageRows(taskQuery, total, query, task -> buildDoneVoOrNull(task, configCache));
+        return PageResult.of(total, rows);
+    }
+
+    /** 补拉循环（todo/done 共用，契约 §2.1 分页语义）：脏行跳过后当页不满且未取尽时续拉下一批凑满一页。
+     *  offset 按引擎返回的原始条数推进（按净行数推进会重复扫到已跳过的脏行）；引擎越界返回空批即终止，
+     *  防并发收缩场景下 offset 永不追平 total 的死循环。 */
+    private <T, V> List<V> collectPageRows(Query<?, T> taskQuery, long total, PageQuery page, Function<T, V> rowMapper) {
+        List<V> out = new ArrayList<>();
+        int offset = (page.getPageNum() - 1) * page.getPageSize();
+        while (out.size() < page.getPageSize() && offset < total) {
+            List<T> batch = taskQuery.listPage(offset, page.getPageSize());
+            if (batch.isEmpty()) {
+                break;
             }
-            out.add(buildTaskVo(task, approval, configCache));
+            for (T row : batch) {
+                // 凑满即止：续拉批按整页大小拉取，防止超填当页
+                if (out.size() >= page.getPageSize()) {
+                    break;
+                }
+                V vo = rowMapper.apply(row);
+                if (vo != null) {
+                    out.add(vo);
+                }
+            }
+            offset += batch.size();
         }
         return out;
     }
 
-    /** 已办列表（taskAssignee=当前登录人且 finished，办理时间倒序）；审批单缺失行跳过（同上） */
-    public List<TaskDoneVo> listDone(String assignee) {
-        List<HistoricTaskInstance> tasks = historyService.createHistoricTaskInstanceQuery()
-                .taskAssignee(assignee)
-                .finished()
-                .orderByHistoricTaskInstanceEndTime().desc()
-                .list();
-        List<TaskDoneVo> out = new ArrayList<>();
-        Map<String, BpmnBusinessType> configCache = new HashMap<>();
-        for (HistoricTaskInstance task : tasks) {
-            BpmnApproval approval = findApproval(task.getProcessInstanceId());
-            if (approval == null) {
-                continue;
-            }
-            out.add(buildDoneVo(task, approval, configCache));
-        }
-        return out;
+    /** 待办行 → VO；脏行（审批单缺失/键异常）返回 null 由补拉循环跳过 */
+    private TaskVo buildTodoVoOrNull(Task task, Map<String, BpmnBusinessType> configCache) {
+        BpmnApproval approval = findApproval(task.getProcessInstanceId());
+        return approval == null ? null : buildTaskVo(task, approval, configCache);
+    }
+
+    /** 已办行 → VO；脏行跳过语义同上 */
+    private TaskDoneVo buildDoneVoOrNull(HistoricTaskInstance task, Map<String, BpmnBusinessType> configCache) {
+        BpmnApproval approval = findApproval(task.getProcessInstanceId());
+        return approval == null ? null : buildDoneVo(task, approval, configCache);
     }
 
     /** businessKey → bpmn_approval 快照；三重跳过各有 log.warn 痕迹（契约 §2.1/§2.2 防御态）：

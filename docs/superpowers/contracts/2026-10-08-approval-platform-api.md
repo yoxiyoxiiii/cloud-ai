@@ -16,7 +16,8 @@
 | 0.6 | 字典种子 | -bpmn_leave_status/-bpmn_leave_type（DELETE 种子行，废弃）；+bpmn_approval_status（新，平台与业务共用状态字典）/+system_leave_type（bpmn_leave_type 语义迁名）（§7） | 迁移 |
 | 0.7 | 菜单种子 | 31/311/312 UPDATE 改造（请假申请/system:leave:*，path /system/leave）+ 新增 34/341 我的审批（§8）；权限全集 8→10 | 迁移+新增 |
 | 0.8 | inner-api 契约 | 本契约 §4 为 cloud-bpmn 域 /inner 面权威；inner-api（system 域）零变化；cloud-system 成为 bpmn /inner 首个消费者 | 声明 |
-| 0.9 | 工作台 | 零新端点、零契约新增——纯前端消费既有 §2.1 与 §3.1（沿 Round H §6 先例）：「我的待办」卡=GET /bpmn/task/todo 前 5（字段随 §2.1 通用化）；「我的审批」卡=GET /bpmn/approval/page 前 5（可见性 bpmn:approval:list，「查看全部」跳 /bpmn/approval）——随一次性切换同轮生效 | 声明 |
+| 0.9 | 工作台 | 零新端点、零契约新增——纯前端消费既有 §2.1 与 §3.1（沿 Round H §6 先例）：「我的待办」卡=GET /bpmn/task/todo 首页 5 条（pageNum=1&pageSize=5，字段随 §2.1 通用化，2026-11-09 分页轮同步取 `rows`）；「我的审批」卡=GET /bpmn/approval/page 前 5（可见性 bpmn:approval:list，「查看全部」跳 /bpmn/approval）——随一次性切换同轮生效 | 声明 |
+| 0.10 | todo/done 分页 | §2.1/§2.2 由全量 List 改分页 PageResult（入参 PageQuery 默认 1/10 向后兼容；引擎 listPage+count、防御态脏行跳过补拉）——破坏性返回结构变更，前端/e2e 同轮同步（2026-11-09） | 取代 |
 
 ## 1. 域语义（审批平台特有）
 
@@ -31,12 +32,13 @@
 
 ## 2. 平台任务面（网关前缀 /bpmn/task——v1 §3 取代版）
 
-### 2.1 待办列表 `GET /bpmn/task/todo`（perms `bpmn:task:list`）
+### 2.1 待办列表 `GET /bpmn/task/todo`（perms `bpmn:task:list`）——分页（2026-11-09）
 
-- 入参无（assignee=当前登录人；任务创建时间倒序；不分页——量级口径沿 v1）
+- 入参（GET query，沿平台 PageQuery 惯例）：`pageNum`（默认 1）/ `pageSize`（默认 10）——无参调用向后兼容
 - 数据源：ACT_RU_TASK → businessKey（=approvalId）回查 **bpmn_approval 快照 + 配置表 type_name/detail_route 渲染**——零业务表回查、零跨服务
-- **防御态（实现期定型记档，2026-10-08）**：businessKey 无对应 bpmn_approval 行的引擎任务（历史遗留/外部发起）→ **跳过该行并 log.warn，不进列表、不炸接口**（三重跳过：businessKey 缺失 / 非数字 / 无审批单行）——单条脏数据不牺牲整页待办；B6 终版重启后旧残留任务将以跳过形态观测
-- 返回 `R<List<TaskVo>>`：
+- **分页语义**：引擎 `listPage(firstResult, maxResults)` + `count()`；任务创建时间倒序；`total` = 引擎 count
+- **防御态（实现期定型记档，2026-10-08；分页口径 2026-11-09）**：businessKey 无对应 bpmn_approval 行的引擎任务（历史遗留/外部发起）→ **跳过该行并 log.warn，不进列表、不炸接口**（三重跳过：businessKey 缺失 / 非数字 / 无审批单行）——单条脏数据不牺牲整页待办；跳行致当页不足 pageSize 且未取尽时**续拉下一批补足**（页内满行）；`total` 为引擎 count **含脏行**（脏行属异常防御态、常态为零，仅在有历史脏数据时 total 虚大）
+- 返回 `R<PageResult<TaskVo>>`（`total` string 沿全局 Long→String 口径；`rows` TaskVo 列表）：
 
 | 字段 | 类型 | 必返 | 说明 | 示例 |
 |---|---|---|---|---|
@@ -50,11 +52,11 @@
 | applyUserName | string \| null | 是 | 昵称译文 | `"管理员"` |
 | createTime | string | 是 | 任务创建时间 | `"2026-10-08 20:00:00"` |
 
-### 2.2 已办列表 `GET /bpmn/task/done`（perms `bpmn:task:list`）
+### 2.2 已办列表 `GET /bpmn/task/done`（perms `bpmn:task:list`）——分页（2026-11-09）
 
-- 入参无（taskAssignee=当前登录人且 finished；办理时间倒序）
-- **防御态（与 §2.1 同一实现路径，同等生效）**：businessKey 无对应 bpmn_approval 行的历史已办任务（旧轮残留，businessKey=旧 leaveId）→ 同款跳过 + log.warn，不进列表、不炸接口——todo 与 done 共用同一 findApproval 私有方法（缺失/非数字/无审批单行三重跳过）
-- 返回 `R<List<TaskDoneVo>>`（TaskVo 全字段 + 四字段）：
+- 入参（GET query，同 §2.1 PageQuery）：`pageNum`（默认 1）/ `pageSize`（默认 10）；taskAssignee=当前登录人且 finished；办理时间倒序；`total` = 引擎 count
+- **防御态（与 §2.1 同一实现路径，同等生效）**：businessKey 无对应 bpmn_approval 行的历史已办任务（旧轮残留，businessKey=旧 leaveId）→ 同款跳过 + log.warn，不进列表、不炸接口——todo 与 done 共用同一 findApproval 私有方法（缺失/非数字/无审批单行三重跳过）；跳行补拉与 total 含脏行口径同 §2.1
+- 返回 `R<PageResult<TaskDoneVo>>`（TaskVo 全字段 + 四字段）：
 
 | 增量字段 | 类型 | 必返 | 说明 | 示例 |
 |---|---|---|---|---|

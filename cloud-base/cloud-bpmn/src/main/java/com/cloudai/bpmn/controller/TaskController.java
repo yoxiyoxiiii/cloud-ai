@@ -5,6 +5,8 @@ import com.cloudai.bpmn.service.ApprovalWorkflowService;
 import com.cloudai.bpmn.service.TaskAppService;
 import com.cloudai.bpmn.vo.TaskDoneVo;
 import com.cloudai.bpmn.vo.TaskVo;
+import com.cloudai.common.core.domain.PageQuery;
+import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.security.util.SecurityUtils;
 import jakarta.validation.Valid;
@@ -16,11 +18,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
 /**
- * 任务端点（契约 2026-10-07-bpmn-leave-api §3，网关前缀 /bpmn/task）。
- * 待办/已办 assignee 恒取当前登录人；列表不分页（个人量级小，additive 演进项记移交）。
+ * 任务端点（契约 2026-10-08-approval-platform-api §2.1/§2.2，网关前缀 /bpmn/task）。
+ * 待办/已办 assignee 恒取当前登录人；列表分页（PageQuery 默认 1/10，total=引擎 count）。
  * @author jy-root
  */
 @RestController
@@ -31,19 +31,19 @@ public class TaskController {
     private final TaskAppService taskAppService;
     private final ApprovalWorkflowService workflowService;
 
-    /** 待办列表（ACT_RU_TASK，任务创建时间倒序） */
+    /** 待办分页（ACT_RU_TASK，任务创建时间倒序） */
     @GetMapping("/todo")
     @PreAuthorize("hasAuthority('bpmn:task:list')")
-    public R<List<TaskVo>> todo() {
-        List<TaskVo> todos = taskAppService.listTodo(SecurityUtils.currentAccount());
+    public R<PageResult<TaskVo>> todo(PageQuery query) {
+        PageResult<TaskVo> todos = taskAppService.pageListTodo(SecurityUtils.currentAccount(), query);
         return R.ok(todos);
     }
 
-    /** 已办列表（ACT_HI_TASKINST finished，办理时间倒序） */
+    /** 已办分页（ACT_HI_TASKINST finished，办理时间倒序） */
     @GetMapping("/done")
     @PreAuthorize("hasAuthority('bpmn:task:list')")
-    public R<List<TaskDoneVo>> done() {
-        List<TaskDoneVo> done = taskAppService.listDone(SecurityUtils.currentAccount());
+    public R<PageResult<TaskDoneVo>> done(PageQuery query) {
+        PageResult<TaskDoneVo> done = taskAppService.pageListDone(SecurityUtils.currentAccount(), query);
         return R.ok(done);
     }
 

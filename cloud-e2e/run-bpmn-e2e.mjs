@@ -198,7 +198,7 @@ async function mqWarmup(accessToken) {
   let done = null
   for (let attempt = 1; attempt <= 2 && done?.code !== 200; attempt++) {
     const todo = await gw('/bpmn/task/todo').then((r) => r.json()).catch(() => null)
-    const task = (todo?.data || []).find((t) => String(t.approvalId) === String(approvalId))
+    const task = (todo?.data?.rows || []).find((t) => String(t.approvalId) === String(approvalId))
     if (!task) return { ok: false, reason: `预热单待办未出现（leaveId=${leaveId} approvalId=${approvalId}）`, leaveId }
     done = await fetch(`${GATEWAY}/bpmn/task/complete`, {
       method: 'POST', headers,
@@ -680,7 +680,7 @@ try {
     // ---- API 层：todo 项 detailPath 形态（A2 语义：渲染值=审批单 id） ----
     const todoApi = await pageFetch('/api/bpmn/task/todo')
     assertEq(todoApi.code, 200, 'todo 接口业务码应为 200')
-    const tItem = todoApi.data.find((t) => t.title === T_A)
+    const tItem = todoApi.data.rows.find((t) => t.title === T_A)
     assert(tItem, `todo 应含 "${T_A}" 项`)
     log(`  todo 项: approvalId=${tItem.approvalId} businessType=${tItem.businessType} businessTypeName=${tItem.businessTypeName} detailPath=${tItem.detailPath} applyUserName=${tItem.applyUserName}`)
     assertEq(tItem.businessType, 'leave', 'todo 项 businessType 应为 leave')
@@ -909,7 +909,7 @@ try {
     // 直连后台审批（不经 UI——构造「页面数据已过期」窗口）
     const todo = await directApi('GET', '/bpmn/task/todo')
     assertEq(todo.body.code, 200, '直连待办业务码应为 200')
-    const dTask = todo.body.data.find((t) => t.title === T_D)
+    const dTask = todo.body.data.rows.find((t) => t.title === T_D)
     assert(dTask, `直连待办应含 "${T_D}"（taskId 办理锚点）`)
     const done = await directApi('POST', '/bpmn/task/complete', { taskId: dTask.taskId, approve: 'true', comment: COMMENT_D })
     log(`  直连后台审批 D: HTTP ${done.httpStatus} code=${done.body.code}`)
@@ -1012,7 +1012,7 @@ try {
     // ---- d. E 后台办结（BP8-b 同款直连手法）：归终态 已通过（保 CLEANUP 六单全终态） ----
     const todo = await directApi('GET', '/bpmn/task/todo')
     assertEq(todo.body.code, 200, '直连待办业务码应为 200')
-    const eTask = todo.body.data.find((t) => t.title === T_E)
+    const eTask = todo.body.data.rows.find((t) => t.title === T_E)
     assert(eTask, `直连待办应含 "${T_E}"（taskId 办理锚点）`)
     const done = await directApi('POST', '/bpmn/task/complete', { taskId: eTask.taskId, approve: 'true', comment: COMMENT_E })
     log(`  直连后台办结 E: HTTP ${done.httpStatus} code=${done.body.code}`)
@@ -1160,7 +1160,7 @@ try {
     const approvalBody = await (await approvalP).json()
     assertEq(todoBody.code, 200, 'todo 接口业务码应为 200')
     assertEq(approvalBody.code, 200, 'approval 分页业务码应为 200')
-    const todoLen = Array.isArray(todoBody.data) ? todoBody.data.length : 0
+    const todoLen = Array.isArray(todoBody.data?.rows) ? todoBody.data.rows.length : 0
     const approvalLen = Array.isArray(approvalBody.data?.rows) ? approvalBody.data.rows.length : 0
     // 旧时代（bpmn_leave）待办残留经 §2.1 防御态三重跳过不进列表——todo 长度即平台时代真实待办
     const todoCard = page.locator('.dash-card').filter({ has: page.locator('.el-card__header', { hasText: '我的待办' }) })

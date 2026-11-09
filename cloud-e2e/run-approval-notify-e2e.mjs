@@ -143,8 +143,8 @@ await step('AN3', '轮询任务到达通知（模板 approval_remind：五变量
 await step('AN4', '待办就位（/bpmn/task/todo 含锚任务）+ 单条已读流转', async () => {
   const todoBody = await api(token, 'GET', '/bpmn/task/todo')
   assertEq(todoBody.code, 200, '待办列表 code')
-  const task = (todoBody.data || []).find((t) => String(t.title || '').includes(anchor))
-  assert(!!task, `待办应含锚任务（${anchor}），实际 ${JSON.stringify((todoBody.data || []).map((t) => t.title))}`)
+  const task = (todoBody.data?.rows || []).find((t) => String(t.title || '').includes(anchor))
+  assert(!!task, `待办应含锚任务（${anchor}），实际 ${JSON.stringify((todoBody.data?.rows || []).map((t) => t.title))}`)
   const readBody = await api(token, 'PUT', `/system/notify/read/${arrivedRow.id}`)
   assertEq(readBody.code, 200, '单条已读 code')
   const rows = await notifyPage(token)

@@ -5,6 +5,8 @@ import com.cloudai.bpmn.service.ApprovalWorkflowService;
 import com.cloudai.bpmn.service.TaskAppService;
 import com.cloudai.bpmn.vo.TaskVo;
 import com.cloudai.common.core.domain.LoginUser;
+import com.cloudai.common.core.domain.PageQuery;
+import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -22,7 +24,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * 任务端点委托单测（契约 2026-10-07-bpmn-leave-api §3）：assignee 恒取当前登录人。
+ * 任务端点委托单测（契约 2026-10-08-approval-platform-api §2.1/§2.2）：assignee 恒取当前登录人，
+ * 分页参数透传 Service。
  */
 @ExtendWith(MockitoExtension.class)
 class TaskControllerTest {
@@ -40,27 +43,30 @@ class TaskControllerTest {
     }
 
     @Test
-    void todo_delegatesWithCurrentAccount() {
+    void todo_delegatesWithCurrentAccountAndPageQuery() {
         loginAs("admin");
         TaskVo vo = new TaskVo();
         vo.setTaskId("t-1");
-        when(taskAppService.listTodo("admin")).thenReturn(List.of(vo));
+        PageQuery query = new PageQuery();
+        when(taskAppService.pageListTodo("admin", query)).thenReturn(PageResult.of(1L, List.of(vo)));
 
-        R<List<TaskVo>> result = controller.todo();
+        R<PageResult<TaskVo>> result = controller.todo(query);
 
-        verify(taskAppService).listTodo("admin");
-        assertThat(result.getData()).extracting(TaskVo::getTaskId).containsExactly("t-1");
+        verify(taskAppService).pageListTodo("admin", query);
+        assertThat(result.getData().getTotal()).isEqualTo(1L);
+        assertThat(result.getData().getRows()).extracting(TaskVo::getTaskId).containsExactly("t-1");
     }
 
     @Test
-    void done_delegatesWithCurrentAccount() {
+    void done_delegatesWithCurrentAccountAndPageQuery() {
         loginAs("admin");
-        when(taskAppService.listDone("admin")).thenReturn(List.of());
+        PageQuery query = new PageQuery();
+        when(taskAppService.pageListDone("admin", query)).thenReturn(PageResult.of(0L, List.of()));
 
-        R<List<com.cloudai.bpmn.vo.TaskDoneVo>> result = controller.done();
+        R<PageResult<com.cloudai.bpmn.vo.TaskDoneVo>> result = controller.done(query);
 
-        verify(taskAppService).listDone("admin");
-        assertThat(result.getData()).isEmpty();
+        verify(taskAppService).pageListDone("admin", query);
+        assertThat(result.getData().getRows()).isEmpty();
     }
 
     @Test

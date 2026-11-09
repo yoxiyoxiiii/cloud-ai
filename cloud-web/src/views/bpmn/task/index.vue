@@ -1,13 +1,14 @@
 <script setup lang="ts">
 /**
  * 待办任务页（/bpmn/task，设计 D9 通用化改造）：el-tabs 两页签（待办 / 已办）+ 办理弹窗
- * 数据源 /bpmn/task/todo（契约 §2.1，assignee=当前登录人，不分页——契约现状）与
- * /bpmn/task/done（契约 §2.2，TaskDoneVo 增 endTime/approve/comment/approvalStatus 四字段）
+ * 数据源 /bpmn/task/todo（契约 §2.1 分页，assignee=当前登录人，任务创建时间倒序）与
+ * /bpmn/task/done（契约 §2.2 分页，TaskDoneVo 增 endTime/approve/comment/approvalStatus 四字段）；
+ * 两页签分页状态各自独立（切回不清空，切页签刷新该页当前页取新鲜数据）
  * 行操作「去处理」（契约 §1 待办跳转协议）：detailPath 非空 router.push(detailPath)
  * （业务页识别 query.approval 自动开详情——detailPath 未配/渲染失败 null 时隐藏按钮）
  * 办理成功后刷新两页签（待办消行 + 已办增行）
  */
-import { onMounted, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { listDoneTasks, listTodoTasks } from '../../../api/bpmn'
 import { APPROVAL_STATUS_MAP } from '../../../types/api'
@@ -35,14 +36,22 @@ const todoLoading = ref(false)
 const doneLoading = ref(false)
 const todoRows = ref<TaskVo[]>([])
 const doneRows = ref<TaskDoneVo[]>([])
+const todoTotal = ref(0)
+const doneTotal = ref(0)
+const todoQuery = reactive({ pageNum: 1, pageSize: 10 })
+const doneQuery = reactive({ pageNum: 1, pageSize: 10 })
 
 const completeDialogVisible = ref(false)
 const completeTask = ref<TaskVo>()
 
-async function loadTodo(): Promise<void> {
+/** 加载待办分页（契约 §2.1）：total 为 Long→String，分页组件需 Number() */
+async function loadTodoPage(pageNum: number = todoQuery.pageNum): Promise<void> {
   todoLoading.value = true
   try {
-    todoRows.value = await listTodoTasks()
+    todoQuery.pageNum = pageNum
+    const page = await listTodoTasks({ pageNum: todoQuery.pageNum, pageSize: todoQuery.pageSize })
+    todoRows.value = page.rows
+    todoTotal.value = Number(page.total)
   } catch {
     // 拦截器已统一 toast，表格保持现状
   } finally {
@@ -50,10 +59,14 @@ async function loadTodo(): Promise<void> {
   }
 }
 
-async function loadDone(): Promise<void> {
+/** 加载已办分页（契约 §2.2）：total 为 Long→String，分页组件需 Number() */
+async function loadDonePage(pageNum: number = doneQuery.pageNum): Promise<void> {
   doneLoading.value = true
   try {
-    doneRows.value = await listDoneTasks()
+    doneQuery.pageNum = pageNum
+    const page = await listDoneTasks({ pageNum: doneQuery.pageNum, pageSize: doneQuery.pageSize })
+    doneRows.value = page.rows
+    doneTotal.value = Number(page.total)
   } catch {
     // 拦截器已统一 toast，表格保持现状
   } finally {
@@ -61,12 +74,22 @@ async function loadDone(): Promise<void> {
   }
 }
 
+function handleTodoSizeChange(size: number): void {
+  todoQuery.pageSize = size
+  void loadTodoPage(1)
+}
+
+function handleDoneSizeChange(size: number): void {
+  doneQuery.pageSize = size
+  void loadDonePage(1)
+}
+
 function handleTabChange(tab: string | number): void {
-  // 切换页签时刷新对应列表（量级小取新鲜数据；初次挂载只拉待办）
+  // 切换页签时刷新该页签当前页（取新鲜数据；两页签分页状态各自保留）
   if (tab === 'done') {
-    void loadDone()
+    void loadDonePage()
   } else {
-    void loadTodo()
+    void loadTodoPage()
   }
 }
 
@@ -82,14 +105,14 @@ function openComplete(task: TaskVo): void {
   completeDialogVisible.value = true
 }
 
-/** 办理成功：两页签都刷新（待办消行 + 已办增行） */
+/** 办理成功：两页签都刷新各自当前页（待办消行 + 已办增行） */
 function handleCompleteSuccess(): void {
-  void loadTodo()
-  void loadDone()
+  void loadTodoPage()
+  void loadDonePage()
 }
 
 onMounted(() => {
-  void loadTodo()
+  void loadTodoPage()
 })
 </script>
 
@@ -139,6 +162,17 @@ onMounted(() => {
             </template>
           </el-table-column>
         </el-table>
+
+        <el-pagination
+          class="table-pagination"
+          v-model:current-page="todoQuery.pageNum"
+          v-model:page-size="todoQuery.pageSize"
+          :total="todoTotal"
+          :page-sizes="[10, 20, 50]"
+          layout="total, prev, pager, next, sizes"
+          @current-change="loadTodoPage"
+          @size-change="handleTodoSizeChange"
+        />
       </el-tab-pane>
 
       <el-tab-pane label="已办任务" name="done">
@@ -176,9 +210,27 @@ onMounted(() => {
             <template #default="{ row }">{{ doneRowOf(row).approvalStatusLabel ?? APPROVAL_STATUS_MAP[doneRowOf(row).approvalStatus] ?? doneRowOf(row).approvalStatus }}</template>
           </el-table-column>
         </el-table>
+
+        <el-pagination
+          class="table-pagination"
+          v-model:current-page="doneQuery.pageNum"
+          v-model:page-size="doneQuery.pageSize"
+          :total="doneTotal"
+          :page-sizes="[10, 20, 50]"
+          layout="total, prev, pager, next, sizes"
+          @current-change="loadDonePage"
+          @size-change="handleDoneSizeChange"
+        />
       </el-tab-pane>
     </el-tabs>
 
     <CompleteDialog v-model="completeDialogVisible" :task="completeTask" @success="handleCompleteSuccess" />
   </el-card>
 </template>
+
+<style scoped>
+.table-pagination {
+  margin-top: 16px;
+  justify-content: flex-end;
+}
+</style>

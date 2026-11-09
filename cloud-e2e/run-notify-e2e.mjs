@@ -163,9 +163,9 @@ await page.route('**/api/**', async (route) => {
       ] },
     ])))
   }
-  // dashboard 首屏数据（工作台两请求——mock 空态防后端未起报网络失败）
+  // dashboard 首屏数据（工作台两请求——mock 空态防后端未起报网络失败；todo 分页轮起返回 PageResult 形态）
   if (p === '/bpmn/task/todo' && req.method() === 'GET') {
-    return route.fulfill(json(R([])))
+    return route.fulfill(json(R({ total: '0', rows: [] })))
   }
   if (p === '/bpmn/approval/page' && req.method() === 'GET') {
     return route.fulfill(json(R({ total: '0', rows: [] })))

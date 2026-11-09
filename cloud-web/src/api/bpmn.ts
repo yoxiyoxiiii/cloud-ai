@@ -31,14 +31,21 @@ export interface DefinitionPageQuery {
   pageSize: number
 }
 
-/** 待办任务列表（契约 §2.1，perms bpmn:task:list）：assignee=当前登录人，任务创建时间倒序；不分页（契约现状）；数据源 bpmn_approval 快照零业务回查 */
-export function listTodoTasks(): Promise<TaskVo[]> {
-  return request<TaskVo[]>({ url: '/bpmn/task/todo', method: 'get' })
+export interface TaskPageQuery {
+  /** 页码（1 起，默认 1） */
+  pageNum: number
+  /** 每页条数（默认 10；引擎 listPage 分页） */
+  pageSize: number
 }
 
-/** 已办任务列表（契约 §2.2，perms bpmn:task:list）：taskAssignee=当前登录人且 finished，办理时间倒序；不分页（契约现状） */
-export function listDoneTasks(): Promise<TaskDoneVo[]> {
-  return request<TaskDoneVo[]>({ url: '/bpmn/task/done', method: 'get' })
+/** 待办任务分页（契约 §2.1，perms bpmn:task:list）：assignee=当前登录人，任务创建时间倒序，total=引擎 count；数据源 bpmn_approval 快照零业务回查 */
+export function listTodoTasks(query: TaskPageQuery): Promise<PageResult<TaskVo>> {
+  return request<PageResult<TaskVo>>({ url: '/bpmn/task/todo', method: 'get', params: query })
+}
+
+/** 已办任务分页（契约 §2.2，perms bpmn:task:list）：taskAssignee=当前登录人且 finished，办理时间倒序，total=引擎 count */
+export function listDoneTasks(query: TaskPageQuery): Promise<PageResult<TaskDoneVo>> {
+  return request<PageResult<TaskDoneVo>>({ url: '/bpmn/task/done', method: 'get', params: query })
 }
 
 /** 办理任务（契约 §2.3，perms bpmn:task:complete）：approve 为 "true"/"false" 字符串；任务不存在或已被办理得 4016 */

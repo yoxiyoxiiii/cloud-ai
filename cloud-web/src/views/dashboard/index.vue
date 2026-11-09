@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * 工作台两卡（设计 D9 / 契约 2026-10-08 §0.9 消费声明——零新端点）：
- * - 「我的待办」GET /bpmn/task/todo 前 5 条（契约 §2.1 通用字段 title/businessTypeName）；
+ * - 「我的待办」GET /bpmn/task/todo 首页 5 条（契约 §2.1 分页 pageNum=1&pageSize=5，通用字段 title/businessTypeName）；
  *   可见性 v-perms bpmn:task:list 整卡隐藏
  * - 「我的审批」GET /bpmn/approval/page pageNum=1&pageSize=5 前 5（契约 §3.1，跨业务超集——
  *   取代 v1「我的申请」卡）；可见性 v-perms bpmn:approval:list，「查看全部」跳 /bpmn/approval
@@ -46,9 +46,9 @@ async function loadCards(): Promise<void> {
   if (hasPerm('bpmn:task:list')) {
     todoLoading.value = true
     jobs.push(
-      listTodoTasks()
-        .then((list) => {
-          todoRows.value = list.slice(0, 5)
+      listTodoTasks({ pageNum: 1, pageSize: 5 })
+        .then((page) => {
+          todoRows.value = page.rows
         })
         .catch(() => {
           // 拦截器已统一 toast，卡片保持空态
@@ -85,7 +85,7 @@ onMounted(() => {
   <!-- 两卡并置（D7）：等价 el-row gutter=16 / el-col md=12 布局用 flex + 媒体查询实现——
        el-row/el-col 会把 EP 全量响应式栅格样式（~36kB）拖进主 style，违主包 ±5% 门（偏离记档） -->
   <div class="dash-grid">
-    <!-- 我的待办（契约 §0.9：数据源 /bpmn/task/todo 前 5；无 bpmn:task:list 整卡隐藏） -->
+    <!-- 我的待办（契约 §0.9：数据源 /bpmn/task/todo 首页 5 条；无 bpmn:task:list 整卡隐藏） -->
     <el-card shadow="never" class="dash-card" v-perms="'bpmn:task:list'">
       <template #header>
         <span>我的待办</span>
