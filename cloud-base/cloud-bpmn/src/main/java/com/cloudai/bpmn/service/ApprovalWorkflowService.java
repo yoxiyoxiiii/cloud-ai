@@ -25,6 +25,7 @@ import com.cloudai.system.api.client.SystemUserClient;
 import com.cloudai.system.api.domain.UserEntry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.flowable.common.engine.api.FlowableObjectNotFoundException;
 import org.flowable.engine.HistoryService;
 import org.flowable.engine.RuntimeService;
 import org.flowable.engine.TaskService;
@@ -227,7 +228,7 @@ public class ApprovalWorkflowService {
             ProcessInstance instance = runtimeService.startProcessInstanceByKey(
                     approval.getProcessKey(), String.valueOf(approval.getId()), vars);
             return instance.getId();
-        } catch (org.flowable.common.engine.api.FlowableObjectNotFoundException e) {
+        } catch (FlowableObjectNotFoundException e) {
             log.error("流程定义未部署: {}", approval.getProcessKey(), e);
             throw new BusinessException(ERR_DEFINITION_MISSING, "流程定义未部署");
         }
