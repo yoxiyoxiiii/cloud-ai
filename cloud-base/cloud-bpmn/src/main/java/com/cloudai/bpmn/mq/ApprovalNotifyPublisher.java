@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.rocketmq.spring.core.RocketMQTemplate;
 import org.apache.rocketmq.spring.support.RocketMQHeaders;
 import org.flowable.engine.TaskService;
+import org.flowable.task.api.Task;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.stereotype.Component;
@@ -69,9 +70,9 @@ public class ApprovalNotifyPublisher {
         if (ctx == null) {
             return;
         }
-        List<org.flowable.task.api.Task> tasks = taskService.createTaskQuery()
+        List<Task> tasks = taskService.createTaskQuery()
                 .processInstanceId(ctx.approval().getProcessInstanceId()).active().list();
-        for (org.flowable.task.api.Task task : tasks) {
+        for (Task task : tasks) {
             if (task.getAssignee() == null || task.getAssignee().isBlank()) {
                 // 无明确受理人（candidate 类任务，平台暂无此形态）无从投递，留痕跳过
                 log.info("任务无受理人跳过通知: approvalId={}, taskId={}", approvalId, task.getId());
