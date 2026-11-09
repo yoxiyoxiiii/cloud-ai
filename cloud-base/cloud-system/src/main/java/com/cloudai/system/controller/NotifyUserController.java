@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 用户侧消息端点（契约 2026-11-08-notify-api §3，网关前缀 /system/notify）。
  * 登录即可（无 perms——铃铛/消息中心是全员功能），数据按网关注入的 X-User-Id 隔离：
  * 当前用户取 SecurityUtils.currentUser().getUserId()，跨用户访问一律按"不存在"处理（3048）。
+ * @author jy-root
  */
 @RestController
 @RequestMapping("/notify")
