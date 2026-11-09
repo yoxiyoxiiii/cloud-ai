@@ -24,5 +24,6 @@
         <module>cloud-common-rocketmq-starter</module>
         <module>cloud-common-xxljob-starter</module>
         <module>cloud-common-mcp-starter</module>
+        <module>cloud-common-inner-starter</module>
     </modules>
 </project>

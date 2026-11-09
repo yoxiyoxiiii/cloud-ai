@@ -335,6 +335,20 @@ class ArchitectureGuardTest {
         return null;
     }
 
+    /** 本服务是 /inner 面提供方（/inner/approval）：必须依赖 cloud-common-inner-starter 才有准入
+     * 过滤器——提供方漏依赖 = /inner 静默裸奔（无运行时报错），必须构建期红（契约
+     * 2026-11-09-inner-access-secret-api §2；消费方漏依赖表现为调用立即 401，登录/e2e 必红无需守护）。 */
+    @Test
+    void pom_must_depend_on_inner_starter() throws IOException {
+        String pom = Files.readString(Paths.get("pom.xml"), StandardCharsets.UTF_8);
+        assertThat(Pattern.compile(
+                        "<dependency>\\s*<groupId>com\\.cloudai</groupId>\\s*"
+                                + "<artifactId>cloud-common-inner-starter</artifactId>\\s*</dependency>",
+                        Pattern.DOTALL).matcher(pom).find())
+                .as("cloud-bpmn pom 必须依赖 cloud-common-inner-starter（/inner 面准入：提供方漏依赖 = /inner 静默裸奔）")
+                .isTrue();
+    }
+
     // ---- 扫描基础设施 ----
 
     private List<String> scan(Path root, String glob, Pattern forbidden) throws IOException {

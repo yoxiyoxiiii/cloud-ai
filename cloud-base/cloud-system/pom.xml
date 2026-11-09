@@ -99,6 +99,11 @@
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-common-xxljob-starter</artifactId>
         </dependency>
+        <!-- /inner 面准入（提供 /inner/user、/inner/dict、/inner/data-perm 校验 + 消费 bpmn 时注入密钥头，契约 2026-11-09-inner-access-secret-api） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-inner-starter</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

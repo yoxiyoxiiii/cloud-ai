@@ -65,6 +65,11 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
         </dependency>
+        <!-- /inner 面准入（消费 system 用户聚合时注入密钥头，契约 2026-11-09-inner-access-secret-api） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-inner-starter</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.cloudai</groupId>
+        <artifactId>cloud-common</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>cloud-common-inner-starter</artifactId>
+    <name>cloud-common-inner-starter</name>
+    <description>/inner 面共享密钥准入（入站校验过滤器 + Feign 出站全局拦截器，配置即生效 fail-closed）</description>
+
+    <dependencies>
+        <!-- 拒绝响应体 R 统一返回 -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-core-starter</artifactId>
+        </dependency>
+        <!-- servlet api 由宿主 web starter 提供，本模块只编译过滤器 -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- RequestInterceptor 接口（版本随根 pom spring-cloud BOM；宿主必有 openfeign starter） -->
+        <dependency>
+            <groupId>io.github.openfeign</groupId>
+            <artifactId>feign-core</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- 仅供测试：装配测试的 WebApplicationContextRunner 复现 servlet 环境（AnnotationConfigWebApplicationContext） -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

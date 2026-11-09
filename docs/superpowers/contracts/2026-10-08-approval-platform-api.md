@@ -122,6 +122,8 @@
 
 > **附记（2026-10-09）**：消费端统一为 cloud-bpmn-api `BpmnApprovalClient`（fallbackFactory 中性降级 → system 侧既有转译链不变——端点行为零变化，等价迁移）。
 
+> **附记（2026-11-09）**：本节三端点已纳入 inner 面共享密钥准入（请求头 `X-Inner-Secret`，缺失/不匹配一律 HTTP 401）——语义与配置见 `2026-11-09-inner-access-secret-api.md`；端点签名与载荷零变化。
+
 ### 4.1 发起审批 `POST /inner/approval/create`
 
 - 入参 `ApprovalCreateInnerRequest`：

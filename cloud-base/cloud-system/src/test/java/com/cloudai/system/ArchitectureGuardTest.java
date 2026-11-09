@@ -555,6 +555,21 @@ class ArchitectureGuardTest {
         }
     }
 
+    /** 本服务是 /inner 面提供方（/inner/user、/inner/dict、/inner/data-perm）：必须依赖
+     * cloud-common-inner-starter 才有准入过滤器——提供方漏依赖 = /inner 静默裸奔（无运行时报错），
+     * 必须构建期红（契约 2026-11-09-inner-access-secret-api §2；消费方漏依赖表现为调用立即 401，
+     * 登录/e2e 必红无需守护，设计 §10 已记档取舍）。 */
+    @Test
+    void pom_must_depend_on_inner_starter() throws IOException {
+        String pom = Files.readString(Paths.get("pom.xml"), StandardCharsets.UTF_8);
+        assertThat(Pattern.compile(
+                        "<dependency>\\s*<groupId>com\\.cloudai</groupId>\\s*"
+                                + "<artifactId>cloud-common-inner-starter</artifactId>\\s*</dependency>",
+                        Pattern.DOTALL).matcher(pom).find())
+                .as("cloud-system pom 必须依赖 cloud-common-inner-starter（/inner 面准入：提供方漏依赖 = /inner 静默裸奔）")
+                .isTrue();
+    }
+
     /** @DataPermVo 类级标注类的短名集合（import 行不含 @ 前缀，无干扰） */
     private java.util.Set<String> dataPermVoClassNames() throws IOException {
         java.util.Set<String> names = new java.util.HashSet<>();
