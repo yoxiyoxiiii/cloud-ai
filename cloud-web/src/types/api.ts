@@ -1757,3 +1757,81 @@ export interface NotifyUserMessagePageQuery {
   type?: number
   readFlag?: number
 }
+
+/* ===== inner 面共享密钥管理（契约 2026-11-09-inner-secret-admin-api）===== */
+
+/**
+ * 密钥状态（契约 §0 status 枚举）：1 生效中 / 2 重叠期（已有继任者，仍被接受）/
+ * 3 已过期 / 4 已作废（终态——追加式流水无删除）
+ */
+export const INNER_SECRET_STATUS_MAP: Record<number, string> = {
+  1: '生效中',
+  2: '重叠期',
+  3: '已过期',
+  4: '已作废',
+}
+
+/** 密钥状态→tag 颜色（契约 §0 固定映射）：1 success / 2 warning / 3 info / 4 danger */
+export const INNER_SECRET_STATUS_TAG: Record<number, 'success' | 'warning' | 'info' | 'danger'> = {
+  1: 'success',
+  2: 'warning',
+  3: 'info',
+  4: 'danger',
+}
+
+/** 密钥来源（契约 §0 source 枚举）：1 定时任务（createBy=handler 名）/ 2 手动操作 */
+export const INNER_SECRET_SOURCE_MAP: Record<number, string> = {
+  1: '定时任务',
+  2: '手动操作',
+}
+
+/**
+ * inner 密钥行 VO（契约 §1，列表 id 倒序追加式流水——含已过期/已作废行）：
+ * secretMask 恒掩码形态（`****`+尾 4 字符）；契约红线：任何接口任何字段永不返回密钥明文
+ */
+export interface InnerSecretVo {
+  id: string
+  /** 轮换代数（场景内单调递增） */
+  seq: number
+  status: number
+  secretMask: string
+  source: number
+  activateTime: string
+  expireTime: string
+  /** 退场时间：未被顶替为 null */
+  retireTime: string | null
+  createBy: string
+  createTime: string
+}
+
+/** 密钥分页查询入参（契约 §1）：status 精确过滤（1/2/3/4）可选 */
+export interface InnerSecretPageQuery {
+  pageNum: number
+  pageSize: number
+  status?: number
+}
+
+/** 作废入参（契约 §4 RevokeRequest）：id 取列表行 */
+export interface RevokePayload {
+  id: string
+}
+
+/**
+ * 轮换状态卡 VO（契约 §2，只读）：validityHours/overlapSeconds/leadHours 是 Nacos
+ * `cloud.inner.rotation.*` 运维参数回显（无编辑端点，界面只读展示）；
+ * redisVersion 是 Redis 活跃集 version（键缺失 null）；redisConsistent=false 表示
+ * 发布落后——轮换任务一分钟内自愈重发，状态卡提示「等待自动重发」
+ */
+export interface InnerSecretStatusVo {
+  validityHours: number
+  overlapSeconds: number
+  leadHours: number
+  /** 最新生效代数（无生效密钥=0） */
+  currentSeq: number
+  /** 活跃集行数（status∈{1,2} 且未到退场时刻，通常 1-2） */
+  activeCount: number
+  /** 预计下次轮换时刻（=最新生效行 expireTime − lead；无生效行 null） */
+  nextRotationTime: string | null
+  redisVersion: number | null
+  redisConsistent: boolean
+}

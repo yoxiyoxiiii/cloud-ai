@@ -28,6 +28,7 @@
     "e2e:tableconfig": "node run-tableconfig-e2e.mjs",
     "e2e:mqdlq": "node run-mqdlq-e2e.mjs",
     "e2e:notify": "node run-notify-e2e.mjs",
+    "e2e:innersecret": "node run-inner-secret-e2e.mjs",
     "e2e:approvalnotify": "node run-approval-notify-e2e.mjs",
     "serve-artifacts": "node serve-artifacts.mjs"
   },

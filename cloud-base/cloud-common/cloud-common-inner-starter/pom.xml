@@ -32,6 +32,13 @@
             <artifactId>feign-core</artifactId>
             <scope>provided</scope>
         </dependency>
+        <!-- Redis 活跃集来源仅编译期引用 StringRedisTemplate（版本随根 pom Boot BOM）：
+             provided 保证无 Redis 宿主不强制传递依赖，条件化装配回落 static-only（契约 v2 §2） -->
+        <dependency>
+            <groupId>org.springframework.data</groupId>
+            <artifactId>spring-data-redis</artifactId>
+            <scope>provided</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

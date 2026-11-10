@@ -273,4 +273,16 @@ VALUES (11, 3, 'system-notify-clean', now(), now(), 'cloudai', '', 'CRON', '0 40
         'DO_NOTHING', 'FIRST', 'notifyCleanJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '',
         1);
 
+-- inner 密钥轮换任务（2026-11-09 inner 密钥轮换轮增补，与增量脚本 2026-11-09-inner-secret-rotation.sql 段④ 等价）：
+-- 每分钟单趟=清扫过期/乱序残留→自愈重发活跃集→轮换判定（剩余寿命<lead 时轮换+发布）→告警判定；
+-- handler 对应 cloud-system job 包 @XxlJob("innerSecretRotateJobHandler")；retry 0（失败自然重试=下一分钟调度轮）
+INSERT INTO `xxl_job_info`(`id`, `job_group`, `name`, `add_time`, `update_time`, `author`, `alarm_email`,
+                           `schedule_type`, `schedule_conf`, `misfire_strategy`, `executor_route_strategy`,
+                           `executor_handler`, `executor_param`, `executor_block_strategy`, `executor_timeout`,
+                           `executor_fail_retry_count`, `glue_type`, `glue_source`, `glue_remark`, `glue_updatetime`,
+                           `child_jobid`, `trigger_status`)
+VALUES (12, 3, 'system-inner-secret-rotate', now(), now(), 'cloudai', '', 'CRON', '0 * * * * ?',
+        'DO_NOTHING', 'FIRST', 'innerSecretRotateJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '',
+        1);
+
 commit;

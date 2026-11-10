@@ -15,7 +15,7 @@ import java.util.Collection;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Mapper XML 绑定冒烟：18 个 XML 全部可解析且 120 个语句与接口一一绑定。
+ * Mapper XML 绑定冒烟：19 个 XML 全部可解析且 127 个语句与接口一一绑定。
  * resultType 写错/命名空间错位在编译期无捕获（Maven 不校验 XML 语义），此测试封住该回归面。
  * 不连库：本模块无嵌入式数据库驱动（仅 mysql-connector-j），@MybatisTest 无法启动嵌入式数据源，
  * 故直接以 XMLMapperBuilder 逐个解析 XML 构建 SqlSessionFactory（配置与生产一致：MP MybatisConfiguration
@@ -41,7 +41,8 @@ class MapperXmlBindingTest {
             "mapper/SysNotifyTemplateMapper.xml",
             "mapper/SysNotifyMessageMapper.xml",
             "mapper/SysNotifyUserMessageMapper.xml",
-            "mapper/SysNotifyUserStatMapper.xml"
+            "mapper/SysNotifyUserStatMapper.xml",
+            "mapper/SysSharedSecretMapper.xml"
     };
 
     @Test
@@ -65,9 +66,11 @@ class MapperXmlBindingTest {
         //   2026-11-08 统计表修订轮：统计维护编排上 Java 层、SQL 只留简单单表单键语句——
         //   SysNotifyUserStat 换血（-updateIncreaseBatch/-resetFromReceipts，+save/saveBatch/updateIncrease/deleteAll，4→6）
         //   + 收件表 +listUnreadAgg（对账聚合只读），116 → 119；
-        //   2026-11-08 审批通知轮：+SysNotifyTemplate findByCode（MQ 消费域按 code 定位模板），119 → 120）
+        //   2026-11-08 审批通知轮：+SysNotifyTemplate findByCode（MQ 消费域按 code 定位模板），119 → 120；
+        //   2026-11-09 密钥轮换轮：+SysSharedSecret 域 7 语句（单查/最新生效行/最大代数/分页/按状态列表/
+        //   插入/状态推进——追加式流水无 deleted 列），120 → 127）
         assertThat(mappings.stream().filter(n -> n.startsWith("com.cloudai.system.mapper")).count())
-                .isEqualTo(120);
+                .isEqualTo(127);
         // 抽查关键语句存在（JOIN 聚合 / 插件分页 / 动态 SQL / 批量插入 / 字典域 / 翻译回源 / 请假域 / 部门与数据权限域）
         assertThat(mappings).contains(
                 "com.cloudai.system.mapper.SysUserMapper.listPermsByAccount",
@@ -108,7 +111,10 @@ class MapperXmlBindingTest {
                 "com.cloudai.system.mapper.SysNotifyUserMessageMapper.listUnreadAgg",
                 "com.cloudai.system.mapper.SysNotifyUserStatMapper.updateIncrease",
                 "com.cloudai.system.mapper.SysUserMapper.listActiveUserIds",
-                "com.cloudai.system.mapper.SysUserMapper.listUserIdsByRoleIds");
+                "com.cloudai.system.mapper.SysUserMapper.listUserIdsByRoleIds",
+                "com.cloudai.system.mapper.SysSharedSecretMapper.findLatestActive",
+                "com.cloudai.system.mapper.SysSharedSecretMapper.findMaxSeq",
+                "com.cloudai.system.mapper.SysSharedSecretMapper.updateStatus");
     }
 
     @Test

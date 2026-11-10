@@ -25,6 +25,7 @@ import AgentManageView from '../views/agents/manage/index.vue'
 import AgentChatView from '../views/agents/chat/index.vue'
 import McpManageView from '../views/mcp/manage/index.vue'
 import NotifyManageView from '../views/system/notify/index.vue'
+import InnerSecretManageView from '../views/system/innerSecret/index.vue'
 
 /** path → 组件注册表（静态 import，键 = sys_menu.path 约定值） */
 export const VIEW_REGISTRY: Record<string, Component> = {
@@ -52,7 +53,9 @@ export const VIEW_REGISTRY: Record<string, Component> = {
   // MCP 服务管理（菜单 191，契约 2026-10-30-mcp-server-mgmt-api §5.2 种子）
   '/mcp/manage': McpManageView,
   // 通知管理（菜单 19，契约 2026-11-08-notify-api §5 种子）
-  '/system/notify': NotifyManageView
+  '/system/notify': NotifyManageView,
+  // inner 密钥管理（菜单 22，契约 2026-11-09-inner-secret-admin-api §6 种子）
+  '/system/inner-secret': InnerSecretManageView
 }
 
 /** 按 path 解析视图组件：未注册 → NotFound 兜底（不报错，设计 D5） */

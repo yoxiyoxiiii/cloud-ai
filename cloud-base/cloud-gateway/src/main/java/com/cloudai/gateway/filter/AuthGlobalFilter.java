@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
  * 通过后剥离外部 X-User-* 伪造 header 并注入真实用户信息透传下游。
  * 401 返回统一 R JSON（网关层使用真实 HTTP 401 状态，与服务层 HTTP200+body.code 约定并存）。
  * 注：Redis 为同步调用（内网低延迟，MVP 取舍；高并发场景改 reactive 或本地缓存）。
+ * @author jy-root
  */
 @Component
 @RequiredArgsConstructor
@@ -39,11 +40,12 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    /** 前缀白名单：登录/刷新、demo、inner 与 MCP 屏蔽（SetStatus 路由接管）、网关自身监控 */
+    /** 前缀白名单：登录/刷新、demo、inner 与 MCP 屏蔽（SetStatus 路由接管）、网关自身监控。
+     *  inner 三项带尾斜杠做段感知匹配——否则 startsWith 会误吞同级前缀路径（如 /system/inner-secret/** 管理端点会被跳过鉴权）。 */
     private static final List<String> WHITELIST = List.of(
             "/sso/auth/login", "/sso/auth/refresh",
             "/sso/demo", "/system/demo", "/bpmn/demo",
-            "/sso/inner", "/system/inner", "/bpmn/inner",
+            "/sso/inner/", "/system/inner/", "/bpmn/inner/",
             "/system/mcp",
             "/actuator"
     );

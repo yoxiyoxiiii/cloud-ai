@@ -13,6 +13,9 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "cloud.inner")
 public class InnerProperties {
 
-    /** 共享密钥（全体服务同一把）；空 = 未配置态：/inner/** 恒 401（fail-closed）且 Feign 出站不注入密钥头 */
+    /** 共享密钥（v2 起为引导/兜底值——Redis 活跃集键不存在时回落）；空 = 未配置态：静态来源空集（fail-closed） */
     private String sharedSecret = "";
+
+    /** 活跃集本地缓存 TTL（秒）；重叠窗须 ≥ 收发双方缓存 TTL 之和 + 任务调度周期的余量（默认值即定稿值，无 Nacos 变更） */
+    private int cacheTtlSeconds = 30;
 }

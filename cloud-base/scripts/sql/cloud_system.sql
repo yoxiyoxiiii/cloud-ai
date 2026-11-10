@@ -25,6 +25,7 @@ DROP TABLE IF EXISTS sys_notify_user_stat;
 DROP TABLE IF EXISTS sys_notify_user_message;
 DROP TABLE IF EXISTS sys_notify_message;
 DROP TABLE IF EXISTS sys_notify_template;
+DROP TABLE IF EXISTS sys_shared_secret;
 
 -- 用户
 CREATE TABLE sys_user (
@@ -414,6 +415,28 @@ CREATE TABLE sys_notify_user_stat (
     PRIMARY KEY (user_id)
 ) ENGINE = InnoDB COMMENT = '站内信未读统计表（收件表派生计数：真相源 sys_notify_user_message，写路径同事务维护+每日对账）';
 
+-- 共享密钥生命周期表（2026-11-09 inner 密钥轮换轮，设计 §7；与增量脚本 2026-11-09-inner-secret-rotation.sql 段① 等价）：
+-- 追加式流水（不可编辑/不可物理删/状态单调推进/无 deleted 列，沿 mq_tx_log 先例）；
+-- uk_scene_seq=MAX(seq)+1 取值与并发幂等兜底 + 最新生效行最左前缀；idx_scene_status=分页过滤+任务清扫扫描
+CREATE TABLE sys_shared_secret (
+    id            BIGINT       NOT NULL AUTO_INCREMENT COMMENT '密钥ID',
+    scene         VARCHAR(30)  NOT NULL DEFAULT 'inner' COMMENT '密钥场景：inner=服务间inner面共享密钥（预留未来其他场景如MCP client-secret 复用本表）',
+    seq           INT          NOT NULL COMMENT '轮换代数（场景内单调递增，活跃集 version 由此取 MAX）',
+    secret_value  VARCHAR(128) NOT NULL COMMENT '密钥真值（32字节随机base64约44字符；仅运行时分发，任何接口永不返回）',
+    status        TINYINT      NOT NULL DEFAULT 1 COMMENT '状态：1生效中 2重叠期（已有继任者） 3已过期 4已作废',
+    source        TINYINT      NOT NULL DEFAULT 1 COMMENT '来源：1定时任务 2手动操作',
+    activate_time DATETIME     NOT NULL COMMENT '生效时间（创建即生效）',
+    expire_time   DATETIME     NOT NULL COMMENT '过期时间（=生效时间+有效期，创建时快照）',
+    retire_time   DATETIME     DEFAULT NULL COMMENT '退场时间（被继任者顶替时=轮换时刻+重叠窗；NULL=未被顶替；与expire_time取小者为实际退场时刻）',
+    create_by     VARCHAR(30)  NOT NULL DEFAULT '' COMMENT '创建人（定时任务=handler名，手动=操作账号）',
+    create_time   DATETIME     DEFAULT NULL COMMENT '创建时间（SQL NOW()）',
+    update_by     VARCHAR(30)  DEFAULT NULL COMMENT '更新人（状态推进时=handler名或账号）',
+    update_time   DATETIME     DEFAULT NULL COMMENT '更新时间（SQL NOW()）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_scene_seq (scene, seq),
+    KEY idx_scene_status (scene, status)
+) ENGINE = InnoDB COMMENT = '共享密钥生命周期表（追加式流水：不可编辑不可物理删，状态单调推进）';
+
 -- ---------- 初始数据 ----------
 -- 内置种子一律显式 is_builtin=1（内置保护契约 §1：后续新增内置种子 SQL 须带 is_builtin=1）
 INSERT INTO sys_role (id, name, role_key, is_builtin, create_time) VALUES (1, '管理员', 'admin', 1, NOW());
@@ -512,6 +535,14 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (198, 19, '删除模板', 'system:notify:remove', 'F', '', '', 3, 1, NOW()),
 (199, 19, '发送通知', 'system:notify:send',   'F', '', '', 4, 1, NOW());
 
+-- 密钥管理菜单（22 段 3 行，2026-11-09 inner 密钥轮换轮；与增量脚本 2026-11-09-inner-secret-rotation.sql 段③ 语义等价，
+-- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定；
+-- 密钥不可新增/编辑/物理删——无对应按钮）
+INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_builtin, create_time) VALUES
+(22,  10, '密钥管理', 'system:innerSecret:list',   'C', '/system/inner-secret', 'Key', 9, 1, NOW()),
+(200, 22, '立即轮换', 'system:innerSecret:rotate', 'F', '', '', 1, 1, NOW()),
+(201, 22, '作废',     'system:innerSecret:revoke', 'F', '', '', 2, 1, NOW());
+
 -- 内置模板种子（欢迎公告无变量；审批提醒/审批结果与增量脚本 2026-11-08-approval-notify-integration.sql 同值，
 -- 变量集以契约 2026-11-08-approval-notify-mq-api §2 为准；is_builtin=1 禁删可改）
 INSERT INTO sys_notify_template (id, code, name, title_template, content_template, type, level,
@@ -525,6 +556,14 @@ VALUES (1, 'welcome_notice', '欢迎公告', '欢迎加入',
        (3, 'approval_result', '审批结果通知', '审批结果通知',
         '您好 ${nickname}，您提交的「${title}」（${businessTypeName}）已${resultText}。',
         2, 0, 'nickname=收件人昵称；title=单据标题；businessTypeName=业务类型名；resultText=审批结果（已通过/已拒绝/已撤销）',
+        1, 'admin', NOW(), 'admin', NOW());
+
+-- inner 密钥轮换告警模板（2026-11-09 inner 密钥轮换轮；与增量脚本 2026-11-09-inner-secret-rotation.sql 段② 等价；
+-- 轮换任务失败/活跃集为空时按 code 取用发 admin 角色）
+INSERT INTO sys_notify_template (id, code, name, title_template, content_template, type, level,
+                                 variables_desc, is_builtin, create_by, create_time, update_by, update_time)
+VALUES (4, 'inner_secret_alert', 'inner 密钥轮换告警', 'inner 密钥轮换告警',
+        '密钥轮换异常：${content}，请及时处理', 2, 1, 'content=告警内容摘要（不含密钥真值）',
         1, 'admin', NOW(), 'admin', NOW());
 
 -- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价；

@@ -215,11 +215,13 @@ class ArchitectureGuardTest {
      * service/dataperm 下值对象非 CRUD 语境，语义化命名优先。
      * 2026-10-10 注册表抽象轮增量：DataPermColumnApplier.apply（反射列应用 D16）/
      * DataPermRegistryConsistencyChecker.collectViolations（一致性检查收集 D17）。
+     * 2026-11-09 密钥轮换轮追加：rotate/revoke/publish/sweep/alert——密钥生命周期域动词
+     * （轮换/作废/活跃集发布/清扫/告警），InnerSecretService 单一代码路径核心入口。
      */
     private static final Pattern NAMING_PREFIX_OK =
             Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|cancel|get|set|is"
                     + "|evaluate|explain|logDeny|myScope|all|of|allows|mask|assert"
-                    + "|apply|collect)\\w*");
+                    + "|apply|collect|rotate|revoke|publish|sweep|alert)\\w*");
 
     /** 语句起始关键字（throw new Xxx( / return foo( 会被误判为声明，前置排除） */
     private static final List<String> STATEMENT_KEYWORDS = List.of(

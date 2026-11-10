@@ -2,24 +2,35 @@ package com.cloudai.common.inner.config;
 
 import com.cloudai.common.inner.auth.InnerAccessFilter;
 import com.cloudai.common.inner.client.InnerSecretInterceptor;
+import com.cloudai.common.inner.core.InnerSecretSource;
+import com.cloudai.common.inner.core.RedisInnerSecretSource;
+import com.cloudai.common.inner.core.StaticInnerSecretSource;
 import feign.RequestInterceptor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.core.Ordered;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
- * /inner 面准入组件自动装配（契约 2026-11-09-inner-access-secret-api §2）：引 jar 即生效，无 enabled 开关。
- * 一体两面：入站过滤器（提供方校验 /inner/*）+ 出站全局拦截器（消费方注入密钥头）。
+ * /inner 面准入组件自动装配（契约 2026-11-09-inner-access-secret-api v2 §2）：引 jar 即生效，无 enabled 开关。
+ * 密钥来源两级：StaticInnerSecretSource 恒注册（v1 行为兜底）；classpath 且容器有 StringRedisTemplate 时
+ * 追加 RedisInnerSecretSource 并以 @Primary 生效（活跃集分发）——无 Redis 宿主自动回落 static-only，
+ * 行为与 v1 完全一致（引 jar 即生效、fail-closed 语义不变）。
+ * after = RedisAutoConfiguration：保证 stringRedisTemplate bean 定义先于本配置的 @ConditionalOnBean 求值
+ * （缺 spring-data-redis 的宿主按类名安全忽略本项排序）。
  */
-@AutoConfiguration
+@AutoConfiguration(after = RedisAutoConfiguration.class)
 @EnableConfigurationProperties(InnerProperties.class)
 public class CloudInnerAutoConfiguration {
 
@@ -31,8 +42,31 @@ public class CloudInnerAutoConfiguration {
     public CloudInnerAutoConfiguration(InnerProperties properties) {
         // 启动哨兵：fail-closed 提示（不阻断启动——未配置是可恢复的运维缺口，不是启动错误）
         if (properties.getSharedSecret() == null || properties.getSharedSecret().isEmpty()) {
-            log.warn("cloud.inner.shared-secret 未配置：/inner/** 将拒绝全部调用（fail-closed）且 Feign 出站不注入密钥头；"
+            log.warn("cloud.inner.shared-secret 未配置：Redis 活跃集键不存在时将无兜底密钥（fail-closed），"
                     + "请在 Nacos per-service yaml 配置该键（契约 2026-11-09-inner-access-secret-api.md §3）");
+        }
+    }
+
+    /** 静态来源恒注册：Redis 键不存在时的回落目标，也是无 Redis 宿主的唯一来源 */
+    @Bean
+    @ConditionalOnMissingBean(StaticInnerSecretSource.class)
+    public StaticInnerSecretSource staticInnerSecretSource(InnerProperties properties) {
+        return new StaticInnerSecretSource(properties);
+    }
+
+    /** Redis 活跃集来源：仅 classpath 有 spring-data-redis 且容器已有 stringRedisTemplate 时注册；
+     *  嵌套类条件求值先于类加载的标准 Boot 模式，宿主无 Redis 依赖不炸 */
+    @Configuration(proxyBeanMethods = false)
+    @ConditionalOnClass(StringRedisTemplate.class)
+    static class RedisSecretSourceConfiguration {
+
+        @Bean
+        @Primary
+        @ConditionalOnBean(StringRedisTemplate.class)
+        public RedisInnerSecretSource redisInnerSecretSource(StringRedisTemplate redisTemplate,
+                                                             InnerProperties properties) {
+            return new RedisInnerSecretSource(redisTemplate,
+                    new StaticInnerSecretSource(properties), properties);
         }
     }
 
@@ -49,9 +83,9 @@ public class CloudInnerAutoConfiguration {
         @Bean
         @ConditionalOnMissingBean(name = "innerAccessFilterRegistration")
         public FilterRegistrationBean<InnerAccessFilter> innerAccessFilterRegistration(
-                InnerProperties properties) {
+                InnerSecretSource secretSource) {
             FilterRegistrationBean<InnerAccessFilter> registration =
-                    new FilterRegistrationBean<>(new InnerAccessFilter(properties));
+                    new FilterRegistrationBean<>(new InnerAccessFilter(secretSource));
             registration.addUrlPatterns(INNER_URL_PATTERN);
             registration.setOrder(Ordered.HIGHEST_PRECEDENCE + 10);
             return registration;
@@ -65,8 +99,8 @@ public class CloudInnerAutoConfiguration {
 
         @Bean
         @ConditionalOnMissingBean
-        public InnerSecretInterceptor innerSecretInterceptor(InnerProperties properties) {
-            return new InnerSecretInterceptor(properties);
+        public InnerSecretInterceptor innerSecretInterceptor(InnerSecretSource secretSource) {
+            return new InnerSecretInterceptor(secretSource);
         }
     }
 }

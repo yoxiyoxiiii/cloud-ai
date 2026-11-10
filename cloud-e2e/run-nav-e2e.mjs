@@ -188,12 +188,12 @@ try {
     assert(typeof sysRoot.sort === 'number', 'sort 字段应为数值')
     // 7 个 C 子级：path 依次 /system/user /system/role /system/menu /system/dict /system/dept /system/data-perm /system/mq-dlq
     // （种子 11/12/13/14 顺序 + 数据权限轮 15/16 追加 sort 5/6 + 死信治理轮 17 追加 sort 7）
-    assertEq(sysRoot.children.length, 8, `系统管理子级应恰 8 个（数据权限轮+部门管理/数据权限；死信治理轮+死信治理；通知中心轮+通知管理），实际 ${sysRoot.children.length}`)
+    assertEq(sysRoot.children.length, 9, `系统管理子级应恰 9 个（数据权限轮+部门管理/数据权限；死信治理轮+死信治理；通知中心轮+通知管理；密钥轮换轮+密钥管理），实际 ${sysRoot.children.length}`)
     const cPaths = sysRoot.children.map((c) => c.path)
     const cNames = sysRoot.children.map((c) => c.name)
     log(`  系统管理 C 子级: ${JSON.stringify(sysRoot.children.map((c) => ({ name: c.name, type: c.type, path: c.path, icon: c.icon })))}`)
-    assertEq(cPaths.join(','), '/system/user,/system/role,/system/menu,/system/dict,/system/dept,/system/data-perm,/system/mq-dlq,/system/notify', `C 子级 path 应依次八页（通知中心轮 +/system/notify），实际 ${JSON.stringify(cPaths)}`)
-    assertEq(cNames.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理', `C 子级名称应依次（通知中心轮 +通知管理），实际 ${JSON.stringify(cNames)}`)
+    assertEq(cPaths.join(','), '/system/user,/system/role,/system/menu,/system/dict,/system/dept,/system/data-perm,/system/mq-dlq,/system/notify,/system/inner-secret', `C 子级 path 应依次九页（通知中心轮 +/system/notify；密钥轮换轮 +/system/inner-secret），实际 ${JSON.stringify(cPaths)}`)
+    assertEq(cNames.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理', `C 子级名称应依次（通知中心轮 +通知管理；密钥轮换轮 +密钥管理），实际 ${JSON.stringify(cNames)}`)
     // —— M 流程管理（Round I 迁移，契约 approval-platform-api §8）：icon Tickets，子级 4 C 按 sort 序
     //    请假申请(31,sort1)/我的审批(34,sort2)/待办任务(32,sort3)/流程定义(33,sort4)——
     //    31 改造：name 我的申请→请假申请、path /bpmn/leave→/system/leave；34 新增 path /bpmn/approval ——
@@ -251,11 +251,11 @@ try {
     // Round I 迁移：流程管理 4 子项（31 改造 + 34 新增）——两目录子项 + 工作台；
     // 数据权限轮 2026-10-10：系统管理 +部门管理/数据权限（种子 15/16）；死信治理轮 2026-10-11：+死信治理（种子 17）；
     // AI 对话轮 2026-10-13：+对话（种子 18/181）；知识库管理轮 2026-10-15：+知识库（种子 182）；
-    // 平台 Agent 管理轮 2026-10-29：+智能体管理/智能体对话（种子 186/190）——
-    // AI 助手 M sort 4 目录在流程管理后，共 16 项）
+    // 平台 Agent 管理轮 2026-10-29：+智能体管理/智能体对话（种子 186/190）；
+    // 密钥轮换轮 2026-11-09：系统管理 +密钥管理（种子 22）——共 19 项）
     const labels = await menuLabels()
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→通知管理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→MCP服务管理→工作台（通知中心轮 +通知管理）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→通知管理→密钥管理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→MCP服务管理→工作台（通知中心轮 +通知管理；密钥轮换轮 +密钥管理）')
     // 嵌套结构证据：根 M 渲染为 el-sub-menu（侧边栏嵌套布局）
     assert((await page.locator('.el-menu .el-sub-menu').count()) >= 1, '根目录 M 应渲染为 el-sub-menu')
     await sleep(800) // 落定窗口内不应有额外 me（守卫并行门只拉一次，无重复请求）
@@ -458,7 +458,7 @@ try {
     assert(r.ok, `admin 重新登录应成功: ${r.msg || ''}`)
     const labels = await menuLabels()
     log(`  admin 恢复菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', 'admin 重登应恢复全量导航（系统管理 8 项 + 流程管理 4 项 + AI 助手 5 项 + 工作台——通知中心轮 18 项新形态；登录页 reset 清态 + 守卫按新账号重建）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', 'admin 重登应恢复全量导航（系统管理 9 项 + 流程管理 4 项 + AI 助手 5 项 + 工作台——密钥轮换轮 19 项新形态；登录页 reset 清态 + 守卫按新账号重建）')
     // 按钮级权限回归（perms-api §4：admin 全量快照 → 全显；受限快照零残留——三件套 reset 生效证据）
     await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
     await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })

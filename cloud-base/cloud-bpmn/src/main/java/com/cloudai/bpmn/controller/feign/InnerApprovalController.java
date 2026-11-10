@@ -21,6 +21,7 @@ import java.util.List;
  * 平台审批 /inner 面（契约 2026-10-08-approval-platform-api §4，服务间 Feign 专用）。
  * 无 @PreAuthorize：/inner/** 不经网关鉴权链（网关 inner-block-bpmn 路由屏蔽外访，内网+屏蔽为边界）；
  * 入参 applyUser/operator 显式传（无登录态上下文）。
+ * @author jy-root
  */
 @RestController
 @RequestMapping("/inner/approval")
