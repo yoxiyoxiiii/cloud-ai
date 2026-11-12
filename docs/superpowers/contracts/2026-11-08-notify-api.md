@@ -211,9 +211,11 @@ TemplateVo（列表与详情共用，详情=单行同构）：
 
 **种子模板**（isBuiltin=1，随 DDL 同文件）：`welcome_notice`（公告，无变量）与 `approval_remind`（提醒，含 `${nickname}`，演示变量链路）。
 
-## 6. inner Feign 预留（本轮不实现，仅形态记档）
+## 6. inner Feign 发送端点（2026-11-10 任务中心轮转正实现）
 
-未来业务事件接入（如审批待办）时，cloud-system-api 增 `client/NotifyClient`（Feign + fallbackFactory，沿 cloud-system-api 惯例）：
+> 状态变更：本节原为「预留形态记档」；2026-11-10 通用任务中心轮按本节形态实现（任务失败告警链路），端点语义以 `2026-11-10-task-center-api.md` §11 为准。首个业务消费方为 cloud-task。
+
+cloud-system-api 增 `client/NotifyClient`（Feign + fallbackFactory，沿 cloud-system-api 惯例）：
 
 ```
 POST /inner/notify/send-by-code     （网关已屏蔽 /system/inner/**，既有规则无需变更）
