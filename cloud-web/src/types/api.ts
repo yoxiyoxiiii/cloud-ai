@@ -1835,3 +1835,90 @@ export interface InnerSecretStatusVo {
   redisVersion: number | null
   redisConsistent: boolean
 }
+
+/* ===== 任务中心（契约 2026-11-10-task-center-api）===== */
+
+/** 任务状态字面量（契约 §8 状态机）：状态列/按钮显隐/轮询判定统一引用，禁散落魔法数 */
+export const TASK_STATUS_QUEUED = 0
+export const TASK_STATUS_RUNNING = 1
+export const TASK_STATUS_SUCCESS = 2
+export const TASK_STATUS_FAILED = 3
+export const TASK_STATUS_CANCELED = 4
+
+/** 任务状态文案（契约 §8 枚举）：0 排队 1 执行中 2 成功 3 失败(含超时) 4 已取消 */
+export const TASK_STATUS_MAP: Record<number, string> = {
+  [TASK_STATUS_QUEUED]: '排队',
+  [TASK_STATUS_RUNNING]: '执行中',
+  [TASK_STATUS_SUCCESS]: '成功',
+  [TASK_STATUS_FAILED]: '失败',
+  [TASK_STATUS_CANCELED]: '已取消',
+}
+
+/** 任务状态→tag 颜色（固定映射）：排队 info / 执行中 warning / 成功 success / 失败 danger / 已取消 info */
+export const TASK_STATUS_TAG: Record<number, 'info' | 'warning' | 'success' | 'danger'> = {
+  [TASK_STATUS_QUEUED]: 'info',
+  [TASK_STATUS_RUNNING]: 'warning',
+  [TASK_STATUS_SUCCESS]: 'success',
+  [TASK_STATUS_FAILED]: 'danger',
+  [TASK_STATUS_CANCELED]: 'info',
+}
+
+/**
+ * 任务行 VO（契约 §3）：taskId 为字符串（Long→String）；progress 0-100；
+ * 活动态（排队/执行中）行由列表页 2 秒轮询刷新，终态行字段不再变化；
+ * bizKey/phase/errorMsg/startTime/finishTime 可空（null 展示为 -）
+ */
+export interface TaskVo {
+  taskId: string
+  taskType: string
+  /** 业务幂等键（提交可不传） */
+  bizKey: string | null
+  status: number
+  progress: number
+  /** 执行阶段描述（handler 上报，如 批处理中） */
+  phase: string | null
+  retryCount: number
+  maxRetries: number
+  errorMsg: string | null
+  submitBy: string
+  submitSource: string
+  createTime: string
+  startTime: string | null
+  finishTime: string | null
+}
+
+/**
+ * 任务详情 VO（契约 §4）= 列表行全字段 + 提交/执行细节：params/result 为 JSON 原文
+ * （前端解析失败兜底原文展示）；cancelRequested 1=执行中已请求取消（协作式，
+ * handler 下一检查点生效后转已取消）；executorId 认领执行器标识（未认领 null）
+ */
+export interface TaskDetailVo extends TaskVo {
+  params: string | null
+  result: string | null
+  timeoutSeconds: number
+  cancelRequested: number
+  executorId: string | null
+}
+
+/** 任务分页查询入参（契约 §3）：status 精确（0-4）/ taskType / submitBy 均可选，rows 按提交时间倒序 */
+export interface TaskPageQuery {
+  pageNum: number
+  pageSize: number
+  status?: number
+  taskType?: string
+  submitBy?: string
+}
+
+/**
+ * 演示任务提交入参（契约 §7，端点在 cloud-system）：total 模拟处理条数 1-10000 默认 100；
+ * failPercent 注入失败百分比 0-100 默认 0（>0 时任务在约该进度处失败，验证重试/告警链路）
+ */
+export interface DemoSubmitPayload {
+  total?: number
+  failPercent?: number
+}
+
+/** 任务提交结果（契约 §2）：taskId 为后续查询/取消/重试凭据（字符串） */
+export interface TaskSubmitResult {
+  taskId: string
+}

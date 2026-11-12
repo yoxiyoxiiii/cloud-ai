@@ -1,6 +1,7 @@
 package com.cloudai.system.service;
 
 import com.cloudai.common.core.exception.BusinessException;
+import com.cloudai.system.api.domain.SendByCodeRequest;
 import com.cloudai.system.dto.NotifySendRequest;
 import com.cloudai.system.entity.SysNotifyMessage;
 import com.cloudai.system.entity.SysNotifyTemplate;
@@ -122,6 +123,42 @@ class NotifySendServiceTest {
         ArgumentCaptor<List<SysNotifyUserMessage>> receipts = ArgumentCaptor.forClass(List.class);
         verify(userMessageMapper).saveBatch(receipts.capture());
         assertThat(receipts.getValue().get(0).getCreateBy()).isEqualTo("bpmn-notify");
+    }
+
+    @Test
+    void sendByCode_unknownCode_rejected3044() {
+        // 按码发送（任务中心契约 2026-11-10 §11）：code 未命中透明 3044（沿 notify 契约 §4 按 code 语义）
+        when(templateMapper.findByCode("nope")).thenReturn(null);
+        SendByCodeRequest req = new SendByCodeRequest();
+        req.setTemplateCode("nope");
+        req.setReceiverType(SysNotifyMessage.ReceiverTypeEnum.ROLE.getCode());
+        req.setRoleIds(List.of(1L));
+        assertThatThrownBy(() -> service.sendByCode(req, "inner-notify"))
+                .isInstanceOf(BusinessException.class)
+                .hasFieldOrPropertyWithValue("code", 3044)
+                .hasMessageContaining("nope");
+    }
+
+    @Test
+    void sendByCode_resolvesTemplateAndReusesSendChain() {
+        // code 解析模板后复用 saveNotify 全链：变量渲染/角色展开/审计操作人透传
+        when(templateMapper.findByCode("approval_remind")).thenReturn(templateWithVar());
+        stubTemplateFound(); // saveNotify 全链按 id 再取一次模板
+        when(userMapper.listUserIdsByRoleIds(List.of(2L))).thenReturn(List.of(1L, 2L, 3L));
+        SendByCodeRequest req = new SendByCodeRequest();
+        req.setTemplateCode("approval_remind");
+        req.setReceiverType(SysNotifyMessage.ReceiverTypeEnum.ROLE.getCode());
+        req.setRoleIds(List.of(2L));
+        req.setVariables(Map.of("nickname", "李四"));
+        req.setLinkUrl("/task/async");
+
+        NotifySendResultVo result = service.sendByCode(req, "inner-notify");
+
+        assertThat(result.getReceiverCount()).isEqualTo(3);
+        ArgumentCaptor<SysNotifyMessage> messageCaptor = ArgumentCaptor.forClass(SysNotifyMessage.class);
+        verify(messageMapper).save(messageCaptor.capture());
+        assertThat(messageCaptor.getValue().getCreateBy()).isEqualTo("inner-notify");
+        assertThat(messageCaptor.getValue().getContent()).contains("李四");
     }
 
     @Test

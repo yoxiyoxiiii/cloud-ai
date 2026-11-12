@@ -18,6 +18,7 @@
         <module>cloud-sso</module>
         <module>cloud-system</module>
         <module>cloud-bpmn</module>
+        <module>cloud-task</module>
     </modules>
 
     <properties>
@@ -142,6 +143,11 @@
             <dependency>
                 <groupId>com.cloudai</groupId>
                 <artifactId>cloud-system-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.cloudai</groupId>
+                <artifactId>cloud-task-api</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <!-- 三方 -->

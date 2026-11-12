@@ -543,6 +543,16 @@ INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_bui
 (200, 22, '立即轮换', 'system:innerSecret:rotate', 'F', '', '', 1, 1, NOW()),
 (201, 22, '作废',     'system:innerSecret:revoke', 'F', '', '', 2, 1, NOW());
 
+-- 任务中心菜单（40 段 5 行，2026-11-10 任务中心轮；与增量脚本 2026-11-10-task-center.sql 段③ 语义等价，
+-- admin 绑定由下方 sys_role_menu 的 SELECT 全量式天然覆盖，不重复加显式绑定；
+-- 顶级 M 40 与 bpmn 流程待办（32 段）不同域不同词——本域=异步任务）
+INSERT INTO sys_menu (id, parent_id, name, perms, type, path, icon, sort, is_builtin, create_time) VALUES
+(40,  0,   '任务中心',   '',                      'M', '',          'Timer', 5, 1, NOW()),
+(401, 40,  '异步任务',   'task:asyncTask:list',   'C', '/task/async', 'List', 1, 1, NOW()),
+(402, 401, '取消任务',   'task:asyncTask:cancel', 'F', '', '', 1, 1, NOW()),
+(403, 401, '重试任务',   'task:asyncTask:retry',  'F', '', '', 2, 1, NOW()),
+(404, 401, '提交演示任务', 'task:demo:submit',    'F', '', '', 3, 1, NOW());
+
 -- 内置模板种子（欢迎公告无变量；审批提醒/审批结果与增量脚本 2026-11-08-approval-notify-integration.sql 同值，
 -- 变量集以契约 2026-11-08-approval-notify-mq-api §2 为准；is_builtin=1 禁删可改）
 INSERT INTO sys_notify_template (id, code, name, title_template, content_template, type, level,
@@ -565,6 +575,14 @@ INSERT INTO sys_notify_template (id, code, name, title_template, content_templat
 VALUES (4, 'inner_secret_alert', 'inner 密钥轮换告警', 'inner 密钥轮换告警',
         '密钥轮换异常：${content}，请及时处理', 2, 1, 'content=告警内容摘要（不含密钥真值）',
         1, 'admin', NOW(), 'admin', NOW());
+
+-- 异步任务失败告警模板（2026-11-10 任务中心轮；与增量脚本 2026-11-10-task-center.sql 段② 等价；
+-- 任务首次终态失败时 cloud-task 经 inner 通知端点按 code 取用发 admin 角色）
+INSERT INTO sys_notify_template (id, code, name, title_template, content_template, type, level,
+                                 variables_desc, is_builtin, create_by, create_time, update_by, update_time)
+VALUES (5, 'task_fail_alert', '异步任务失败提醒', '异步任务失败提醒',
+        '异步任务 ${taskType}（ID: ${taskId}）执行失败：${reason}，请前往任务中心处理。',
+        2, 1, 'taskType=任务类型码；taskId=任务ID；reason=失败原因摘要', 1, 'admin', NOW(), 'admin', NOW());
 
 -- admin 账号（密码 admin123；数据权限轮起挂根部门 dept_id=1——与增量脚本 UPDATE 语义等价；
 -- mobile/email 示例值与增量脚本 2026-10-22-dataperm-user-columns.sql 语义等价）

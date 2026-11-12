@@ -217,11 +217,13 @@ class ArchitectureGuardTest {
      * DataPermRegistryConsistencyChecker.collectViolations（一致性检查收集 D17）。
      * 2026-11-09 密钥轮换轮追加：rotate/revoke/publish/sweep/alert——密钥生命周期域动词
      * （轮换/作废/活跃集发布/清扫/告警），InnerSecretService 单一代码路径核心入口。
+     * 2026-11-10 任务中心轮追加：submit——演示任务提交入口（TaskDemoService，经 Feign 转任务中心）；
+     * send——通知按码发送门面（NotifySendService.sendByCode，inner 面复用发送全链）。
      */
     private static final Pattern NAMING_PREFIX_OK =
             Pattern.compile("^(find|save|update|pageList|list|delete|count|reset|assign|cancel|get|set|is"
                     + "|evaluate|explain|logDeny|myScope|all|of|allows|mask|assert"
-                    + "|apply|collect|rotate|revoke|publish|sweep|alert)\\w*");
+                    + "|apply|collect|rotate|revoke|publish|sweep|alert|submit|send)\\w*");
 
     /** 语句起始关键字（throw new Xxx( / return foo( 会被误判为声明，前置排除） */
     private static final List<String> STATEMENT_KEYWORDS = List.of(
@@ -298,7 +300,7 @@ class ArchitectureGuardTest {
     @Test
     void feignClients_mustNotBeDeclaredInServiceModules() throws IOException {
         List<String> violations = new ArrayList<>();
-        for (String svc : List.of("../cloud-sso", "../cloud-system", "../cloud-bpmn")) {
+        for (String svc : List.of("../cloud-sso", "../cloud-system", "../cloud-bpmn", "../cloud-task")) {
             Path root = Paths.get(svc, "src", "main", "java");
             for (Path file : listFiles(root, "*.java")) {
                 if (Files.readString(file, StandardCharsets.UTF_8).contains("@FeignClient")) {
@@ -316,7 +318,8 @@ class ArchitectureGuardTest {
     void feignClients_inApiModules_mustDeclareFallbackFactory() throws IOException {
         Pattern annotation = Pattern.compile("@FeignClient\\([^)]*\\)", Pattern.DOTALL);
         List<String> violations = new ArrayList<>();
-        for (String api : List.of("../cloud-api/cloud-bpmn-api", "../cloud-api/cloud-system-api")) {
+        for (String api : List.of("../cloud-api/cloud-bpmn-api", "../cloud-api/cloud-system-api",
+                "../cloud-api/cloud-task-api")) {
             Path root = Paths.get(api, "src", "main", "java");
             for (Path file : listFiles(root, "*.java")) {
                 Matcher m = annotation.matcher(Files.readString(file, StandardCharsets.UTF_8));
@@ -339,7 +342,7 @@ class ArchitectureGuardTest {
     @Test
     void rocketmqConsumers_mustUseIdempotentListener() throws IOException {
         List<String> violations = new ArrayList<>();
-        for (String svc : List.of("../cloud-sso", "../cloud-system", "../cloud-bpmn")) {
+        for (String svc : List.of("../cloud-sso", "../cloud-system", "../cloud-bpmn", "../cloud-task")) {
             Path root = Paths.get(svc, "src", "main", "java");
             for (Path file : listFiles(root, "*.java")) {
                 String source = Files.readString(file, StandardCharsets.UTF_8);

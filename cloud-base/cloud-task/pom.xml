@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.cloudai</groupId>
+        <artifactId>cloud-base</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>cloud-task</artifactId>
+    <name>cloud-task</name>
+    <description>通用任务中心服务（异步任务提交/秒级认领执行/进度重试取消/失败告警）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-core-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-mybatis-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-security-starter</artifactId>
+        </dependency>
+        <!-- inner 活跃密钥集读取（cloud.inner 共享密钥的 Redis 分发面）+ 任务中心自身 Redis 需求 -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-redis-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+        <!-- 失败告警通知（cloud-system /inner/notify/send-by-code，契约 2026-11-10-task-center-api §11） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-system-api</artifactId>
+        </dependency>
+        <!-- 自家服务间契约（任务提交 /inner/task/submit 声明归位） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-task-api</artifactId>
+        </dependency>
+        <!-- Feign 熔断包装（fallbackFactory 生效前提） -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-circuitbreaker-resilience4j</artifactId>
+        </dependency>
+        <!-- xxl-job 执行器（清扫任务 id 13：僵尸兜底 + 终态行保留期清理） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-xxljob-starter</artifactId>
+        </dependency>
+        <!-- /inner 面准入（提供 /inner/task/submit 校验 + 消费 notify 时注入密钥头） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-inner-starter</artifactId>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

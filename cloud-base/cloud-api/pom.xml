@@ -18,5 +18,6 @@
     <modules>
         <module>cloud-bpmn-api</module>
         <module>cloud-system-api</module>
+        <module>cloud-task-api</module>
     </modules>
 </project>

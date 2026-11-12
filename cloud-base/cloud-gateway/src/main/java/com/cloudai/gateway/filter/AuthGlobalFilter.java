@@ -41,11 +41,11 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
     private static final String BEARER_PREFIX = "Bearer ";
 
     /** 前缀白名单：登录/刷新、demo、inner 与 MCP 屏蔽（SetStatus 路由接管）、网关自身监控。
-     *  inner 三项带尾斜杠做段感知匹配——否则 startsWith 会误吞同级前缀路径（如 /system/inner-secret/** 管理端点会被跳过鉴权）。 */
+     *  inner 各项带尾斜杠做段感知匹配——否则 startsWith 会误吞同级前缀路径（如 /system/inner-secret/** 管理端点会被跳过鉴权）。 */
     private static final List<String> WHITELIST = List.of(
             "/sso/auth/login", "/sso/auth/refresh",
-            "/sso/demo", "/system/demo", "/bpmn/demo",
-            "/sso/inner/", "/system/inner/", "/bpmn/inner/",
+            "/sso/demo", "/system/demo", "/bpmn/demo", "/task/demo",
+            "/sso/inner/", "/system/inner/", "/bpmn/inner/", "/task/inner/",
             "/system/mcp",
             "/actuator"
     );

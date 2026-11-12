@@ -2,6 +2,7 @@ package com.cloudai.system.service;
 
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
+import com.cloudai.system.api.domain.SendByCodeRequest;
 import com.cloudai.system.dto.NotifySendRequest;
 import com.cloudai.system.entity.SysNotifyMessage;
 import com.cloudai.system.entity.SysNotifyTemplate;
@@ -72,6 +73,33 @@ public class NotifySendService {
     @Transactional(rollbackFor = Exception.class)
     public NotifySendResultVo saveNotify(NotifySendRequest req) {
         return saveNotify(req, SecurityUtils.currentAccount());
+    }
+
+    /**
+     * 按模板编码发送（服务间 inner 面，任务中心契约 2026-11-10-task-center-api §11——
+     * 2026-11-08-notify 契约 §6 预留形态转正）：code 解析模板（未命中 3044）后组装
+     * 内部请求复用 saveNotify 全链（校验/渲染/多表写事务）。
+     * 同 saveNotify 单参入口：本方法自持 @Transactional，自调用不走代理不影响事务语义。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public NotifySendResultVo sendByCode(SendByCodeRequest request, String operator) {
+        SysNotifyTemplate template = templateMapper.findByCode(request.getTemplateCode());
+        if (template == null) {
+            throw new BusinessException(ERR_TEMPLATE_NOT_FOUND, "通知模板不存在: " + request.getTemplateCode());
+        }
+        return saveNotify(toSendRequest(request, template.getId()), operator);
+    }
+
+    /** api 契约模型 → 内部发送请求（模板 id 补全；其余字段语义一致直传） */
+    private NotifySendRequest toSendRequest(SendByCodeRequest request, Long templateId) {
+        NotifySendRequest send = new NotifySendRequest();
+        send.setTemplateId(templateId);
+        send.setReceiverType(request.getReceiverType());
+        send.setUserIds(request.getUserIds());
+        send.setRoleIds(request.getRoleIds());
+        send.setVariables(request.getVariables());
+        send.setLinkUrl(request.getLinkUrl());
+        return send;
     }
 
     /**

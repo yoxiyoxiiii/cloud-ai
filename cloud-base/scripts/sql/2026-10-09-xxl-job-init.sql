@@ -285,4 +285,19 @@ VALUES (12, 3, 'system-inner-secret-rotate', now(), now(), 'cloudai', '', 'CRON'
         'DO_NOTHING', 'FIRST', 'innerSecretRotateJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '',
         1);
 
+-- 任务中心执行器组与清扫任务（2026-11-10 任务中心轮增补，与增量脚本 2026-11-10-task-center.sql 段④ 等价）：
+-- 组 5 app_name=cloud-task；任务 13 CRON 每分钟单趟=僵尸 RUNNING 兜底判死 + 终态行保留期物理清理；
+-- handler 对应 cloud-task job 包 @XxlJob("taskSweepJobHandler")；retry 0（失败自然重试=下一分钟调度轮）
+INSERT INTO `xxl_job_group`(`id`, `app_name`, `name`, `address_type`, `address_list`, `access_token`, `update_time`)
+VALUES (5, 'cloud-task', 'cloud-task执行器', 0, NULL, 'default_token', now());
+
+INSERT INTO `xxl_job_info`(`id`, `job_group`, `name`, `add_time`, `update_time`, `author`, `alarm_email`,
+                           `schedule_type`, `schedule_conf`, `misfire_strategy`, `executor_route_strategy`,
+                           `executor_handler`, `executor_param`, `executor_block_strategy`, `executor_timeout`,
+                           `executor_fail_retry_count`, `glue_type`, `glue_source`, `glue_remark`, `glue_updatetime`,
+                           `child_jobid`, `trigger_status`)
+VALUES (13, 5, 'task-center-sweep', now(), now(), 'cloudai', '', 'CRON', '0 * * * * ?',
+        'DO_NOTHING', 'FIRST', 'taskSweepJobHandler', '', 'SERIAL_EXECUTION', 0, 0, 'BEAN', '', '', now(), '',
+        1);
+
 commit;

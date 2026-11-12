@@ -167,6 +167,9 @@ T1 SQL 种子 ─▶ T2 task-api 模块 ─▶ T3 服务骨架+网关+Nacos ─�
 2. 父子任务/批次并行分片、SSE 进度推送、任务优先级、同类型并行度上限、告警重试与告警提交人、自动重试退避——均演进项（设计 §9）。
 3. 多实例部署前必须完成：本地运行表/容量统计改按 executor_id 分域（设计 §9 第 6 条）。
 4. xxl-job 任务 13 的僵尸清扫在本轮单实例下与启动恢复重叠——多实例时它是唯一跨实例兜底，勿删。
+5. **非聚合 e2e 侧边栏夹具欠账（本轮菜单 40 落地新增根级「任务中心」所致）**：`run-agent-e2e.mjs:365`（18 项串）、`run-dataperm-e2e.mjs:219`（18 项串）、`run-mcp-e2e.mjs:337-338`（SIDEBAR_17/SIDEBAR_16 常量）均未含「任务中心/异步任务」——下次跑 `e2e:agent|dataperm|mcp` 必红，须按实际侧边渲染序补「任务中心」（插在「MCP服务管理」后、「工作台」前）再复跑；聚合七脚本本轮已同步绿。
+
+**2026-11-12 收口结果：全绿收口**——①全量聚合 e2e `[FAIL]`=0（162 PASS，七脚本）+ taskcenter 专线 `[FAIL]`=0（14 PASS，纯 mock 零真实写）；②主控真链路冒烟：成功链（提交→Feign→inner→认领→执行→status=2 result=`{"processed": 20}`）+ 失败链（failPercent=50 → retryCount=3 自动重试耗尽 → status=3）+ 告警链（admin 未读 67→68，task_fail_alert 站内信投递）三链全实证；③双审零打回（网关路由/白名单段感知、controller 规范、SQL 种子、密钥纪律——application-local.yml gitignored 实证、CLAUDE.md 六处、引擎条件写与告警防重）；④工作区改动随当日 commit 入库（用户 2 个 bpmn WIP 文件除外）。
 
 ## 4. 给 backend-agent 的任务清单（完整任务书）
 

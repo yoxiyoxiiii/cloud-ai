@@ -23,6 +23,12 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
+        <!-- 契约模型校验注解（@NotBlank 等，NotifyClient SendByCodeRequest）编译期可见；
+             运行时校验器由提供方服务自带（沿 cloud-task-api 同款声明） -->
+        <dependency>
+            <groupId>jakarta.validation</groupId>
+            <artifactId>jakarta.validation-api</artifactId>
+        </dependency>
         <!-- 列 advisor 组件（D51）：ResponseBodyAdvice/@RestControllerAdvice/OncePerRequestFilter 编译所需，
              由引本 jar 的 web 服务自带——translate-starter provided 先例，不传染宿主 -->
         <dependency>

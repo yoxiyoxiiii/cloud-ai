@@ -6,13 +6,14 @@
  * 运行：cd cloud-e2e && npm run e2e（串行含本脚本；单跑 npm run e2e:nav）
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码
  * 测试数据（删净纪律最高优先）：
- * - 角色/用户/角色标识全部 e2e 前缀+时间戳；绝不改 admin/种子账号；种子菜单（10/11/12/13/111…20/21/211 与 30 段 30/31/32/33/311/312/321/331/34/341）零触碰
+ * - 角色/用户/角色标识全部 e2e 前缀+时间戳；绝不改 admin/种子账号；种子菜单（10/11/12/13/111…20/21/211 与 30 段 30/31/32/33/311/312/321/331/34/341 及 40 段 40/401/402/403/404）零触碰
  * - 结束删除测试用户与测试角色并断言删净（含 N5 意外落库兜底删除）
  * 核心断言（设计 D10 / 契约 §2 §3 + perms-api §4 §6）：
  * - N1 admin user-nav 形状逐字段（Round I 迁移后根级仍恰 2；AI 对话轮 2026-10-13 根级恰 3：M 系统管理 icon Setting 4 C + M 流程管理 icon Tickets 4 C
  *   （sort 序 请假申请31/我的审批34/待办任务32/流程定义33——契约 2026-10-08-approval-platform-api §8：31 改造更名+path
  *   /system/leave、34 新增 path /bpmn/approval；无 F；20/21 被剪）+ M AI 助手 icon ChatDotRound 子级 2 C
  *   （181「对话」/rag/chat——契约 2026-10-13-ai-rag-chat-api §6.1；182「知识库」/rag/kb——契约 2026-10-14-ai-kb-api §6）+ me 形状与恰 1 次
+ *   ；任务中心轮 2026-11-10 根级恰 4：+ M 任务中心 icon Timer 子级 1 C（401「异步任务」/task/async——契约 2026-11-10-task-center-api §10）
  * - N2 RBAC 闭环：角色仅绑"角色管理"分支 → 新用户侧边恰 '角色管理,工作台' 且角色页可加载
  * - N2f 按钮粒度：受限用户（快照 list+edit）表头新增/行内分配权限·删除隐藏、编辑可见
  * - N4 F5 刷新：路由/菜单/高亮保持 + user-nav 与 me 各恰 +1 + 按钮隐藏保持
@@ -173,13 +174,14 @@ try {
     assert(meBody.data.permissions.includes('sso:online:list'), 'admin 快照应含 sso:online:list')
     const nav = body.data
     assert(Array.isArray(nav), `data 应为数组，实际 ${typeof nav}`)
-    // 根级恰 3 节点（AI 对话轮 2026-10-13 新增第三个 M——种子 18「AI 助手」sort 4）：
-    // M 系统管理（icon Setting）+ M 流程管理（icon Tickets）+ M AI 助手（icon ChatDotRound）
-    assertEq(nav.length, 3, `admin 根级应恰 3 节点（系统管理+流程管理+AI 助手），实际 ${nav.length}`)
+    // 根级恰 4 节点（任务中心轮 2026-11-10 新增第四个 M——种子 40「任务中心」sort 5）：
+    // M 系统管理（icon Setting）+ M 流程管理（icon Tickets）+ M AI 助手（icon ChatDotRound）+ M 任务中心（icon Timer）
+    assertEq(nav.length, 4, `admin 根级应恰 4 节点（系统管理+流程管理+AI 助手+任务中心），实际 ${nav.length}`)
     const sysRoot = nav.find((n) => n.name === '系统管理')
     const bpmnRoot = nav.find((n) => n.name === '流程管理')
     const aiRoot = nav.find((n) => n.name === 'AI 助手')
-    assert(sysRoot && bpmnRoot && aiRoot, `根级应为 系统管理+流程管理+AI 助手，实际 ${JSON.stringify(nav.map((n) => n.name))}`)
+    const taskRoot = nav.find((n) => n.name === '任务中心')
+    assert(sysRoot && bpmnRoot && aiRoot && taskRoot, `根级应为 系统管理+流程管理+AI 助手+任务中心，实际 ${JSON.stringify(nav.map((n) => n.name))}`)
     // —— M 系统管理：icon Setting，子级 7 C 逐字段（数据权限轮 2026-10-10 +部门管理/数据权限，种子 15/16；死信治理轮 2026-10-11 +死信治理，种子 17）——
     assertEq(sysRoot.type, 'M', `系统管理 type 应为 M，实际 "${sysRoot.type}"`)
     assertEq(sysRoot.name, '系统管理', `根节点名称应为 系统管理，实际 "${sysRoot.name}"`)
@@ -229,7 +231,18 @@ try {
     assertEq(aiRoot.children[3].name, '智能体对话', `AI 助手第 4 子级名称应为 智能体对话，实际 "${aiRoot.children[3].name}"`)
     assertEq(aiRoot.children[4].path, '/mcp/manage', `AI 助手第 5 子级 path 应为 /mcp/manage，实际 "${aiRoot.children[4].path}"`)
     assertEq(aiRoot.children[4].name, 'MCP服务管理', `AI 助手第 5 子级名称应为 MCP服务管理，实际 "${aiRoot.children[4].name}"`)
-    for (const c of [...sysRoot.children, ...bpmnRoot.children, ...aiRoot.children]) {
+    // —— M 任务中心（任务中心轮种子 40/401——契约 2026-11-10-task-center-api §10）：
+    //    icon Timer，子级 1 C——401「异步任务」/task/async（perms task:asyncTask:list，sort 1）——
+    assertEq(taskRoot.type, 'M', `任务中心 type 应为 M，实际 "${taskRoot.type}"`)
+    assertEq(taskRoot.name, '任务中心', `根节点名称应为 任务中心，实际 "${taskRoot.name}"`)
+    assertEq(taskRoot.icon, 'Timer', `任务中心 icon 应为 Timer，实际 "${taskRoot.icon}"`)
+    assertEq(taskRoot.parentId, '0', '任务中心 parentId 应为 "0"')
+    assert(typeof taskRoot.sort === 'number', 'sort 字段应为数值')
+    assertEq(taskRoot.children.length, 1, `任务中心子级应恰 1 个，实际 ${taskRoot.children.length}`)
+    log(`  任务中心 C 子级: ${JSON.stringify(taskRoot.children.map((c) => ({ name: c.name, type: c.type, path: c.path, icon: c.icon })))}`)
+    assertEq(taskRoot.children[0].path, '/task/async', `任务中心子级 path 应为 /task/async，实际 "${taskRoot.children[0].path}"`)
+    assertEq(taskRoot.children[0].name, '异步任务', `任务中心子级名称应为 异步任务，实际 "${taskRoot.children[0].name}"`)
+    for (const c of [...sysRoot.children, ...bpmnRoot.children, ...aiRoot.children, ...taskRoot.children]) {
       assertEq(c.type, 'C', `子级 type 应为 C，实际 "${c.type}"`)
       assert(typeof c.icon === 'string' && c.icon.length > 0, `C 节点 icon 应非空，实际 "${c.icon}"`)
       assert(Array.isArray(c.children) && c.children.length === 0, 'C 叶子节点 children 应为空数组（契约 §2）')
@@ -252,10 +265,11 @@ try {
     // 数据权限轮 2026-10-10：系统管理 +部门管理/数据权限（种子 15/16）；死信治理轮 2026-10-11：+死信治理（种子 17）；
     // AI 对话轮 2026-10-13：+对话（种子 18/181）；知识库管理轮 2026-10-15：+知识库（种子 182）；
     // 平台 Agent 管理轮 2026-10-29：+智能体管理/智能体对话（种子 186/190）；
-    // 密钥轮换轮 2026-11-09：系统管理 +密钥管理（种子 22）——共 19 项）
+    // 密钥轮换轮 2026-11-09：系统管理 +密钥管理（种子 22）；
+    // 任务中心轮 2026-11-10：+任务中心目录（种子 40）下异步任务（种子 401）——共 20 项）
     const labels = await menuLabels()
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→通知管理→密钥管理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→MCP服务管理→工作台（通知中心轮 +通知管理；密钥轮换轮 +密钥管理）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,异步任务,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→通知管理→密钥管理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→MCP服务管理→异步任务→工作台（通知中心轮 +通知管理；密钥轮换轮 +密钥管理；任务中心轮 +异步任务）')
     // 嵌套结构证据：根 M 渲染为 el-sub-menu（侧边栏嵌套布局）
     assert((await page.locator('.el-menu .el-sub-menu').count()) >= 1, '根目录 M 应渲染为 el-sub-menu')
     await sleep(800) // 落定窗口内不应有额外 me（守卫并行门只拉一次，无重复请求）
@@ -458,7 +472,7 @@ try {
     assert(r.ok, `admin 重新登录应成功: ${r.msg || ''}`)
     const labels = await menuLabels()
     log(`  admin 恢复菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', 'admin 重登应恢复全量导航（系统管理 9 项 + 流程管理 4 项 + AI 助手 5 项 + 工作台——密钥轮换轮 19 项新形态；登录页 reset 清态 + 守卫按新账号重建）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,异步任务,工作台', 'admin 重登应恢复全量导航（系统管理 9 项 + 流程管理 4 项 + AI 助手 5 项 + 任务中心 1 项 + 工作台——任务中心轮 20 项新形态；登录页 reset 清态 + 守卫按新账号重建）')
     // 按钮级权限回归（perms-api §4：admin 全量快照 → 全显；受限快照零残留——三件套 reset 生效证据）
     await page.goto(`${BASE}${ROLE_PATH}`, { waitUntil: 'domcontentloaded' })
     await page.locator('.el-table__row').first().waitFor({ state: 'visible', timeout: 10000 })

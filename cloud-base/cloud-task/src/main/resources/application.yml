@@ -1,0 +1,63 @@
+server:
+  port: 9204
+
+spring:
+  application:
+    name: cloud-task
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/cloud_task?useUnicode=true&characterEncoding=utf8&serverTimezone=GMT%2B8&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: ""
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  config:
+    import:
+      - optional:nacos:${spring.application.name}.yaml
+      # 共享配置接线（公共项 cloud-common.yaml，optional 容缺向后安全）
+      - optional:nacos:cloud-common.yaml
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+    # Feign 降级与超时（三胞胎同款）：NotifyClient 告警为软失败，降级/超时仅 log.error 不阻断任务终态
+    openfeign:
+      circuitbreaker:
+        enabled: true
+      client:
+        config:
+          default:
+            connect-timeout: 1000
+            read-timeout: 5000
+    # TimeLimiter 默认 1s 会截短 read 5s：Feign 已有自身超时，双层冗余关闭之（三胞胎同款）
+    circuitbreaker:
+      resilience4j:
+        disable-time-limiter: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+# xxl-job 分布式调度——连接配置走 Nacos 不进仓库：
+#   共享 cloud-common.yaml: xxl.job.admin.addresses / executor.logpath / logretentiondays
+#   cloud-task.yaml: cloud.common.xxljob.enabled=true
+#                    xxl.job.executor.{appname=cloud-task, port=19204, ip=物理网卡, accessToken}
+# enabled 未配（默认关）时 starter 零装配——admin 容器未起不阻断服务启动。
+# 任务 id 13（taskSweepJobHandler，CRON 每分钟）：僵尸 RUNNING 兜底判死 + 终态行保留期物理清理。
+
+# 任务引擎节奏（cloud.task.*，架构口径非密钥仓库化，Nacos 可覆盖）：
+#   poll-interval-ms=1000 DB 轮询认领间隔（秒级 pickup 主通道）
+#   executor.concurrency=8 执行线程池 core=max
+#   progress-throttle-ms=500 进度写库节流
+#   retention-days=30 终态行保留天数（清扫任务物理清理）
+cloud:
+  task:
+    poll-interval-ms: 1000
+    executor:
+      concurrency: 8
+    progress-throttle-ms: 500
+    retention-days: 30
+
+mybatis-plus:
+  configuration:
+    # XML resultType 实体映射依赖驼峰映射；显式声明防将来配置漂移静默断列（三胞胎同款）
+    map-underscore-to-camel-case: true

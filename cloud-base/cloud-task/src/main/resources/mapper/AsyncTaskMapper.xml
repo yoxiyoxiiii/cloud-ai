@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!-- 流水式表记档：async_task 无 deleted 列（任务行无软删语义，终态行到期物理清理，
+     沿 mq_tx_log/sys_shared_secret 先例）——本 XML 全部语句无 deleted=0 过滤属刻意形态。
+     状态推进全部单语句条件 UPDATE（WHERE status=...）：并发竞争空更新无害，任务域零 @Transactional。 -->
+<mapper namespace="com.cloudai.task.mapper.AsyncTaskMapper">
+
+    <sql id="allColumns">
+        id, task_type, biz_key, status, progress, phase, params, result, error_msg,
+        cancel_requested, retry_count, max_retries, timeout_seconds, executor_id,
+        submit_by, submit_source, start_time, finish_time, create_time, update_time
+    </sql>
+
+    <select id="findById" resultType="com.cloudai.task.entity.AsyncTask">
+        SELECT <include refid="allColumns"/>
+          FROM async_task
+         WHERE id = #{id}
+    </select>
+
+    <!-- 分页由 PaginationInnerInterceptor 追加 LIMIT 与 COUNT，SQL 不写 LIMIT -->
+    <select id="pageList" resultType="com.cloudai.task.entity.AsyncTask">
+        SELECT <include refid="allColumns"/>
+          FROM async_task
+        <where>
+            <if test="status != null">
+                status = #{status}
+            </if>
+            <if test="taskType != null and taskType != ''">
+                AND task_type = #{taskType}
+            </if>
+            <if test="submitBy != null and submitBy != ''">
+                AND submit_by = #{submitBy}
+            </if>
+        </where>
+         ORDER BY create_time DESC, id DESC
+    </select>
+
+    <!-- uk_type_biz 等值探针：biz_key 非空时查重，NULL 键不入本查询（多 NULL 共存=不查重） -->
+    <select id="findByTypeBiz" resultType="com.cloudai.task.entity.AsyncTask">
+        SELECT <include refid="allColumns"/>
+          FROM async_task
+         WHERE task_type = #{taskType} AND biz_key = #{bizKey}
+         LIMIT 1
+    </select>
+
+    <insert id="save" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO async_task (task_type, biz_key, status, progress, params, retry_count, max_retries,
+                                timeout_seconds, submit_by, submit_source, create_time, update_time)
+        VALUES (#{taskType}, #{bizKey}, #{status}, #{progress}, #{params}, #{retryCount}, #{maxRetries},
+                #{timeoutSeconds}, #{submitBy}, #{submitSource}, NOW(), NOW())
+    </insert>
+
+    <!-- 认领候选：显式 LIMIT 是认领取数语义（取容量内前 n 条排队行），非分页查询——
+         idx_status_create 等值+排序一次索引完成 -->
+    <select id="listQueuedIds" resultType="long">
+        SELECT id
+          FROM async_task
+         WHERE status = 0
+         ORDER BY create_time, id
+         LIMIT #{limit}
+    </select>
+
+    <!-- CAS 认领：条件写 0→1 落 start_time/executor_id；多实例/并发竞争下 affected&lt;候选数 -->
+    <update id="claimTasks">
+        UPDATE async_task
+           SET status = 1,
+               start_time = NOW(),
+               executor_id = #{executorId},
+               update_time = NOW()
+         WHERE id IN
+        <foreach collection="ids" item="item" open="(" separator="," close=")">
+            #{item}
+        </foreach>
+           AND status = 0
+    </update>
+
+    <!-- 回查本批认领行：executor_id+status 双条件，竞争下只取到自己实际认领的行 -->
+    <select id="listClaimed" resultType="com.cloudai.task.entity.AsyncTask">
+        SELECT <include refid="allColumns"/>
+          FROM async_task
+         WHERE executor_id = #{executorId} AND status = 1
+           AND id IN
+        <foreach collection="ids" item="item" open="(" separator="," close=")">
+            #{item}
+        </foreach>
+    </select>
+
+    <!-- 进度条件写：仅执行中行可更新（终态后迟到的进度写为空更新，无害） -->
+    <update id="updateProgress">
+        UPDATE async_task
+           SET progress = #{progress},
+               phase = #{phase},
+               update_time = NOW()
+         WHERE id = #{id} AND status = 1
+    </update>
+
+    <!-- 终态推进：动态列（失败带 errorMsg、成功带 result、取消全空）+ finish_time；
+         条件写仅执行中行可进终态（看门狗/执行线程/清扫竞争时空更新无害） -->
+    <update id="updateTerminal">
+        UPDATE async_task
+        <set>
+            status = #{status},
+            <if test="errorMsg != null">
+                error_msg = #{errorMsg},
+            </if>
+            <if test="result != null">
+                result = #{result},
+            </if>
+            finish_time = NOW(),
+            update_time = NOW(),
+        </set>
+         WHERE id = #{id} AND status = 1
+    </update>
+
+    <!-- 排队中取消：直接置已取消终态，立即生效 -->
+    <update id="cancelQueued">
+        UPDATE async_task
+           SET status = 4,
+               finish_time = NOW(),
+               update_time = NOW()
+         WHERE id = #{id} AND status = 0
+    </update>
+
+    <!-- 执行中协作式取消：仅置标志，handler 下一检查点响应后转终态 -->
+    <update id="flagCancelRunning">
+        UPDATE async_task
+           SET cancel_requested = 1,
+               update_time = NOW()
+         WHERE id = #{id} AND status = 1
+    </update>
+
+    <!-- 手动重试端点：失败/已取消回排队，进度/错误/结果/取消标志/执行轨迹全清 -->
+    <update id="retryTask">
+        UPDATE async_task
+           SET status = 0,
+               progress = 0,
+               phase = NULL,
+               result = NULL,
+               error_msg = NULL,
+               cancel_requested = 0,
+               retry_count = retry_count + 1,
+               start_time = NULL,
+               finish_time = NULL,
+               executor_id = NULL,
+               update_time = NOW()
+         WHERE id = #{id} AND status IN (3, 4)
+    </update>
+
+    <!-- 自动重试（执行异常且 retry_count&lt;max_retries）：执行中行原子重置回队尾，进度清零 -->
+    <update id="requeueFailed">
+        UPDATE async_task
+           SET status = 0,
+               progress = 0,
+               phase = NULL,
+               error_msg = NULL,
+               cancel_requested = 0,
+               retry_count = retry_count + 1,
+               start_time = NULL,
+               finish_time = NULL,
+               executor_id = NULL,
+               update_time = NOW()
+         WHERE id = #{id} AND status = 1
+    </update>
+
+    <!-- 启动孤儿恢复：重启前仍执行中的行重置回排队重跑；cancel_requested 保留
+         （执行中被请求取消的行恢复后 handler 首个检查点即转取消，保持用户取消意图） -->
+    <update id="requeueRunning">
+        UPDATE async_task
+           SET status = 0,
+               executor_id = NULL,
+               start_time = NULL,
+               update_time = NOW()
+         WHERE status = 1
+    </update>
+
+    <!-- 僵尸兜底：超时+300s 宽限仍执行中=本地看门狗漏网（Future 丢失等），清扫任务判死 -->
+    <select id="listZombieRunning" resultType="com.cloudai.task.entity.AsyncTask">
+        SELECT <include refid="allColumns"/>
+          FROM async_task
+         WHERE status = 1
+           AND TIMESTAMPADD(SECOND, timeout_seconds + 300, start_time) &lt; NOW()
+         ORDER BY id
+         LIMIT #{limit}
+    </select>
+
+    <!-- 终态行保留期物理清理：分批推进（每分钟一茬），待处理/执行中行永不删 -->
+    <delete id="deleteTerminalBefore">
+        DELETE FROM async_task
+         WHERE status IN (2, 3, 4)
+           AND finish_time &lt; #{cutoff}
+         LIMIT #{limit}
+    </delete>
+</mapper>

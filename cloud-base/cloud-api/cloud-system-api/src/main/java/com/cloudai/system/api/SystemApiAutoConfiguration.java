@@ -1,6 +1,7 @@
 package com.cloudai.system.api;
 
 import com.cloudai.system.api.fallback.DataPermClientFallbackFactory;
+import com.cloudai.system.api.fallback.NotifyClientFallbackFactory;
 import com.cloudai.system.api.fallback.SystemUserClientFallbackFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -22,5 +23,11 @@ public class SystemApiAutoConfiguration {
     @Bean
     public DataPermClientFallbackFactory dataPermClientFallbackFactory() {
         return new DataPermClientFallbackFactory();
+    }
+
+    /** 站内信发送客户端降级（契约 2026-11-10-task-center-api §11：任务中心失败告警链） */
+    @Bean
+    public NotifyClientFallbackFactory notifyClientFallbackFactory() {
+        return new NotifyClientFallbackFactory();
     }
 }

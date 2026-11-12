@@ -26,6 +26,7 @@ import AgentChatView from '../views/agents/chat/index.vue'
 import McpManageView from '../views/mcp/manage/index.vue'
 import NotifyManageView from '../views/system/notify/index.vue'
 import InnerSecretManageView from '../views/system/innerSecret/index.vue'
+import TaskAsyncView from '../views/task/async/index.vue'
 
 /** path → 组件注册表（静态 import，键 = sys_menu.path 约定值） */
 export const VIEW_REGISTRY: Record<string, Component> = {
@@ -55,7 +56,9 @@ export const VIEW_REGISTRY: Record<string, Component> = {
   // 通知管理（菜单 19，契约 2026-11-08-notify-api §5 种子）
   '/system/notify': NotifyManageView,
   // inner 密钥管理（菜单 22，契约 2026-11-09-inner-secret-admin-api §6 种子）
-  '/system/inner-secret': InnerSecretManageView
+  '/system/inner-secret': InnerSecretManageView,
+  // 任务中心-异步任务（菜单 401 挂顶级目录「任务中心」40 下，契约 2026-11-10-task-center-api §10 种子）
+  '/task/async': TaskAsyncView
 }
 
 /** 按 path 解析视图组件：未注册 → NotFound 兜底（不报错，设计 D5） */

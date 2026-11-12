@@ -38,6 +38,13 @@ spring:
             - Path=/system/mcp/**
           filters:
             - SetStatus=403
+        # 任务提交面屏蔽（契约 2026-11-10-task-center-api §1）：/inner/task 仅服务间共享密钥面
+        - id: inner-block-task
+          uri: no://op
+          predicates:
+            - Path=/task/inner/**
+          filters:
+            - SetStatus=403
         - id: cloud-sso
           uri: lb://cloud-sso
           predicates:
@@ -54,6 +61,12 @@ spring:
           uri: lb://cloud-bpmn
           predicates:
             - Path=/bpmn/**
+          filters:
+            - StripPrefix=1
+        - id: cloud-task
+          uri: lb://cloud-task
+          predicates:
+            - Path=/task/**
           filters:
             - StripPrefix=1
         - id: cloud-base-ai

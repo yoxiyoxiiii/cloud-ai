@@ -62,7 +62,9 @@ const TEST_PERMS = `system:e2e:test${stamp}`
  *  19/196-199 为通知中心轮新增（19 C「通知管理」perms system:notify:list path /system/notify 挂 10 系统管理下 +
  *  196/197/198/199 F 模板 add/edit/remove/send 四按钮挂 19 下——契约 2026-11-08-notify-api 菜单种子段，全 is_builtin=1）；
  *  22/200/201 为密钥轮换轮新增（22 C「密钥管理」perms system:innerSecret:list path /system/inner-secret 挂 10 下 +
- *  200/201 F 立即轮换/作废两按钮挂 22 下——契约 2026-11-09-inner-secret-admin-api 菜单种子段，全 is_builtin=1）
+ *  200/201 F 立即轮换/作废两按钮挂 22 下——契约 2026-11-09-inner-secret-admin-api 菜单种子段，全 is_builtin=1）；
+ *  40/401/402/403/404 为任务中心轮新增（40 M「任务中心」icon Timer 挂根 sort 5 + 401 C「异步任务」perms task:asyncTask:list
+ *  path /task/async icon List + 402/403/404 F 取消/重试/提交演示三按钮挂 401 下——契约 2026-11-10-task-center-api §10 菜单种子段，全 is_builtin=1）
  *  互指义务：与 run-role-e2e.mjs R5a 的 SEED_MENU_IDS 各自维护、改菜单种子段时 grep 两脚本同步改
  *  （有意不进 lib/harness.mjs——harness 保持业务零知识，计划 E1 共享常量决策） */
 const SEED_MENU_IDS = [
@@ -76,6 +78,7 @@ const SEED_MENU_IDS = [
   '22', '200', '201',
   '20', '21', '211',
   '30', '31', '32', '33', '311', '312', '321', '331', '34', '341',
+  '40', '401', '402', '403', '404',
 ]
 
 const MENU_PATH = '/system/menu'
@@ -228,7 +231,7 @@ try {
     const labels = []
     for (let i = 0; i < count; i++) labels.push((await menuItems.nth(i).innerText()).trim())
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→通知管理→密钥管理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→MCP服务管理→工作台（AI 对话轮 18 段「对话」+ 知识库管理轮 182「知识库」+ 平台 Agent 管理轮 186「智能体管理」/190「智能体对话」+ MCP Server 管理轮 191「MCP服务管理」+ 通知中心轮 19「通知管理」+ 密钥轮换轮 22「密钥管理」入序）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,异步任务,工作台', '侧边菜单顺序应为 用户管理→角色管理→菜单管理→字典管理→部门管理→数据权限→死信治理→通知管理→密钥管理→请假申请→我的审批→待办任务→流程定义→对话→知识库→智能体管理→智能体对话→MCP服务管理→异步任务→工作台（AI 对话轮 18 段「对话」+ 知识库管理轮 182「知识库」+ 平台 Agent 管理轮 186「智能体管理」/190「智能体对话」+ MCP Server 管理轮 191「MCP服务管理」+ 通知中心轮 19「通知管理」+ 密钥轮换轮 22「密钥管理」+ 任务中心轮 40/401「异步任务」入序）')
     await page.locator('.el-menu-item', { hasText: '菜单管理' }).click()
     await page.waitForURL(`**${MENU_PATH}`, { timeout: 8000 })
     await waitTableIdle(page)
@@ -618,7 +621,7 @@ try {
     }
     const rowCount = await page.locator('.el-table__row').count()
     log(`  清理后总行数: ${rowCount}`)
-    // E1 迁移（宽松语义）：行数 ≥ SEED_MENU_IDS.length 且树 id ⊇ SEED_MENU_IDS（内置种子全量，Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段 + 平台 Agent 管理轮 186-190 段 + MCP Server 管理轮 191-195 段 + 通知中心轮 19/196-199 段 + 密钥轮换轮 22/200/201 段；树表无 id 列，经树端点全量收集），
+    // E1 迁移（宽松语义）：行数 ≥ SEED_MENU_IDS.length 且树 id ⊇ SEED_MENU_IDS（内置种子全量，Round I +34/341 + 数据权限轮 15/16 段 + 死信治理轮 17 段 + AI 对话轮 18 段 + 知识库管理轮 182-185 段 + 平台 Agent 管理轮 186-190 段 + MCP Server 管理轮 191-195 段 + 通知中心轮 19/196-199 段 + 密钥轮换轮 22/200/201 段 + 任务中心轮 40/401-404 段；树表无 id 列，经树端点全量收集），
     // 不再锁「恰 23 行」上限——后续加内置菜单种子只改 SEED_MENU_IDS 一处
     assert(rowCount >= SEED_MENU_IDS.length, `清理后菜单树应 ≥ ${SEED_MENU_IDS.length} 行（内置种子全量，M5b 保护后零变更），实际 ${rowCount}`)
     const treeIds = []

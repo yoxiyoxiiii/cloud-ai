@@ -565,7 +565,7 @@ try {
     const labels = []
     for (let i = 0; i < n; i++) labels.push((await items.nth(i).innerText()).trim())
     log(`  菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台', '侧边菜单顺序（密钥轮换轮后 19 项形态：Round I 31 改造 + 34 新增 + 15/16 部门/数据权限 + 17 死信治理 + 18 段对话 + 182 知识库 + 186/190 智能体 + 191 MCP服务管理 + 19 通知管理 + 22 密钥管理）')
+    assertEq(labels.join(','), '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,异步任务,工作台', '侧边菜单顺序（任务中心轮后 20 项形态：Round I 31 改造 + 34 新增 + 15/16 部门/数据权限 + 17 死信治理 + 18 段对话 + 182 知识库 + 186/190 智能体 + 191 MCP服务管理 + 19 通知管理 + 22 密钥管理 + 40/401 任务中心/异步任务）')
     assertEq(((await page.locator('.el-menu-item.is-active').innerText()) || '').trim(), '请假申请', `${LEAVE_PATH} 下请假申请应高亮`)
     const bc = await breadcrumbTexts(page)
     log(`  面包屑: ${JSON.stringify(bc)}`)
