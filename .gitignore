@@ -16,3 +16,9 @@ logs/
 
 # Playwright MCP 会话工件目录（截图/快照，验收后删，不入库）
 .playwright-mcp/
+
+# Nacos 配置本地备份（含密钥真值，绝不入库；备份/恢复脚本见 cloud-base/scripts/nacos/）
+cloud-base/nacos-local/
+
+# 各服务本地兜底配置（backup_nacos_config.py 自动生成，含密钥真值，勿手改勿提交）
+application-local.yml
