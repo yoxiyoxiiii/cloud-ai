@@ -19,6 +19,7 @@ import java.util.List;
  * 可配列锚 ApprovalVo（title 不在字段中 → IllegalStateException 启动失败，D17 单一实现）；
  * 可过滤列锚 BpmnApproval entity（字段存在 + 类型匹配断言，D32——createTime 遍历类层级
  * 命中 BaseEntity）。
+ * @author jy-root
  */
 @Component
 public class DataPermColumnDeclarationRunner implements ApplicationRunner {

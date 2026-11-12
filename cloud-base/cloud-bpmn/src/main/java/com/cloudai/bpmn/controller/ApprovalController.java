@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.RestController;
  * 行级/列级语义由 2026-10-10-dataperm-component-api §3 取代）。三读路径按当前登录人
  * 数据权限求值（列表行集 + title 列级；详情/图数据 IDOR 收口 4018）；撤销校验序
  * 4010→4012→4011（Service 层）。
+ * @author jy-root
  */
 @RestController
 @RequestMapping("/approval")
