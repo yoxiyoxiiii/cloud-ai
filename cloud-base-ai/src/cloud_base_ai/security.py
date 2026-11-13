@@ -18,7 +18,7 @@ contextvar，供 service 层做可见性求值（管理豁免 + 授权命中）�
 
 import logging
 from collections.abc import Awaitable, Callable
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -66,9 +66,18 @@ class Identity:
 _current_identity: ContextVar[Identity | None] = ContextVar("current_identity", default=None)
 
 
-def set_current_identity(identity: Identity | None) -> None:
-    """设置当前请求身份（require_perms 内调用；测试可直接 set 模拟登录态）。"""
-    _current_identity.set(identity)
+def set_current_identity(identity: Identity | None) -> Token[Identity | None]:
+    """设置当前请求身份（require_perms 内调用；测试可直接 set 模拟登录态）。
+
+    返回 ContextVar token 供调用方在 finally 中复位——MCP 认证中间件按请求注入/
+    复位身份时成对使用（reset_current_identity）。
+    """
+    return _current_identity.set(identity)
+
+
+def reset_current_identity(token: Token[Identity | None]) -> None:
+    """复位请求身份到 set 之前的值（与 set_current_identity 成对使用）。"""
+    _current_identity.reset(token)
 
 
 def current_identity() -> Identity | None:

@@ -114,9 +114,24 @@ class RedisSettings(BaseModel):
     """
 
     hosts: str = "127.0.0.1"
-    # 7000 = redis-cluster 容器（单节点集群，AI 消息存储）；6379 单机容器归 Java 侧会话，
-    # 两者并存互不影响
+    # 7000 = redis-cluster 容器（单节点集群，AI 消息存储）；6379 单机容器归 Java 侧会话
+    # （消费方见 SsoRedisSettings），两者并存互不影响
     port: int = 7000
+    password: str = ""
+
+
+class SsoRedisSettings(BaseModel):
+    """Java 侧会话 Redis 连接参数（单机 6379，MCP 认证中间件读 sso:online:{jti}）。
+
+    与上方集群段是两个独立客户端/两个独立库：7000 集群存 AI 消息，6379 单机存
+    Java 在线会话。会话在默认 db 0，不加 db 键。默认本机事实值零配置即连。
+
+    env 覆盖形态：CLOUD_BASE_AI_SSO_REDIS__HOST / __PORT / __PASSWORD。
+    消费方 redis_client.get_sso_redis_client()；agent 服务进程不消费（无影响）。
+    """
+
+    host: str = "127.0.0.1"
+    port: int = 6379
     password: str = ""
 
 
@@ -133,6 +148,7 @@ class Settings(BaseSettings):
     mcp: McpSettings = McpSettings()
     db: DatabaseSettings = DatabaseSettings()
     redis: RedisSettings = RedisSettings()
+    sso_redis: SsoRedisSettings = SsoRedisSettings()
     app_port: int = 8010  # uvicorn 监听与注册实例端口同源
 
     model_config = SettingsConfigDict(

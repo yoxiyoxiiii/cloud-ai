@@ -1,7 +1,9 @@
-"""RAG 服务入口（cloud-base-rag :8011）：只挂 rag 域 routers。
+"""RAG 服务入口（cloud-base-rag :8011）：rag 域 routers + MCP server 端点 /mcp。
 
 双服务拆分后本模块与 agent_app.py 是两个独立进程的入口（原全量入口 main.py
 已删除）；infra（config/db/redis 等）与 .env 两服务共享。
+/mcp 暴露 rag_search_kb 工具（双主体认证，网关屏蔽 /ai/rag/mcp，agent 直连；
+契约 2026-11-13-rag-mcp-tools-api.md）。
 """
 
 import os
@@ -29,6 +31,7 @@ from cloud_base_ai.config import get_settings
 from cloud_base_ai.db import dispose_engine
 from cloud_base_ai.exception_handler import register_exception_handlers
 from cloud_base_ai.nacos_registration import NacosRegistration
+from cloud_base_ai.rag.mcp_tools import build_mcp_asgi_app
 from cloud_base_ai.rag.router import kb_delete_router
 from cloud_base_ai.rag.router import kb_read_router
 from cloud_base_ai.rag.router import kb_router
@@ -37,14 +40,20 @@ from cloud_base_ai.rag.router import router as rag_router
 from cloud_base_ai.rag.router import session_router
 from cloud_base_ai.response import R
 
+# MCP 子应用模块级构造（/mcp 端点；内部路径 /，mount 前缀即对外路径）
+mcp_asgi = build_mcp_asgi_app()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """startup 注册 Nacos（失败降级不阻断）→ yield → shutdown 先注销再关 DB 连接池（幂等）。"""
+    """startup 注册 Nacos（失败降级不阻断）→ 进入 MCP 会话管理器 lifespan →
+    yield → 先退 MCP lifespan（优雅终结束中会话）再注销 Nacos、关 DB 连接池（幂等）。"""
     registration = NacosRegistration(get_settings())
     await registration.start()
     app.state.nacos = registration
-    yield
+    # Mount 不传播子应用 lifespan，须手动进入（fastmcp 会话管理器任务组在此启停）
+    async with mcp_asgi.lifespan(mcp_asgi):
+        yield
     await registration.stop()
     await dispose_engine()  # DB 连接池优雅关停
 
@@ -57,6 +66,7 @@ app.include_router(kb_router)  # 知识库创建（ai:kb:add）
 app.include_router(kb_read_router)  # 知识库读端点（ai:kb:list）
 app.include_router(kb_update_router)  # 知识库编辑端点（ai:kb:update）
 app.include_router(kb_delete_router)  # 知识库删除端点（ai:kb:delete）
+app.mount("/mcp", mcp_asgi)  # MCP server 端点（双主体认证；网关屏蔽 /ai/rag/mcp）
 
 
 @app.get("/demo/ping")

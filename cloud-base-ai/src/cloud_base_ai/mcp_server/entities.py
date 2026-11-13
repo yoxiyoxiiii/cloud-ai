@@ -4,7 +4,9 @@
 两表：ai_mcp_server——外部/内置 server 连接配置的真相源。凭据红线：headers_json 只收
 非敏感字面值，真值一律走 credential_headers_json 引用 .env 键名
 （CLOUD_BASE_AI_MCP__SERVERS__<NAME>__<KEY>），本实体永不持有凭据真值。内置行
-（is_builtin=1）不可删不可改名——name 是凭据命名空间锚点。
+（is_builtin=1）= 平台内置 MCP 服务（cloud-system、cloud-base-rag 等平台内服务），
+不可删不可改名——name 是凭据命名空间锚点；内置行只能经种子 SQL 落（管理面建行恒
+is_builtin=0）。
 ai_mcp_server_grant——server 级用户授权（默认拒绝 + 管理豁免，2026-10-30 权限轮）。
 """
 
@@ -61,7 +63,7 @@ class AiMcpServer(Base, AuditMixin, SoftDeleteMixin):
     name: Mapped[str] = mapped_column(
         String(30), nullable=False,
         comment="服务名（大写蛇形，全局唯一；兼作凭据env键段 CLOUD_BASE_AI_MCP__SERVERS__<NAME>__*；"
-                "SYSTEM=内置平台服务",
+                "SYSTEM/RAG=平台内置服务占用）",
     )
     description: Mapped[str | None] = mapped_column(
         String(512), comment="描述（管理面备注，可选）",
@@ -88,7 +90,8 @@ class AiMcpServer(Base, AuditMixin, SoftDeleteMixin):
     )
     is_builtin: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, server_default=text("0"),
-        comment="内置标记：1=平台 cloud-system 服务（不可删不可改名；调用头自动注入用户JWT+服务密钥）",
+        comment="内置标记：1=平台内置 MCP 服务（cloud-system、cloud-base-rag 等平台内服务；"
+                "不可删不可改名；调用头自动注入用户JWT+服务密钥）",
     )
     status: Mapped[int] = mapped_column(
         SmallInteger, nullable=False, server_default=text("0"),

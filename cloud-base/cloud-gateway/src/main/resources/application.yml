@@ -38,6 +38,13 @@ spring:
             - Path=/system/mcp/**
           filters:
             - SetStatus=403
+        # RAG MCP 面屏蔽（契约 2026-11-13-rag-mcp-tools-api §1.1）：agent 侧直连 8011，不外露网关
+        - id: mcp-block-ai-rag
+          uri: no://op
+          predicates:
+            - Path=/ai/rag/mcp/**
+          filters:
+            - SetStatus=403
         # 任务提交面屏蔽（契约 2026-11-10-task-center-api §1）：/inner/task 仅服务间共享密钥面
         - id: inner-block-task
           uri: no://op

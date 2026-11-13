@@ -2,6 +2,7 @@
 
 > 状态：随 MCP Server 整合轮（设计 `docs/superpowers/specs/2026-10-17-mcp-server-integration-design.md`）定稿。
 > 变更入口：契约问题由架构 agent 修订，Java 侧（cloud-system）与 Python 侧（cloud-base-ai）不得单方改。
+> 2026-11-13 起本文件只覆盖 **Java 工具面（cloud-system /mcp）**；Python 工具面（cloud-base-rag /mcp）见关联契约 §7。
 > 术语：MCP = Model Context Protocol（AI 工具调用协议，JSON-RPC 2.0）；tool = 服务端暴露的可调用工具；perms = `sys_menu.perms` 权限标识快照。
 
 ## 1. 通道与认证
@@ -170,3 +171,7 @@
 | 协议层 | JSON-RPC 错误 | 记日志 + 5009 |
 
 错误码 5009/5010 为 AI 段 5xxx 接续（5001-5008 已占用），常量在 `cloud_base_ai/mcp/` 模块顶部成对声明。
+
+## 7. 关联契约（2026-11-13 补记）
+
+平台第二个内置 MCP 服务（cloud-base-rag :8011 `/mcp`，工具 `rag_search_kb`）的通道、认证、工具语义与错误码定稿于独立契约 `2026-11-13-rag-mcp-tools-api.md`——其 §1 认证报文形态逐字沿用本文件 §1.3（HTTP 401 + `{"code":401,"msg":"MCP 认证失败","data":null}`），校验实现差异（Java 验签 / Python 会话身份源）与 kb 级可见性强制的语义以该文件为准。本文件各节继续作为 cloud-system 工具面（`system_query_users` / `system_query_dict_items`）的唯一真相源，不受影响。

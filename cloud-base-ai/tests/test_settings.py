@@ -208,3 +208,26 @@ def test_redis_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     s = Settings(_env_file=None)
     assert s.redis.hosts == "10.0.0.5, 10.0.0.6"
     assert s.redis.password == "secret"
+
+
+def test_sso_redis_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """sso_redis 段默认值：Java 会话单机库本机 6379、无密码（与消息集群 7000 并存）。
+
+    先 delenv 再断言（同 redis 段先例）：防 uv run 注入的真实 .env 使默认值翻转。
+    """
+    for key in ("HOST", "PORT", "PASSWORD"):
+        monkeypatch.delenv(f"CLOUD_BASE_AI_SSO_REDIS__{key}", raising=False)
+    s = Settings(_env_file=None)
+    assert s.sso_redis.host == "127.0.0.1"
+    assert s.sso_redis.port == 6379
+    assert s.sso_redis.password == ""
+
+
+def test_sso_redis_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """sso_redis 段 env 覆盖（CLOUD_BASE_AI_SSO_REDIS__*，嵌套分隔 "__"）。"""
+    monkeypatch.setenv("CLOUD_BASE_AI_SSO_REDIS__HOST", "10.0.0.7")
+    monkeypatch.setenv("CLOUD_BASE_AI_SSO_REDIS__PORT", "6380")
+    monkeypatch.setenv("CLOUD_BASE_AI_SSO_REDIS__PASSWORD", "secret")
+    s = Settings(_env_file=None)
+    assert (s.sso_redis.host, s.sso_redis.port, s.sso_redis.password) == \
+        ("10.0.0.7", 6380, "secret")

@@ -41,12 +41,14 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
     private static final String BEARER_PREFIX = "Bearer ";
 
     /** 前缀白名单：登录/刷新、demo、inner 与 MCP 屏蔽（SetStatus 路由接管）、网关自身监控。
-     *  inner 各项带尾斜杠做段感知匹配——否则 startsWith 会误吞同级前缀路径（如 /system/inner-secret/** 管理端点会被跳过鉴权）。 */
+     *  inner 各项带尾斜杠做段感知匹配——否则 startsWith 会误吞同级前缀路径（如 /system/inner-secret/** 管理端点会被跳过鉴权）。
+     *  MCP 屏蔽项无尾斜杠（同 /system/mcp 先例）：rag 域无 /mcp 同级前缀兄弟路径，无误吞面；
+     *  白名单使屏蔽路由跳过 JWT 鉴权——未带凭证请求也得 403 而非 401，屏蔽语义稳定。 */
     private static final List<String> WHITELIST = List.of(
             "/sso/auth/login", "/sso/auth/refresh",
             "/sso/demo", "/system/demo", "/bpmn/demo", "/task/demo",
             "/sso/inner/", "/system/inner/", "/bpmn/inner/", "/task/inner/",
-            "/system/mcp",
+            "/system/mcp", "/ai/rag/mcp",
             "/actuator"
     );
 

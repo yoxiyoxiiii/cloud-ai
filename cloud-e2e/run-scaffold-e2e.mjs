@@ -126,8 +126,18 @@ try {
     log('[T4] SKIP —— 无头模式全屏行为未定（升级设计 §8.5）')
   } else {
     await step('T4', '全屏：进入 fullscreenElement 非空 → 再点退出为 null', async () => {
+      // 全屏 API 要求文档焦点（窗口前台）；CDP 点击在后台窗口也生效，但焦点被用户操作
+      // 抢走时 requestFullscreen 会静默失败（fullscreenElement 恒 null 至超时）。点击前
+      // 主动置前 + 失败一次重试，吸收与人工使用机器并发的前台焦点竞态（断言本身不变）。
+      await page.bringToFront()
       await page.locator('.navbar-fullscreen').click()
-      await waitUntil(() => page.evaluate(() => document.fullscreenElement !== null), 6000, '进入全屏')
+      try {
+        await waitUntil(() => page.evaluate(() => document.fullscreenElement !== null), 6000, '进入全屏')
+      } catch (e) {
+        await page.bringToFront()
+        await page.locator('.navbar-fullscreen').click()
+        await waitUntil(() => page.evaluate(() => document.fullscreenElement !== null), 6000, '进入全屏（重试）')
+      }
       await page.locator('.navbar-fullscreen').click()
       await waitUntil(() => page.evaluate(() => document.fullscreenElement === null), 6000, '退出全屏')
     })

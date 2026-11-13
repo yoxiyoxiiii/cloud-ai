@@ -254,19 +254,19 @@ CREATE TABLE ai_agent_run_log
 -- MCP 服务注册表：外部/内置 server 连接配置的真相源（非敏感字段入库；凭据真值在 .env 键
 -- CLOUD_BASE_AI_MCP__SERVERS__<NAME>__<KEY>，DB 只存键名在 credential_headers_json——红线）。
 -- uk_name 兼查重与重名兜底（软删墓碑占键时新建同名报业务码，沿 ai_agent.uk_name 先例）；
--- name 兼凭据 env 键段与管理命名空间，'SYSTEM' 为内置平台服务占用；
+-- name 兼凭据 env 键段与管理命名空间，'SYSTEM'/'RAG' 为平台内置服务占用；
 -- 列表 ORDER BY id DESC 全表扫管理面规模（个位数到十位数）接受，不建额外索引（同 ai_agent 取舍）。
 CREATE TABLE ai_mcp_server
 (
     id                     BIGINT       NOT NULL AUTO_INCREMENT COMMENT 'MCP服务ID（主键）',
-    name                   VARCHAR(30)  NOT NULL COMMENT '服务名（大写蛇形，全局唯一；兼作凭据env键段 CLOUD_BASE_AI_MCP__SERVERS__<NAME>__*；SYSTEM=内置平台服务',
+    name                   VARCHAR(30)  NOT NULL COMMENT '服务名（大写蛇形，全局唯一；兼作凭据env键段 CLOUD_BASE_AI_MCP__SERVERS__<NAME>__*；SYSTEM/RAG=平台内置服务占用）',
     description            VARCHAR(512) NULL COMMENT '描述（管理面备注，可选）',
     url                    VARCHAR(512) NOT NULL COMMENT 'MCP端点地址（http/sse 的完整 URL；内置服务默认 http://127.0.0.1:9202/mcp）',
     transport              VARCHAR(20)  NOT NULL DEFAULT 'http' COMMENT '传输类型：http=streamable HTTP sse=SSE 事件流（stdio 本轮不开放，管理面拒绝保存）',
     headers_json           TEXT         NULL COMMENT '非敏感静态请求头 JSON（字面值入库；secret/token 一律走 credential_headers_json 引用 .env，红线）',
     credential_headers_json TEXT        NULL COMMENT '凭据请求头 JSON：{header名: .env键名}——只存键名不存真值；键名须匹配 ^CLOUD_BASE_AI_MCP__SERVERS__[A-Z0-9_]+__[A-Z0-9_]+$',
     timeout_ms             INT          NOT NULL DEFAULT 30000 COMMENT '单次调用超时毫秒（1000..120000）',
-    is_builtin             TINYINT      NOT NULL DEFAULT 0 COMMENT '内置标记：1=平台 cloud-system 服务（不可删不可改名；调用头自动注入用户JWT+服务密钥）',
+    is_builtin             TINYINT      NOT NULL DEFAULT 0 COMMENT '内置标记：1=平台内置 MCP 服务（cloud-system、cloud-base-rag 等平台内服务；不可删不可改名；调用头自动注入用户JWT+服务密钥）',
     status                 TINYINT      NOT NULL DEFAULT 0 COMMENT '状态：0=启用 1=停用（停用后其工具对 agent 运行不可见，行与工具行保留）',
     create_by              VARCHAR(30)  NULL COMMENT '创建人',
     create_time            DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间（DB 时钟生成）',
@@ -278,10 +278,13 @@ CREATE TABLE ai_mcp_server
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
   COMMENT ='MCP服务注册表（外部/内置 server 连接配置；凭据真值在 .env 不入库）';
 
--- 内置行：cloud-system /mcp 端点（is_builtin=1 不可删不可改名；url 部署差异时管理员可编辑）。
--- 内置行的调用头自动注入当次用户 JWT + X-MCP-Client-Secret（.env 既有键），credential_headers_json 恒 NULL。
+-- 内置行两行（is_builtin=1 不可删不可改名；url 部署差异时管理员可编辑）：
+-- SYSTEM=cloud-system /mcp；RAG=cloud-base-rag /mcp（rag_search_kb 检索工具，
+-- 2026-11-13 轮）。内置行的调用头自动注入当次用户 JWT + X-MCP-Client-Secret
+-- （.env 既有键），credential_headers_json 恒 NULL。
 INSERT INTO ai_mcp_server (id, name, description, url, transport, timeout_ms, is_builtin, status) VALUES
-(1, 'SYSTEM', '平台内置 cloud-system MCP 服务', 'http://127.0.0.1:9202/mcp', 'http', 30000, 1, 0);
+(1, 'SYSTEM', '平台内置 cloud-system MCP 服务', 'http://127.0.0.1:9202/mcp', 'http', 30000, 1, 0),
+(2, 'RAG', '平台内置 cloud-base-rag 检索服务', 'http://127.0.0.1:8011/mcp', 'http', 30000, 1, 0);
 
 -- ========== MCP Server 用户级权限（2026-10-30 MCP server 权限轮，增量脚本 2026-10-30-mcp-server-permission.sql） ==========
 -- 契约 docs/superpowers/contracts/2026-10-30-mcp-server-permission-api.md；设计 2026-10-30-mcp-server-permission-design.md §1.1
@@ -307,7 +310,8 @@ CREATE TABLE ai_mcp_server_grant
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_general_ci
   COMMENT ='MCP服务用户授权（纯关系表：物理删除，随保存全删全插；默认拒绝+管理豁免，运行面实时求值）';
 
--- 初始授权一行：内置 SYSTEM server 授内置管理员角色（sys_role id=1，基线种子恒存在）。
--- 管理员本就持 ai:mcp:list 豁免，此行价值是授权状态在面板可见、豁免口径收紧时不回退
--- 管理员可用性（设计 §1.3 取舍）；业务用户上线后需管理员手工授权（默认拒绝的已接受代价）。
-INSERT INTO ai_mcp_server_grant (server_id, subject_type, subject_id) VALUES (1, 0, 1);
+-- 初始授权两行：SYSTEM 与 RAG 两个内置 server 各授内置管理员角色（sys_role id=1，
+-- 基线种子恒存在）。管理员本就持 ai:mcp:list 豁免，此行价值是授权状态在面板可见、
+-- 豁免口径收紧时不回退管理员可用性（设计 §1.3 取舍）；业务用户上线后需管理员手工
+-- 授权（默认拒绝的已接受代价）。
+INSERT INTO ai_mcp_server_grant (server_id, subject_type, subject_id) VALUES (1, 0, 1), (2, 0, 1);
