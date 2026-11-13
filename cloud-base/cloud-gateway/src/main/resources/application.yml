@@ -69,10 +69,18 @@ spring:
             - Path=/task/**
           filters:
             - StripPrefix=1
-        - id: cloud-base-ai
-          uri: lb://cloud-base-ai
+        # AI 基座双服务拆分（2026-11-13）：/ai 首段按域路由——rag 域知识检索、
+        # agent 域编排 + MCP server 注册表；前端三组路径（/ai/rag|agent|mcp）零改动
+        - id: ai-rag
+          uri: lb://cloud-base-rag
           predicates:
-            - Path=/ai/**
+            - Path=/ai/rag/**
+          filters:
+            - StripPrefix=1
+        - id: ai-agent
+          uri: lb://cloud-base-agent
+          predicates:
+            - Path=/ai/agent/**,/ai/mcp/**
           filters:
             - StripPrefix=1
       globalcors:

@@ -334,8 +334,10 @@ async function menuLabels() {
   return out
 }
 
-const SIDEBAR_17 = '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,工作台'
-const SIDEBAR_16 = '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,工作台'
+// 侧边两形态与聚合脚本同源：20 项全量（系统管理 9 + 流程管理 4 + AI 助手 5 + 任务中心异步任务 + 工作台）
+// 与 19 项收窄（无 ai:mcp:list 时 MCP服务管理 不可见）
+const SIDEBAR_20 = '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,MCP服务管理,异步任务,工作台'
+const SIDEBAR_19 = '用户管理,角色管理,菜单管理,字典管理,部门管理,数据权限,死信治理,通知管理,密钥管理,请假申请,我的审批,待办任务,流程定义,对话,知识库,智能体管理,智能体对话,异步任务,工作台'
 
 /** 等编辑弹窗回显完成（详情端点异步，防空表单覆盖后误断言） */
 async function waitEcho(inputLocator, expected, timeout = 5000) {
@@ -349,7 +351,7 @@ const SRV = `E2E_${ts}` // 服务名（契约 §1 大写蛇形；e2e_ 前缀纪�
 
 try {
   // ================= MC1 管理页全链路 =================
-  await step('MC1', '管理页：菜单可达(17项) → 内置行形态 → JSON 导入新增(键位大写化+测试连接两态) → 搜索 → 同步 → 工具审核(5028+发布) → 编辑 → 状态开关 → 删除', async () => {
+  await step('MC1', '管理页：菜单可达(20项) → 内置行形态 → JSON 导入新增(键位大写化+测试连接两态) → 搜索 → 同步 → 工具审核(5028+发布) → 编辑 → 状态开关 → 删除', async () => {
     const r = await login(page, 'admin', 'admin123')
     assert(r.ok, `admin 登录应成功（真实 sso/system 链路）: ${r.msg || ''}`)
     await page.locator('.sidebar-menu').waitFor({ state: 'visible', timeout: 10000 })
@@ -357,7 +359,7 @@ try {
     // a. 侧边可达性：注入种子入序（MCP服务管理 在智能体对话后、工作台前——契约 §6 17 项串）
     const labels = await menuLabels()
     log(`  侧边菜单项: ${JSON.stringify(labels)}`)
-    assertEq(labels.join(','), SIDEBAR_17, `侧边菜单顺序应为 17 项形态（MCP服务管理入 AI 助手序），实际 ${JSON.stringify(labels)}`)
+    assertEq(labels.join(','), SIDEBAR_20, `侧边菜单顺序应为 20 项形态（与聚合脚本一致：通知管理/密钥管理/异步任务入序），实际 ${JSON.stringify(labels)}`)
     await page.locator('.el-menu .el-menu-item', { hasText: 'MCP服务管理' }).click()
     await page.waitForURL(`**${MANAGE_PATH}`, { timeout: 8000 })
     assertEq((await breadcrumbTexts(page)).join('/'), '首页/MCP服务管理', '面包屑应为 首页/MCP服务管理')
@@ -561,14 +563,14 @@ try {
   })
 
   // ================= MC2 权限收敛（无任何 ai:mcp:*） =================
-  await step('MC2', '权限收敛：无 ai:mcp:* → 「MCP服务管理」菜单不可见（16 项形态）→ 查询接口 403（R body code）', async () => {
+  await step('MC2', '权限收敛：无 ai:mcp:* → 「MCP服务管理」菜单不可见（19 项形态）→ 查询接口 403（R body code）', async () => {
     grantMode = 'none'
     // 整页重载触发权限快照与导航树按新授权重建（me/user-nav 增广读 grantMode）；
     // /dashboard 为静态路由恒可达，作侧边形态观察点
     await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
     await page.locator('.sidebar-menu').waitFor({ state: 'visible', timeout: 10000 })
     const labels = await menuLabels()
-    assertEq(labels.join(','), SIDEBAR_16, `无 ai:mcp:list 时侧边应回 16 项形态（MCP服务管理 不可见），实际 ${JSON.stringify(labels)}`)
+    assertEq(labels.join(','), SIDEBAR_19, `无 ai:mcp:list 时侧边应回 19 项形态（MCP服务管理 不可见），实际 ${JSON.stringify(labels)}`)
     await shot(page, 'mcp2-no-perm.png')
     // 接口执法：mock 层 403（R 约定 HTTP 恒 200、code 在 body）
     const r403 = await page.evaluate(async () => {

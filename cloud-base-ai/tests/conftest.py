@@ -1,4 +1,4 @@
-"""pytest 共享配置：Windows 事件循环策略对齐 main.py + anyio 插件接线（spec D9）。
+"""pytest 共享配置：Windows 事件循环策略对齐入口模块（rag_app/agent_app）+ anyio 插件接线。
 
 anyio 随 fastapi 传递依赖在装且自带 pytest11 entry point——async 测试零新增插件依赖；
 模块级 pytestmark = pytest.mark.anyio 驱动。若 pytest 9 与 anyio 插件不兼容（实现时验证），

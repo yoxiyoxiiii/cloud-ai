@@ -12,7 +12,13 @@ from pathlib import Path
 from cloud_base_ai.config import Settings, get_settings
 
 
-def test_defaults() -> None:
+def test_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 先 delenv 再断言（同 llm 段先例）：rag_app/agent_app 入口模块 import 时会向进程
+    # env 注入服务名/端口（setdefault），测试进程收集期 import 过入口即被污染——
+    # 隔离后本用例专测「无任何覆盖时的默认值」
+    for key in ("SERVICE_NAME", "IP"):
+        monkeypatch.delenv(f"CLOUD_BASE_AI_NACOS__{key}", raising=False)
+    monkeypatch.delenv("CLOUD_BASE_AI_APP_PORT", raising=False)
     s = Settings(_env_file=None)
     assert s.nacos.server_addr == "127.0.0.1:8848"
     assert s.nacos.namespace_id == ""

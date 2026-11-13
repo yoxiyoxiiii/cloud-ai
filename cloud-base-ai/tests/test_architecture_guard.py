@@ -220,3 +220,47 @@ def test_no_debug_calls_left_in_src(name: str) -> None:
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == name:
                 bad.append(f"{_rel(path)}:{node.lineno}")
     assert not bad, f"src 里残留了 {name}()，请改用 logging：\n" + "\n".join(bad)
+
+
+# ---------- 规则 8：rag / agent 双服务域互禁交叉引用 ----------
+
+
+def _in_domain(path: Path, *domains: str) -> bool:
+    """文件是否落在给定域包目录内（按直接父目录名判定，入口模块在包根不属于任何域）。"""
+    return path.parent.name in domains
+
+
+def _matches_pkg(module: str, pkg: str) -> bool:
+    """import 的模块名是否指向 pkg 包自身或其子模块（段边界匹配，防 mcp 误吞 mcp_server）。"""
+    return module == pkg or module.startswith(pkg + ".")
+
+
+def test_rag_domain_does_not_import_agent_domain() -> None:
+    """rag 域不得 import agent / mcp_server / mcp 任何一个包。
+
+    双服务拆分后 rag 与 agent（含 mcp_server、mcp 工具面）是两个独立进程的
+    代码边界，跨界 import 会让拆分名存实亡。共享定义放 common 包。
+    入口模块（rag_app/agent_app）在包根，天然不受本规则限制。
+    """
+    rag_files = [p for p in _py_files() if _in_domain(p, "rag")]
+    assert rag_files, "没找到 rag/ 域文件，扫描路径可能错了"
+    bad = _violations(
+        rag_files,
+        lambda m: (
+            _matches_pkg(m, "cloud_base_ai.agent")
+            or _matches_pkg(m, "cloud_base_ai.mcp_server")
+            or _matches_pkg(m, "cloud_base_ai.mcp")
+        ),
+    )
+    assert not bad, "rag 域跨界依赖了 agent 域（agent/mcp_server/mcp），共享模型应放 common：\n" + "\n".join(bad)
+
+
+def test_agent_domain_does_not_import_rag() -> None:
+    """agent 域（agent / mcp_server / mcp）不得 import rag 包。
+
+    同上反向：rag 是另一个进程的域，编译期禁止依赖。
+    """
+    agent_files = [p for p in _py_files() if _in_domain(p, "agent", "mcp_server", "mcp")]
+    assert agent_files, "没找到 agent/ 域文件，扫描路径可能错了"
+    bad = _violations(agent_files, lambda m: _matches_pkg(m, "cloud_base_ai.rag"))
+    assert not bad, "agent 域跨界依赖了 rag，共享模型应放 common：\n" + "\n".join(bad)

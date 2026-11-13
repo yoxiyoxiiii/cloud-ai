@@ -6,11 +6,9 @@ AI 对话轮（2026-10-13）首个实现：字段名与契约 2026-10-13-ai-rag-
 """
 
 from datetime import datetime
-from typing import Annotated, Generic, Literal, TypeVar
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
-
-T = TypeVar("T")
+from pydantic import BaseModel, Field, field_validator
 
 
 class RagChatMessage(BaseModel):
@@ -78,16 +76,9 @@ class ReembeddingReq(BaseModel):
                                       ge=0)
 
 
-class VoTimeMixin(BaseModel):
-    """出参时间统一 'yyyy-MM-dd HH:mm:ss'（对齐 Java Jackson 全局格式，前端展示口径一致）。
-
-    check_fields=False：mixin 自身不声明时间字段，由具体 VO 提供（缺字段时装饰器不报错）。
-    """
-
-    @field_serializer("create_time", "update_time", check_fields=False)
-    @classmethod
-    def _ser_time(cls, v: datetime | None) -> str | None:
-        return v.strftime("%Y-%m-%d %H:%M:%S") if v else None
+# 分页容器与时间 mixin 真源已迁 common/schemas.py（双服务拆分后共享定义唯一去处）；
+# 此处 re-export 保域内既有导入路径（router/service 从 rag.schemas 取）不变
+from cloud_base_ai.common.schemas import AiPageResult, VoTimeMixin  # noqa: F401
 
 
 class KbVo(VoTimeMixin):
@@ -112,11 +103,6 @@ class KbFileVo(VoTimeMixin):
     file_chunk_overlap: int
 
 
-class AiPageResult(BaseModel, Generic[T]):
-    """AI 域分页容器：total 为 JSON number（与 Java 域 PageResult 的 total string 并存不互用）。"""
-
-    total: int
-    rows: list[T]
 
 
 # ---------- 会话管理（2026-10-19 会话管理轮，契约 2026-10-19-ai-chat-session-api.md §2/§3/§5） ----------

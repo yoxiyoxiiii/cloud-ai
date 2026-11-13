@@ -14,7 +14,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field, field_validator
 
 from cloud_base_ai.mcp.secrets import CREDENTIAL_KEY_PATTERN
-from cloud_base_ai.rag.schemas import AiPageResult, VoTimeMixin
+from cloud_base_ai.common.schemas import AiPageResult, VoTimeMixin
 
 __all__ = [
     "AiPageResult",

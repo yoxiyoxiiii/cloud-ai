@@ -2,7 +2,7 @@
 agent 经外部 server 真跑 + 内置行同步/停用应急开关 + server 级订阅绑定真跑
 （停用缩窄 + 缓存失效实证）+ 清理。
 
-自包含可重跑：脚本自行拉起两个子进程（cloud-base-ai 服务 + 冒烟外部 MCP server），
+自包含可重跑：脚本自行拉起两个子进程（cloud-base-agent 服务 + 冒烟外部 MCP server），
 凭据经「真实环境变量优先于 .env」注入子进程环境（SMOKETEST/SMOKEEXT 键不落 .env，
 env 链路即被真实验证）；结束（含失败）finally 回收两个子进程。
 
@@ -17,7 +17,7 @@ env 链路即被真实验证）；结束（含失败）finally 回收两个子�
 用法（仓库根执行）：
     C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-ai python cloud-base-ai/scripts/smoke/smoke_mcp_server_mgmt.py
 前置：cloud-system(:9202)/cloud-sso(:9201)/cloud-gateway(:18080)/Redis/MySQL/Nacos
-      在运行；端口 8010（本冒烟占用拉起服务，可用 SMOKE_AI_PORT 覆盖）与 9399 空闲；
+      在运行；端口 8012（本冒烟占用拉起 agent 服务，可用 SMOKE_AI_PORT 覆盖）与 9399 空闲；
       .env 配置 CLOUD_BASE_AI_MCP__CLIENT_SECRET 与 CLOUD_BASE_AI_LLM__*（agent 真跑）。
 
 全程 ASCII 输出（Windows GBK 控制台坑）；client-secret/JWT 绝不打印。
@@ -200,11 +200,11 @@ async def main() -> int:
         print("[FAIL] client-secret not configured (.env CLOUD_BASE_AI_MCP__CLIENT_SECRET empty)")
         return 1
 
-    ai_port = int(os.environ.get("SMOKE_AI_PORT", "8010"))
+    ai_port = int(os.environ.get("SMOKE_AI_PORT", "8012"))
     ext_port = 9399
     ai_base = f"http://127.0.0.1:{ai_port}"
     ext_url = f"http://127.0.0.1:{ext_port}/mcp"
-    for port, who in [(ai_port, "cloud-base-ai service"), (ext_port, "smoke external mcp")]:
+    for port, who in [(ai_port, "cloud-base-agent service"), (ext_port, "smoke external mcp")]:
         if not port_free(port):
             print(f"[FAIL] port {port} occupied, free it first (needed by {who})")
             return 1
@@ -218,16 +218,16 @@ async def main() -> int:
     child_env[SECRET_KEY] = cfg.client_secret
     child_env[EXT_TOKEN_KEY] = f"Bearer {admin_jwt}"
 
-    service = spawn([sys.executable, "-m", "uvicorn", "cloud_base_ai.main:app",
+    service = spawn([sys.executable, "-m", "uvicorn", "cloud_base_ai.agent_app:app",
                      "--host", "127.0.0.1", "--port", str(ai_port)],
                     child_env, "smoke_ai_service.log")
     ext_server = spawn([sys.executable, str(BASE_DIR / "scripts/smoke/smoke_external_mcp_server.py"),
                         str(ext_port)], child_env, "smoke_ext_mcp.log")
     try:
         if not wait_http(f"{ai_base}/openapi.json"):
-            ok(False, "cloud-base-ai service ready on port", str(ai_port))
+            ok(False, "cloud-base-agent service ready on port", str(ai_port))
             return 1
-        print(f"[OK] cloud-base-ai service up on :{ai_port}")
+        print(f"[OK] cloud-base-agent service up on :{ai_port}")
         if not await wait_mcp_endpoint(ext_url):
             ok(False, "smoke external mcp server ready", ext_url)
             return 1

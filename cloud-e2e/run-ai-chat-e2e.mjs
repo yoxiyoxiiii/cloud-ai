@@ -207,15 +207,16 @@ try {
     const r = await login(page, 'admin', 'admin123')
     assert(r.ok, `admin 登录应成功（种子 18/181 已落库的前提锚）: ${r.msg || ''}`)
     await page.locator('.sidebar-menu').waitFor({ state: 'visible', timeout: 10000 })
-    // 侧边：AI 助手为第 3 个根目录（M sort 4，default-openeds 全 M 展开——子项初始即可见）
+    // 侧边：4 个 M 根目录（任务中心轮菜单 40 后新增第 4 根；default-openeds 全 M 展开——子项初始即可见）
     const subTitles = page.locator('.el-menu .el-sub-menu__title')
     const stn = await subTitles.count()
     const stLabels = []
     for (let i = 0; i < stn; i++) stLabels.push((await subTitles.nth(i).innerText()).trim())
     log(`  侧边目录(M): ${JSON.stringify(stLabels)}`)
-    assertEq(stLabels.join(','), '系统管理,流程管理,AI 助手', `侧边目录应为 系统管理,流程管理,AI 助手（AI 助手 M sort 4 在最后），实际 ${JSON.stringify(stLabels)}`)
-    const menuItem = page.locator('.el-menu .el-menu-item', { hasText: '对话' })
-    assertEq(await menuItem.count(), 1, `侧边应恰 1 个「对话」菜单项，实际 ${await menuItem.count()}`)
+    assertEq(stLabels.join(','), '系统管理,流程管理,AI 助手,任务中心', `侧边目录应为 系统管理,流程管理,AI 助手,任务中心（任务中心 M sort 5 在最后），实际 ${JSON.stringify(stLabels)}`)
+    // 精确匹配：AI 助手下已并有「智能体对话」子项，hasText 子串匹配会命中 2 个
+    const menuItem = page.locator('.el-menu .el-menu-item:text-is("对话")')
+    assertEq(await menuItem.count(), 1, `侧边应恰 1 个「对话」菜单项（精确匹配），实际 ${await menuItem.count()}`)
     await menuItem.click()
     await page.waitForURL(`**${CHAT_PATH}`, { timeout: 8000 })
     // 空态文案锚（mock 会话列表为空集 → 首屏无会话）
