@@ -1,0 +1,28 @@
+[project]
+name = "cloud-base-agent"
+version = "0.1.0"
+description = "Agent 服务（:8012）：平台智能体管理/运行 + MCP server 注册表与客户端通道，依赖共享底座 cloud-ai-common（path dependency）"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cloud-ai-common",
+    "deepagents>=0.7.23",
+    "fastapi[standard]>=0.143.0",
+    "fastmcp>=4.1.0",
+    "langchain>=1.4.4",
+    "langchain-classic>=1.0.8",
+    "python-dotenv>=1.2.4",
+]
+
+[tool.uv.sources]
+cloud-ai-common = { path = "../cloud-ai-common", editable = true }
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "pytest>=9.1.1",
+]

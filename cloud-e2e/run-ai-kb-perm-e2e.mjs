@@ -3,7 +3,7 @@
  *
  * 运行前提：gateway 18080 / sso 9201 / system 9202 已启动（admin 登录链走真实网关，
  * 同 run-ai-kb-e2e.mjs 分层先例）；前端 dev 5173 已启动。
- * **cloud-base-ai 8010 不需要起**——授权两端点与三数据源端点全部在浏览器网络层
+ * **AI 服务 8011/8012 不需要起**——授权两端点与三数据源端点全部在浏览器网络层
  * route mock（fulfill 假 R JSON）；AC5/AC6 连登录链也 mock（list-only 用户为剧本态，
  * 真实环境无此账号）。
  * 运行：cd cloud-e2e && npm run e2e:kbperm（单跑，不进 e2e 聚合——同 e2e:aikb 口径）；
@@ -377,7 +377,7 @@ try {
   h.summary({
     extras: [
       `\n测试数据: 零后端写（kb perms 端点与三数据源端点全 mock 内存态；AC5/AC6 登录链 mock 剧本账号 e2e_perm_viewer_${TS}）；admin 种子账号只登录不改，种子菜单零触碰`,
-      'mock 面: admin ctx 拦 /api/ai/** + subject-options + dept/tree（登录链真实网关）；AC5/AC6 ctx 拦 /api/**（含 sso 登录链）——cloud-base-ai 8010 未依赖',
+      'mock 面: admin ctx 拦 /api/ai/** + subject-options + dept/tree（登录链真实网关）；AC5/AC6 ctx 拦 /api/**（含 sso 登录链）——AI 服务 8011/8012 未依赖',
     ],
   })
   await browser.close()

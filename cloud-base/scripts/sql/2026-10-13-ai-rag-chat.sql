@@ -1,5 +1,5 @@
 -- =====================================================================
--- AI 对话菜单种子（cloud-base-ai RAG 入门案例——LLM 流式对话，2026-10-13）
+-- AI 对话菜单种子（AI 基座 RAG 服务（现 cloud-base-rag）入门案例——LLM 流式对话，2026-10-13）
 -- 设计 docs/superpowers/specs/2026-10-13-ai-rag-chat-design.md（D13）
 -- 契约 docs/superpowers/contracts/2026-10-13-ai-rag-chat-api.md（§6.1）
 -- 一段：顶级 M「AI 助手」id=18 + 子菜单 C「对话」id=181（perms ai:chat:list，

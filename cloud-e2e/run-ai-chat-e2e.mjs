@@ -3,7 +3,7 @@
  * 会话四端点与 §6 入参换轨）
  *
  * 运行前提：后端 gateway 18080 / sso 9201 / system 9202（种子 18/181 已落库）已启动；前端 dev 5173 已启动。
- * **cloud-base-ai 8010 不需要起**——SSE 流与会话四端点均在浏览器网络层 route mock（route mock 分层，
+ * **AI 服务 8011/8012 不需要起**——SSE 流与会话四端点均在浏览器网络层 route mock（route mock 分层，
  * 同 run-ai-kb-e2e.mjs 先例；登录链走真实网关/sso/system），零真实 LLM 依赖。
  * 运行：cd cloud-e2e && npm run e2e:aichat（单跑，不进 run-e2e.mjs 聚合）；E2E_HEADLESS=1 无头。
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码。
@@ -398,7 +398,7 @@ try {
   h.summary({
     extras: [
       '\n测试数据: 零后端写（会话四端点 + stream 全在 route mock 内存态，脚本结束即清）；admin 种子账号只登录不改，种子菜单 18/181 零触碰',
-      'mock 面: page.route(**/api/ai/**)——session 四端点 fulfill 假 R JSON、stream fulfill 假 SSE 流（登录链走真实网关/sso/system），cloud-base-ai 8010 未依赖',
+      'mock 面: page.route(**/api/ai/**)——session 四端点 fulfill 假 R JSON、stream fulfill 假 SSE 流（登录链走真实网关/sso/system），AI 服务 8011/8012 未依赖',
       '注记（AC7）: mock 层只验前端行为（换轨请求形态/乐观更新/回显渲染/删除收敛）；真实落档/回显/服务端改题由后端 P7 网关全链实证',
     ],
   })

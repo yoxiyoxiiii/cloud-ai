@@ -2,7 +2,7 @@
  * 平台 Agent 管理 e2e（契约 2026-10-29-agent-platform-api §2 管理面 + §3 运行 + §4 会话 + §5 菜单种子）
  *
  * 运行前提：gateway 18080 / sso 9201 / system 9202 已启动（登录链走真实网关）；前端 dev 已启动。
- * **cloud-base-ai 8010 与菜单种子 186-190 入库均不需要**——agent 域 14 端点全在浏览器网络层
+ * **AI 服务 8011/8012 与菜单种子 186-190 入库均不需要**——agent 域 14 端点全在浏览器网络层
  * route mock（内存态，沿 run-ai-chat-e2e.mjs 分层先例；2026-10-31 修订增 §2.8 options 端点）；
  * 菜单 186/190 与 ai:agent:* 权限经
  * user-nav / auth/me 响应增广注入（route.fetch 真实透传后补种，幂等——种子入库后注入自动跳过，
@@ -731,7 +731,7 @@ try {
   h.summary({
     extras: [
       '\n测试数据: 智能体/会话全在 route mock 内存态（零后端写，脚本结束即清）；admin 种子账号只登录不改，种子菜单零触碰',
-      'mock 面: /api/ai/agent/** 14 端点内存态 + user-nav/auth/me 真实透传增广（186/190 与 ai:agent:* 注入，种子入库后幂等跳过）；登录链走真实 gateway/sso/system，cloud-base-ai 8010 未依赖',
+      'mock 面: /api/ai/agent/** 14 端点内存态 + user-nav/auth/me 真实透传增广（186/190 与 ai:agent:* 注入，种子入库后幂等跳过）；登录链走真实 gateway/sso/system，AI 服务 8011/8012 未依赖',
       '注记: mock 层只验前端行为（请求形态/渲染/权限收敛/403 消费）；真实落库/DeepAgent 执行/服务端权限执法由后端章与集成期真跑覆盖',
     ],
   })

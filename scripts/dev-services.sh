@@ -12,7 +12,8 @@
 #   cloud-sso     9201   java -jar
 #   cloud-system  9202   java -jar
 #   cloud-bpmn    9203   java -jar
-#   cloud-base-ai 8010   uvicorn（uv 绝对路径——不在 Git Bash PATH）
+#   cloud-base-rag   8011  uvicorn（uv 绝对路径——不在 Git Bash PATH）
+#   cloud-base-agent 8012  uvicorn（同上；AI 基座拆分后双服务独立工程独立 venv）
 #   cloud-gateway 18080  java -jar（最后起）
 #   cloud-web     5173   npm run dev（前端，与网关并级最后）
 #
@@ -54,7 +55,6 @@ find_uv() {
   return 1
 }
 
-AI_CMD="" # 延迟解析（start 时才找 uv）
 GATEWAY_NAME="cloud-gateway"
 GATEWAY_PORT=18080
 GATEWAY_CMD="java -jar cloud-base/cloud-gateway/target/cloud-gateway-1.0.0-SNAPSHOT.jar"
@@ -122,7 +122,8 @@ cmd_status() {
   printf "%-14s %-7s %-8s %s\n" "SERVICE" "PORT" "STATE" "PID"
   local row name port
   for row in "${SERVICES[@]}" \
-    "cloud-base-ai|8010|" \
+    "cloud-base-rag|8011|" \
+    "cloud-base-agent|8012|" \
     "$GATEWAY_NAME|$GATEWAY_PORT|" \
     "$WEB_NAME|$WEB_PORT|"; do
     name="${row%%|*}"; port="$(echo "$row" | cut -d'|' -f2)"
@@ -146,18 +147,15 @@ cmd_start() {
     wait_port "$port" "${row%%|*}" 90
   done
 
-  echo "==> 启动 AI 基座 cloud-base-ai (:8010)"
-  if [ -z "$AI_CMD" ]; then
-    local uv
-    if uv="$(find_uv)"; then
-      AI_CMD="$uv run --project cloud-base-ai uvicorn cloud_base_ai.main:app --host 127.0.0.1 --port 8010"
-    else
-      echo "  [FAIL ] 未找到 uv（候选路径均不存在）——AI 基座跳过，其余继续"
-    fi
-  fi
-  if [ -n "$AI_CMD" ]; then
-    start_one "cloud-base-ai" 8010 "$AI_CMD"
-    wait_port 8010 "cloud-base-ai" 60
+  echo "==> 启动 AI 基座（cloud-base-rag :8011 → cloud-base-agent :8012）"
+  local uv
+  if uv="$(find_uv)"; then
+    start_one "cloud-base-rag" 8011 "$uv run --project cloud-base-rag uvicorn cloud_base_rag.app:app --host 127.0.0.1 --port 8011"
+    wait_port 8011 "cloud-base-rag" 60
+    start_one "cloud-base-agent" 8012 "$uv run --project cloud-base-agent uvicorn cloud_base_agent.app:app --host 127.0.0.1 --port 8012"
+    wait_port 8012 "cloud-base-agent" 60
+  else
+    echo "  [FAIL ] 未找到 uv（候选路径均不存在）——AI 基座跳过，其余继续"
   fi
 
   echo "==> 启动网关 $GATEWAY_NAME (:$GATEWAY_PORT，最后起)"
@@ -188,7 +186,8 @@ cmd_stop() {
   echo "==> 停止全部服务（前端 → 网关 → AI 基座 → 业务服务）"
   kill_port "$WEB_NAME" "$WEB_PORT"
   kill_port "$GATEWAY_NAME" "$GATEWAY_PORT"
-  kill_port "cloud-base-ai" 8010
+  kill_port "cloud-base-rag" 8011
+  kill_port "cloud-base-agent" 8012
   local row
   for ((idx = ${#SERVICES[@]} - 1; idx >= 0; idx--)); do
     row="${SERVICES[$idx]}"

@@ -1,0 +1,27 @@
+[project]
+name = "cloud-ai-common"
+version = "0.1.0"
+description = "AI 基座共享底座库：db 事务基建、统一返回、鉴权身份核心、Redis 集群客户端、Nacos 注册、chat 模型工厂（path dependency 供 cloud-base-rag / cloud-base-agent 引用）"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "aiomysql>=0.3.2",
+    "fastapi>=0.143.0",
+    "langchain-openai>=1.7.0",
+    "nacos-sdk-python>=3.2.0",
+    "pydantic>=2.14.0",
+    "pydantic-settings>=2.15.0",
+    "redis>=8.1.0",
+    "sqlalchemy[asyncio]>=2.1.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "pymysql>=1.2.3",
+    "pytest>=9.1.1",
+]

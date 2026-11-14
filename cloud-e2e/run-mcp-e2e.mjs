@@ -2,7 +2,7 @@
  * MCP Server 配置化管理 e2e（契约 2026-10-30-mcp-server-mgmt-api §0/§1/§2 管理面九端点 + §5 种子）
  *
  * 运行前提：gateway 18080 / sso 9201 / system 9202 已启动（登录链走真实网关）；前端 dev 已启动。
- * **cloud-base-ai 8010 与菜单种子 191-195 入库均不需要**——mcp 域九端点全在浏览器网络层
+ * **AI 服务 8011/8012 与菜单种子 191-195 入库均不需要**——mcp 域九端点全在浏览器网络层
  * route mock（内存态，沿 run-agent-e2e.mjs 分层先例）；菜单 191 与 ai:mcp:* 权限经
  * user-nav / auth/me 响应增广注入（route.fetch 真实透传后补种，幂等——种子入库后注入自动跳过，
  * 集成期真跑同一脚本不红；none 模式做权威摘除，侧边形态只由 grantMode 决定）。
@@ -594,7 +594,7 @@ try {
   h.summary({
     extras: [
       '\n测试数据: MCP 服务/工具全在 route mock 内存态（零后端写，脚本结束即清）；admin 种子账号只登录不改，种子菜单零触碰',
-      'mock 面: /api/ai/mcp/server/** + /ai/mcp/tool/** 九端点内存态 + user-nav/auth/me 真实透传增广（191 与 ai:mcp:* 注入，种子入库后幂等跳过）；登录链走真实 gateway/sso/system，cloud-base-ai 8010 未依赖',
+      'mock 面: /api/ai/mcp/server/** + /ai/mcp/tool/** 九端点内存态 + user-nav/auth/me 真实透传增广（191 与 ai:mcp:* 注入，种子入库后幂等跳过）；登录链走真实 gateway/sso/system，AI 服务 8011/8012 未依赖',
       '注记: mock 层只验前端行为（请求形态/渲染/键位大写化/权限收敛/403/5028 消费）；真实落库/同步状态机/服务端权限执法由后端章与集成期真跑覆盖',
     ],
   })

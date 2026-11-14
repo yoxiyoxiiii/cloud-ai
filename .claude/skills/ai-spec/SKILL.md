@@ -1,13 +1,27 @@
 ---
 name: ai-spec
-description: AI 基座（cloud-base-ai，Python/FastAPI）开发规范基准——分层依赖、实体/DAO/Service/Router 模板、事务口径（@transactional）、错误码与异常转译、测试姿势、接入外部系统（Milvus/Ollama/MySQL）的检查清单。凡 cloud-base-ai 的后端任务（新增表/新增端点/改 DAO/接入外部系统/写测试）均应触发本技能；Java 服务用 backend-spec，不用本技能。
+description: AI 基座（三工程：cloud-ai-common / cloud-base-rag / cloud-base-agent，Python/FastAPI）开发规范基准——分层依赖、实体/DAO/Service/Router 模板、事务口径（@transactional）、错误码与异常转译、测试姿势、接入外部系统（Milvus/Ollama/MySQL）的检查清单。凡 AI 基座的后端任务（新增表/新增端点/改 DAO/接入外部系统/写测试）均应触发本技能；Java 服务用 backend-spec，不用本技能。
 ---
 
-# AI 基座开发规范（cloud-base-ai）
+# AI 基座开发规范（cloud-ai-common + cloud-base-rag + cloud-base-agent）
 
-本技能是 cloud-base-ai 的编码约定集中地，对应 Java 侧的 `/backend-spec`。机械可检查的规则由 `cloud-base-ai/tests/test_architecture_guard.py` 强制，写错构建即红；本技能补充「守护测试查不到、但常踩坑」的约定。
+本技能是 AI 基座三工程的编码约定集中地，对应 Java 侧的 `/backend-spec`。机械可检查的规则由三份同源的 `tests/test_architecture_guard.py`（每工程一份，规则只增不减）强制，写错测试即红；本技能补充「守护测试查不到、但常踩坑」的约定。
 
 **与 CLAUDE.md 冲突时以 CLAUDE.md 为准。** 注释与文档须遵守 SOP「文档与注释可读性标准」：只写做什么和为什么，决策代号（D1/方案B 等）不裸引用。
+
+## 零、工程形态（2026-11-14 完全拆分）
+
+| 工程 | 角色 | 库 | 端口 |
+|---|---|---|---|
+| `cloud-ai-common/` | 共享底座：db/tx 事务、config 骨架、model_factory/redis_client 单例工厂、security 五头身份、Nacos 注册、schemas 共享模型 | 无（库工程） | 无 |
+| `cloud-base-rag/` | RAG 服务（检索/知识库/对话/MCP 服务端 /mcp） | `cloud_ai_rag` | 8011 |
+| `cloud-base-agent/` | Agent 服务（平台智能体/MCP 客户端与管理面） | `cloud_ai_agent` | 8012 |
+
+- 三工程各自独立 pyproject/lock/venv/.env；服务工程以 **uv path dep editable** 引 `cloud-ai-common`（`[tool.uv.sources]`），改共享库代码后服务侧 `uv sync` 即生效。
+- **settings provider 模式**：共享库 `get_settings()` 委派给注册方；服务 `config.py` 底部 `set_settings_provider(get_settings)` 注册，未注册直接调用即 `RuntimeError`。共享库消费配置的组件（model_factory 等）只依赖 `cloud_ai_common.config`。
+- **工程级路径禁令**（各守护测试规则 8）：工程源码/测试全文禁出现旧单工程包名与兄弟工程包名；共享代码上移 cloud-ai-common，不搞服务间横向 import。
+- **pytest 必须cd 进各工程目录跑**（rootdir 陷阱，仓库根跑会收集报错假绿）：`cd cloud-base-rag && uv run pytest`。uv 用绝对路径（不在 Git Bash PATH）。
+- 每服务一张 DDL 基线：`cloud-base/scripts/sql/2026-11-14-cloud-ai-rag-baseline.sql`（5 表）与 `2026-11-14-cloud-ai-agent-baseline.sql`（8 表+种子）。
 
 ## 一、分层与依赖方向
 
@@ -23,11 +37,11 @@ router  →  service  →  dao  →  entities
 | dao | 只写查询与 flush | commit / rollback / begin（守护测试检查）；import service/router |
 | entities | 表结构映射 | import dao/service/router |
 
-外部系统（Milvus、模型、Nacos）的封装放 `rag/` 下独立模块（如 `vectorstore.py`），由 service 调用，不进 dao。
+分层落位在各服务工程包内（如 `cloud_base_rag.router/service/dao/entities`）；共享的事务基建在 `cloud_ai_common.db`。外部系统（Milvus、Ollama、MinIO、模型）的封装放**服务工程包根**独立模块（如 `cloud_base_rag/vectorstore.py`、`cloud_base_rag/embedding.py`），由 service 调用，不进 dao、不进共享库（共享库只收两服务都消费的底座件）。
 
 ## 二、实体（entities.py）
 
-- 继承 `Base`，按需叠加 `AuditMixin`（审计四列）和 `SoftDeleteMixin`（逻辑删除）。
+- 继承 `Base`（`cloud_ai_common.db.base`），按需叠加 `AuditMixin`（审计四列）和 `SoftDeleteMixin`（逻辑删除）。
 - **每个 `mapped_column` 必须带 `comment=`**（守护测试检查）。Mixin 里的列不在此列。
 - 状态类字段在实体内部建嵌套枚举，名字以 `Enum` 结尾，**字段类型保持 `int`/`str`**，不存枚举实例：
 
@@ -44,7 +58,7 @@ class ChunkTypeEnum(IntEnum):
             return None
 ```
 
-- 表结构以 `cloud-base/scripts/sql/cloud_ai.sql` 为准；改实体必须同步改 DDL，并更新对应的列集断言测试（`tests/test_rag_entities.py`）。
+- 表结构以域 DDL 基线为准（rag 域 `2026-11-14-cloud-ai-rag-baseline.sql`、agent 域 `2026-11-14-cloud-ai-agent-baseline.sql`，均在 `cloud-base/scripts/sql/`）；改实体必须同步改 DDL，并更新对应的列集断言测试（`cloud-base-rag/tests/test_rag_entities.py`、`cloud-base-agent/tests/test_agent_entities.py`）。
 - **改字段名时全仓搜一遍旧名**，包括测试里的构造参数。
 
 ## 三、DAO（dao.py）
@@ -59,7 +73,7 @@ class ChunkTypeEnum(IntEnum):
 
 读操作每个都显式带 `deleted == NORMAL` 过滤。分页用 `_clamp_page`（上限 200，对齐 Java 的 maxLimit）。**dao 不转译异常**，`IntegrityError` 原样上抛，由 service 转业务码。
 
-## 四、事务（db/tx.py）
+## 四、事务（cloud_ai_common.db.tx）
 
 事务边界只在 service 方法上，用 `@transactional`。语义对齐 Spring 的 REQUIRED：
 
@@ -89,26 +103,27 @@ async def create_xxx(req: CreateXxxReq) -> int:
 
 - 业务失败抛 `BusinessException(msg, code)`——**msg 在前，code 在后**，与 Java 习惯相反，别写反。
 - 全局 handler 转成 HTTP 200 + `R{code, msg}`。
-- AI 段错误码是 **5xxx**，在 service 模块顶部以常量声明（`CODE_X` 与 `MSG_X` 成对），接续上一个号分配。当前已用到 5004。
+- AI 段错误码是 **5xxx**，在 service 模块顶部以常量声明（`CODE_X` 与 `MSG_X` 成对），接续上一个号分配。当前已用到 5030。
 - except 块要么记 `logger.error` 再转业务异常，要么第一行就是 `raise` 透传（守护测试检查）。
 - 错误信息里**不得含 API key 和上游原始响应**。
 
 ## 六、Router
 
 - 路由级权限依赖：`APIRouter(prefix=..., dependencies=[Depends(require_perms("ai:xxx:action"))])`。权限标识 `ai:<实体>:<动作>`，需要先在 `sys_menu` 加种子。
+- `require_perms` 与身份五要素在 `cloud_ai_common.security`；域专属豁免口径落各服务自己的 `security.py`（rag 知识库管理豁免 / agent MCP server 豁免）。
 - 返回统一 `R[T]`，两行式：先接结果再 `return R.ok(x)`。
 - 入参出参用 pydantic 对象，不用裸 dict。流式端点（SSE）是已记档的例外。
 - **漏写路由级依赖不会有任何报错，请求会直接放行**——新增或修改 router 后，测试里必须有「无权限返回 403」的用例。
 
 ## 七、测试
 
-- 单测不连真实外部系统：数据库用 SQLite 内存替身（`tests/db_testing.py`）。
+- 单测不连真实外部系统：数据库用 SQLite 内存替身（各工程 `tests/db_testing.py`）。
 - service 层测试用 `make_service_session_factory`，并 `monkeypatch.setattr(tx, "get_session_factory", ...)`。
 - 异步测试：模块顶部 `pytestmark = pytest.mark.anyio`。
 - 写操作的测试用 `async with s.begin():` 包住，读操作如果后面还要 `begin` 也要包，否则隐式事务悬挂。
 - 测试数据名带 `e2e_` 前缀。
 - 每条新增的 dao 动词至少一个用例；软删、审计、唯一键撞重必须有用例。
-- **改完代码跑全量 `pytest`，不要只跑自己改的文件**。
+- **改完代码跑全量 `pytest`，不要只跑自己改的文件**；改了共享库 `cloud-ai-common` 则三工程全量各跑一遍（cd 进各工程目录）。
 
 ## 八、接入外部系统（Milvus / Ollama / 新数据库）
 
@@ -116,12 +131,12 @@ async def create_xxx(req: CreateXxxReq) -> int:
 
 1. 查装机版本的源码或文档确认关键行为，**不凭记忆**。例如 langchain-milvus 的主键类型由 `auto_id` 决定：`auto_id=False` 建 VARCHAR 主键（要求传字符串 id），`auto_id=True` 建 INT64 主键（传字符串会报类型错）。同一个 collection 名第一次建表时的参数会固定表结构，改参数后要先 `drop()`。
 2. 单例工厂用 **`functools.lru_cache`**，不要用 `anyio.functools.lru_cache`（守护测试检查）。
-3. 附一个可单独运行的真连接冒烟脚本，放 `cloud-base-ai/scripts/smoke/`，真跑一次并把输出写进报告。
-4. 连接信息走 `config.py` 的配置对象，不在代码里写死地址。
+3. 附一个可单独运行的真连接冒烟脚本，放**被测域所属工程** `scripts/smoke/`（rag 域 → `cloud-base-rag/`，agent 域 → `cloud-base-agent/`），真跑一次并把输出写进报告。
+4. 连接信息走该工程 `config.py` 的配置对象（.env 键前缀不变 `CLOUD_BASE_AI_`），不在代码里写死地址。
 
 ## 九、检查清单
 
-- [ ] 分层方向对：router 没 import dao；dao 没 commit？
+- [ ] 分层方向对：router 没 import dao；dao 没 commit？没跨工程 import 兄弟包？
 - [ ] 每个 `mapped_column` 有 `comment=`？DDL 同步改了？列集断言测试同步改了？
 - [ ] dao 读路径都带 `deleted` 过滤，写路径走审计公共函数？
 - [ ] service 写方法有 `@transactional`？查重 + `IntegrityError` 兜底两层都有？
@@ -129,5 +144,5 @@ async def create_xxx(req: CreateXxxReq) -> int:
 - [ ] 新增错误码接续编号，常量成对声明？
 - [ ] router 有权限依赖，且有 403 用例？
 - [ ] 用到外部系统写入：补偿策略写进方案，欠账登记进 `docs/handoff/ai.md`？
-- [ ] 全量 `pytest` 全绿（含 `test_architecture_guard.py`）？
+- [ ] 全量 `pytest` 全绿（含 `test_architecture_guard.py`；动了共享库则三工程都跑）？
 - [ ] 注释无裸代号、无意识流长段？

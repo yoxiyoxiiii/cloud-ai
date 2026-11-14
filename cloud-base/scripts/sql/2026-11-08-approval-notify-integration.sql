@@ -6,7 +6,7 @@
 --   INSERT 用 NOT EXISTS（id=3 或 code 重复均拦）。
 -- ⚠️ UPDATE 会覆盖内置模板的本地手工微调（种子纪律：内置模板内容以契约 §2 为准，调整请改模板管理页并知会契约）。
 -- 基线同步：cloud_system.sql 内置模板段已同步同值（新环境免跑本脚本）。
--- 落库脚本 cloud-base-ai/scripts/sql/2026-11-08-approval-notify-apply.py（pymysql utf8mb4）。
+-- 落库脚本 cloud-base/scripts/sql/2026-11-08-approval-notify-apply.py（拆分时自 AI 工程迁入）（pymysql utf8mb4）。
 -- =====================================================================
 USE cloud_system;
 

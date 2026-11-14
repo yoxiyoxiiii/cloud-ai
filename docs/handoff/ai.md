@@ -1,4 +1,4 @@
-# AI 基座（cloud-base-ai）当前欠账
+# AI 基座（cloud-ai-common + cloud-base-rag + cloud-base-agent）当前欠账
 
 只记**仍未兑现**的事项，兑现后删除条目。规则见 `docs/multi-agent-dev-sop.md`「验收挂起规则」。
 
@@ -32,8 +32,9 @@
 
 - **待办**：2026-10-19 集合隔离轮的 e2e 全量回归兜底被系统内存压力中断（跑段 18 PASS / 0 FAIL，
   无失败但不构成全量结论）。本轮零契约变更，回归是轨道拍板加的兜底项非 SOP 强制。
-- **命令**：起 cloud-base-ai 8010（`uv run --project cloud-base-ai uvicorn cloud_base_ai.main:app
-  --host 127.0.0.1 --port 8010`，前置 sso/system/gateway/5173 在运行）后
+- **命令**：起 AI 双服务（`uv run --project cloud-base-rag uvicorn cloud_base_rag.app:app --port 8011`
+  与 `uv run --project cloud-base-agent uvicorn cloud_base_agent.app:app --port 8012`，
+  前置 sso/system/gateway/5173 在运行）后
   `cd cloud-e2e && npm run e2e`——判定只认 `grep -c '[FAIL]'` == 0（harness exit code 不可信）。
 - **预期**：全量场景 0 FAIL；KB 上传/重嵌入/删库场景走新的一库一集合链路不破。
 - **登记日期**：2026-10-19（集合隔离轮收尾）
@@ -75,10 +76,10 @@
   + `Authorization: Bearer <用户 JWT>`。工具可见性真相源是 `ai_tool` 注册表（required_perms
   逗号串，空=登录即可），`mcp/perm.py visible_tools(工具行, 用户perms)` 白名单过滤。
 - **命令**（真连接冒烟，仓库根执行）：
-  `C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-ai python cloud-base-ai/scripts/smoke/smoke_mcp_system.py`
+  `C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-agent python cloud-base-agent/scripts/smoke/smoke_mcp_system.py`
   （通道冒烟，前置：sso/system/gateway/Redis/Nacos 在运行）；
-  `C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-ai python cloud-base-ai/scripts/smoke/smoke_agent_platform.py`
-  （Agent 平台端到端冒烟，另需 cloud-base-ai :8010 与 Redis 集群 7000 在运行）
+  `C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-agent python cloud-base-agent/scripts/smoke/smoke_agent_platform.py`
+  （Agent 平台端到端冒烟，另需 cloud-base-agent :8012 与 Redis 集群 7000 在运行）
 - **预期**：编排已验证真链路（2026-10-29 agent 平台轮 SMOKE PASS：模型真调
   system_query_dict_items、工具明细入运行审计行）；服务端最终权限裁决语义不变
   （PERMISSION_DENIED 走 isError 分支转述给模型）。

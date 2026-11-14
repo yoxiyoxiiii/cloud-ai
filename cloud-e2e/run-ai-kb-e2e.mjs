@@ -3,7 +3,7 @@
  *
  * 运行前提：后端 gateway 18080 / sso 9201 / system 9202（种子 182-185 已落库——184/185 为
  * 编辑/删除按钮权限，admin 须在落库后登录取新 perms 快照）已启动；前端 dev 5173 已启动。
- * **cloud-base-ai 8010 与 Milvus 不需要起**——kb 六端点在浏览器网络层 route mock（fulfill 假 R JSON），
+ * **AI 服务 8011/8012 与 Milvus 不需要起**——kb 六端点在浏览器网络层 route mock（fulfill 假 R JSON），
  * admin 登录走真实网关/sso/system（route mock 分层，同 run-ai-chat-e2e.mjs 先例）。
  * 运行：cd cloud-e2e && npm run e2e:aikb（单跑，不进 e2e 聚合——同 aichat 口径）；E2E_HEADLESS=1 无头。
  * 黑盒纪律：只经 URL 与选择器交互，禁止 import 前端工程内部代码。
@@ -535,7 +535,7 @@ try {
   h.summary({
     extras: [
       '\n测试数据: 零后端写（kb 七端点全 mock 内存态，含 reembedding）；admin 种子账号只登录不改，种子菜单零触碰',
-      'mock 面: page.route(**/api/ai/**) fulfill 假 R JSON（登录链走真实网关/sso/system）——cloud-base-ai 8010 与 Milvus 未依赖',
+      'mock 面: page.route(**/api/ai/**) fulfill 假 R JSON（登录链走真实网关/sso/system）——AI 服务 8011/8012 与 Milvus 未依赖',
     ],
   })
   await browser.close()

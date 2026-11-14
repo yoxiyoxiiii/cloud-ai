@@ -3,7 +3,7 @@
  *
  * 运行前提：gateway 18080 / sso 9201 / system 9202 已启动（admin 登录链走真实网关，
  * 同 run-ai-kb-perm-e2e.mjs 分层先例）；前端 dev 5173 已启动。
- * **cloud-base-ai 8010 不需要起**——授权两端点与三数据源端点全部在浏览器网络层
+ * **AI 服务 8011/8012 不需要起**——授权两端点与三数据源端点全部在浏览器网络层
  * route mock（fulfill 假 R JSON）；菜单 191 与 ai:mcp:* 权限经 user-nav / auth/me
  * 响应增广注入（route.fetch 真实透传后补种，幂等——种子入库后注入自动跳过，
  * 同 run-mcp-e2e.mjs 先例）。
@@ -364,7 +364,7 @@ try {
   h.summary({
     extras: [
       `\n测试数据: 零后端写（授权两端点/管理面列表/三数据源端点全 mock 内存态）；admin 种子账号只登录不改，种子菜单零触碰`,
-      'mock 面: admin ctx 拦 /api/ai/mcp/server/** + subject-options + dept/tree（登录链真实网关）；user-nav/auth/me 真实透传增广（191 与 ai:mcp:list/update 补种，种子入库后幂等跳过）——cloud-base-ai 8010 未依赖',
+      'mock 面: admin ctx 拦 /api/ai/mcp/server/** + subject-options + dept/tree（登录链真实网关）；user-nav/auth/me 真实透传增广（191 与 ai:mcp:list/update 补种，种子入库后幂等跳过）——AI 服务 8011/8012 未依赖',
       '注记: mock 层只验前端行为（回显换轨/勾选/占位/提交 payload/错误分支消费）；真实授权落库与运行面三态由后端章测试矩阵覆盖（契约 §6 分工）',
     ],
   })

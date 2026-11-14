@@ -19,7 +19,7 @@ INNER_SECRET="${INNER_SECRET:?must be set via environment}"
 GW=http://127.0.0.1:18080
 SYS=http://127.0.0.1:9202
 # uv 不在 Git Bash PATH（CLAUDE.md「Commands」），绝对路径
-PY="C:/Users/jy-root/.local/bin/uv.exe run --project cloud-base-ai python"
+PY="C:/Users/jy-root/.local/bin/uv.exe run --project cloud-ai-common python"
 OVERLAP=180
 CACHE_TTL=30
 PASS=0

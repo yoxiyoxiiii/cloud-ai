@@ -8,8 +8,8 @@
 
 安全口径：stdout 只打印配置键名、MD5、大小与双租户差异结论，绝不打印配置内容。
 
-用法：uv run --project cloud-base-ai python cloud-base/scripts/nacos/backup_nacos_config.py
-（依赖 pymysql 经 cloud-base-ai 环境提供；MySQL 连接口径同仓规：127.0.0.1:3306 root 空密码）
+用法：uv run --project cloud-ai-common python cloud-base/scripts/nacos/backup_nacos_config.py
+（依赖 pymysql 经 cloud-ai-common 环境提供（dev 依赖组）；MySQL 连接口径同仓规：127.0.0.1:3306 root 空密码）
 """
 
 import hashlib

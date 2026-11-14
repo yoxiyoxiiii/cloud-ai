@@ -7,7 +7,7 @@
   - stdout 只打印键名与行数，不打印配置内容。
 
 用法：
-  uv run --project cloud-base-ai python cloud-base/scripts/nacos/restore_nacos_config.py [--snapshot <时间戳>] [--dry-run]
+  uv run --project cloud-ai-common python cloud-base/scripts/nacos/restore_nacos_config.py [--snapshot <时间戳>] [--dry-run]
 默认从 current/ 镜像恢复；--snapshot 指定 snapshots/ 下某次快照。
 """
 
