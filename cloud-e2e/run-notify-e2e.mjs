@@ -163,12 +163,13 @@ await page.route('**/api/**', async (route) => {
       ] },
     ])))
   }
-  // dashboard 首屏数据（工作台两请求——mock 空态防后端未起报网络失败；todo 分页轮起返回 PageResult 形态）
-  if (p === '/bpmn/task/todo' && req.method() === 'GET') {
-    return route.fulfill(json(R({ total: '0', rows: [] })))
-  }
-  if (p === '/bpmn/approval/page' && req.method() === 'GET') {
-    return route.fulfill(json(R({ total: '0', rows: [] })))
+  // dashboard 首屏数据（工作台聚合单请求——mock 空段防后端未起报网络失败；段结构见契约 2026-11-14-aggregate-workbench-api §1.2）
+  if (p === '/aggregate/workbench' && req.method() === 'GET') {
+    return route.fulfill(json(R({
+      todo: { status: 200, msg: '操作成功', data: { total: '0', rows: [] } },
+      approval: { status: 200, msg: '操作成功', data: { total: '0', rows: [] } },
+      notify: { status: 200, msg: '操作成功', data: { unreadCount: '0', latestId: '0' } },
+    })))
   }
   // 发送弹窗 options（复用既有 user/role 列表端点——计划 F2 口径）
   if (p === '/system/user/page' && req.method() === 'GET') {

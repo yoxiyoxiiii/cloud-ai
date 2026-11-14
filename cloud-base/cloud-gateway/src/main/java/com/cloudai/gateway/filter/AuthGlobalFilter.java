@@ -46,7 +46,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
      *  白名单使屏蔽路由跳过 JWT 鉴权——未带凭证请求也得 403 而非 401，屏蔽语义稳定。 */
     private static final List<String> WHITELIST = List.of(
             "/sso/auth/login", "/sso/auth/refresh",
-            "/sso/demo", "/system/demo", "/bpmn/demo", "/task/demo",
+            "/sso/demo", "/system/demo", "/bpmn/demo", "/task/demo", "/aggregate/demo",
             "/sso/inner/", "/system/inner/", "/bpmn/inner/", "/task/inner/",
             "/system/mcp", "/ai/rag/mcp",
             "/actuator"

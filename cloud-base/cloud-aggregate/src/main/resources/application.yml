@@ -1,0 +1,40 @@
+server:
+  port: 9205
+
+spring:
+  application:
+    name: cloud-aggregate
+  config:
+    import:
+      - optional:nacos:${spring.application.name}.yaml
+      # 共享配置接线（公共项 cloud-common.yaml，optional 容缺向后安全——纯读服务两者都不消费，接线仅为惯例统一）
+      - optional:nacos:cloud-common.yaml
+  cloud:
+    nacos:
+      server-addr: ${NACOS_ADDR:127.0.0.1:8848}
+    # Feign 降级与超时（契约 §7：connect 1s / read 3s——下游三端点均为快查询，审批段数据权限求值百毫秒级留 10 倍余量）
+    openfeign:
+      circuitbreaker:
+        enabled: true
+      client:
+        config:
+          default:
+            connect-timeout: 1000
+            read-timeout: 3000
+    # TimeLimiter 默认 1s 会截短 read 3s：Feign 已有自身超时，双层冗余关闭之（四胞胎同款处置）；
+    # 熔断执行线程定制（调用线程直跑，保 ThreadLocal 头透传）见 AggregateFeignConfig
+    circuitbreaker:
+      resilience4j:
+        disable-time-limiter: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+# 段并行线程池（cloud.aggregate.*，架构口径非密钥仓库化，Nacos 可覆盖）：
+#   pool-size=8 线程池 core=max（3 段 × 并发请求余量；SynchronousQueue 不堆积 + CallerRuns 池满退化串行）
+cloud:
+  aggregate:
+    pool-size: 8

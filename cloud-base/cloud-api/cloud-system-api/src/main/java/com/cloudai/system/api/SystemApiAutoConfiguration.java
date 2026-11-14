@@ -2,6 +2,7 @@ package com.cloudai.system.api;
 
 import com.cloudai.system.api.fallback.DataPermClientFallbackFactory;
 import com.cloudai.system.api.fallback.NotifyClientFallbackFactory;
+import com.cloudai.system.api.fallback.NotifyUserClientFallbackFactory;
 import com.cloudai.system.api.fallback.SystemUserClientFallbackFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -29,5 +30,11 @@ public class SystemApiAutoConfiguration {
     @Bean
     public NotifyClientFallbackFactory notifyClientFallbackFactory() {
         return new NotifyClientFallbackFactory();
+    }
+
+    /** 未读通知摘要客户端降级（契约 2026-11-14-aggregate-workbench-api §7：聚合服务 notify 段） */
+    @Bean
+    public NotifyUserClientFallbackFactory notifyUserClientFallbackFactory() {
+        return new NotifyUserClientFallbackFactory();
     }
 }

@@ -19,6 +19,7 @@
         <module>cloud-system</module>
         <module>cloud-bpmn</module>
         <module>cloud-task</module>
+        <module>cloud-aggregate</module>
     </modules>
 
     <properties>

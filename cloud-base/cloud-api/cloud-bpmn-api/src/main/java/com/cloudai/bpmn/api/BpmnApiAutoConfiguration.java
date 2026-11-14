@@ -1,6 +1,7 @@
 package com.cloudai.bpmn.api;
 
 import com.cloudai.bpmn.api.fallback.BpmnApprovalClientFallbackFactory;
+import com.cloudai.bpmn.api.fallback.BpmnWorkbenchClientFallbackFactory;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.context.annotation.Bean;
 
@@ -15,5 +16,11 @@ public class BpmnApiAutoConfiguration {
     @Bean
     public BpmnApprovalClientFallbackFactory bpmnApprovalClientFallbackFactory() {
         return new BpmnApprovalClientFallbackFactory();
+    }
+
+    /** 工作台查询客户端降级（契约 2026-11-14-aggregate-workbench-api §7：聚合服务段调用） */
+    @Bean
+    public BpmnWorkbenchClientFallbackFactory bpmnWorkbenchClientFallbackFactory() {
+        return new BpmnWorkbenchClientFallbackFactory();
     }
 }

@@ -31,6 +31,7 @@
     "e2e:innersecret": "node run-inner-secret-e2e.mjs",
     "e2e:approvalnotify": "node run-approval-notify-e2e.mjs",
     "e2e:taskcenter": "node run-task-center-e2e.mjs",
+    "e2e:aggregate": "node run-aggregate-e2e.mjs",
     "serve-artifacts": "node serve-artifacts.mjs"
   },
   "engines": {

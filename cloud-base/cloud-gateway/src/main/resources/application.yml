@@ -76,6 +76,13 @@ spring:
             - Path=/task/**
           filters:
             - StripPrefix=1
+        # 纯读聚合服务（契约 2026-11-14-aggregate-workbench-api §6）：工作台三段单请求出口
+        - id: cloud-aggregate
+          uri: lb://cloud-aggregate
+          predicates:
+            - Path=/aggregate/**
+          filters:
+            - StripPrefix=1
         # AI 基座双服务拆分（2026-11-13）：/ai 首段按域路由——rag 域知识检索、
         # agent 域编排 + MCP server 注册表；前端三组路径（/ai/rag|agent|mcp）零改动
         - id: ai-rag

@@ -1151,17 +1151,18 @@ try {
   })
 
   // ================= BP12 工作台两卡：我的待办 + 我的审批（前 5、状态 tag）+ 双跳转 =================
-  await step('BP12', '/dashboard 两卡标题 + 待办卡行数 = min(5, todo 接口长度) + 我的审批卡行数 = min(5, page 行数) 含本轮 stamp 行与状态 tag + 两「查看全部」分别跳 /bpmn/task、/bpmn/approval', async () => {
-    // 数据链在 onMounted（keep-alive 组件 Dashboard——首访即挂载即拉取；响应等待先注册）
-    const todoP = page.waitForResponse((r) => apiPath(r.url(), '/api/bpmn/task/todo'), { timeout: 15000 })
-    const approvalP = page.waitForResponse((r) => apiPath(r.url(), '/api/bpmn/approval/page'), { timeout: 15000 })
+  await step('BP12', '/dashboard 两卡标题 + 待办卡行数 = min(5, todo 段行数) + 我的审批卡行数 = min(5, approval 段行数) 含本轮 stamp 行与状态 tag + 两「查看全部」分别跳 /bpmn/task、/bpmn/approval', async () => {
+    // 数据链在 onMounted（keep-alive 组件 Dashboard——首访即挂载即拉取；响应等待先注册）。
+    // 工作台数据源 2026-11-14 起为聚合端点单请求（契约 2026-11-14-aggregate-workbench-api §1）：
+    // 整体 code=200 + 三段 status/msg/data——段数据在 data.todo.data / data.approval.data，先断段 status===200 再解包
+    const wbP = page.waitForResponse((r) => apiPath(r.url(), '/api/aggregate/workbench'), { timeout: 15000 })
     await page.goto(`${BASE}/dashboard`, { waitUntil: 'domcontentloaded' })
-    const todoBody = await (await todoP).json()
-    const approvalBody = await (await approvalP).json()
-    assertEq(todoBody.code, 200, 'todo 接口业务码应为 200')
-    assertEq(approvalBody.code, 200, 'approval 分页业务码应为 200')
-    const todoLen = Array.isArray(todoBody.data?.rows) ? todoBody.data.rows.length : 0
-    const approvalLen = Array.isArray(approvalBody.data?.rows) ? approvalBody.data.rows.length : 0
+    const wbBody = await (await wbP).json()
+    assertEq(wbBody.code, 200, '聚合端点业务码应为 200（段级失败不改变整体码）')
+    assertEq(wbBody.data?.todo?.status, 200, 'todo 段 status 应为 200（admin 快照含 bpmn:task:list）')
+    assertEq(wbBody.data?.approval?.status, 200, 'approval 段 status 应为 200（admin 快照含 bpmn:approval:list）')
+    const todoLen = Array.isArray(wbBody.data?.todo?.data?.rows) ? wbBody.data.todo.data.rows.length : 0
+    const approvalLen = Array.isArray(wbBody.data?.approval?.data?.rows) ? wbBody.data.approval.data.rows.length : 0
     // 旧时代（bpmn_leave）待办残留经 §2.1 防御态三重跳过不进列表——todo 长度即平台时代真实待办
     const todoCard = page.locator('.dash-card').filter({ has: page.locator('.el-card__header', { hasText: '我的待办' }) })
     const approvalCard = page.locator('.dash-card').filter({ has: page.locator('.el-card__header', { hasText: '我的审批' }) })
@@ -1172,7 +1173,7 @@ try {
     await sleep(500)
     // ---- 待办卡（title/businessTypeName 行结构；空态走 el-empty 分支） ----
     const todoRowN = await todoCard.locator('.dash-row').count()
-    log(`  待办卡: 行数=${todoRowN}（todo 接口长度=${todoLen} → min(5, ${todoLen})=${Math.min(5, todoLen)}）`)
+    log(`  待办卡: 行数=${todoRowN}（todo 段行数=${todoLen} → min(5, ${todoLen})=${Math.min(5, todoLen)}）`)
     assertEq(todoRowN, Math.min(5, todoLen), `待办卡行数应为 min(5, todo 接口长度)=${Math.min(5, todoLen)}，实际 ${todoRowN}`)
     if (todoLen === 0) {
       const empty = todoCard.locator('.el-empty')
@@ -1188,7 +1189,7 @@ try {
     // ---- 我的审批卡（前 5 + 本轮 stamp 行 + 状态 tag——跨业务超集含全部状态） ----
     const approvalRowN = await approvalCard.locator('.dash-row').count()
     const stampRows = await approvalCard.locator('.dash-row', { hasText: `e2ebpmn${stamp}` }).count()
-    log(`  审批卡: 行数=${approvalRowN} 其中本轮 stamp 行=${stampRows}（approval 接口行数=${approvalLen}）`)
+    log(`  审批卡: 行数=${approvalRowN} 其中本轮 stamp 行=${stampRows}（approval 段行数=${approvalLen}）`)
     assertEq(approvalRowN, Math.min(5, approvalLen), `审批卡行数应为 min(5, 行数)=${Math.min(5, approvalLen)}，实际 ${approvalRowN}`)
     assert(approvalRowN > 0, `审批卡应有数据行（本轮 stamp 单置顶），实际 ${approvalRowN}`)
     assert(stampRows >= 1, `审批卡应含本轮 stamp（e2ebpmn${stamp}）行，实际 ${stampRows}`)

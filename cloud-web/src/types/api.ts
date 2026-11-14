@@ -1922,3 +1922,43 @@ export interface DemoSubmitPayload {
 export interface TaskSubmitResult {
   taskId: string
 }
+
+/* ===== 聚合服务工作台（契约 2026-11-14-aggregate-workbench-api）===== */
+
+/**
+ * 段状态码常量（契约 §2，与整体 code 同语义空间）：前端判断口径统一为
+ * section.status === SECTION_STATUS_OK；msg 是给人看的文案，禁止用于逻辑判断
+ */
+export const SECTION_STATUS_OK = 200
+/** 段无权限（聚合层段准入预判不通过或下游 403）——工作台消费口径：整卡隐藏 */
+export const SECTION_STATUS_FORBIDDEN = 7001
+/** 段下游失败（降级/超时/非 200/403 码）——工作台消费口径：保留卡片、空态区展示段 msg */
+export const SECTION_STATUS_DOWNSTREAM_FAILED = 7002
+
+/**
+ * 聚合段对象（契约 §1.2，三段同构仅 data 类型不同）：status ≠ 200 时 data 恒为 null，
+ * 消费侧只允许在 status===200 分支解引用 data；msg 可直接展示在空态区（转译表见契约 §2）
+ */
+export interface AggregateSectionVo<T> {
+  /** 段状态码（取值见上方 SECTION_STATUS_* 常量） */
+  status: number
+  /** 段状态说明文案（正常为「操作成功」；失败为可读原因，如「cloud-bpmn 服务不可用」） */
+  msg: string
+  /** 段数据；status ≠ 200 时恒为 null */
+  data: T | null
+}
+
+/**
+ * 工作台聚合 VO（契约 §1.2）：三段并置、各自带段级状态，单请求替代工作台页多服务拼装。
+ * 段数据类型复用下游既有定义（TaskVo/ApprovalVo/NotifySummaryVo，字段冻结镜像声明见契约 §3——
+ * 提供方改出参字段须同步该节）；todo/approval 段为分页形态（聚合取数固定 pageNum=1&pageSize=5，
+ * rows ≤5 条）；notify 段为未读摘要
+ */
+export interface WorkbenchVo {
+  /** 我的待办段（cloud-bpmn，perms bpmn:task:list） */
+  todo: AggregateSectionVo<PageResult<TaskVo>>
+  /** 我的审批段（cloud-bpmn，perms bpmn:approval:list） */
+  approval: AggregateSectionVo<PageResult<ApprovalVo>>
+  /** 未读通知摘要段（cloud-system，登录即可） */
+  notify: AggregateSectionVo<NotifySummaryVo>
+}

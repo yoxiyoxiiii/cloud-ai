@@ -140,12 +140,13 @@ await page.route('**/api/**', async (route) => {
       ] },
     ])))
   }
-  // 工作台首屏两请求（登录落首页触发——mock 空态防后端未起报网络失败）
-  if (p === '/bpmn/task/todo' && req.method() === 'GET') {
-    return route.fulfill(json(R({ total: '0', rows: [] })))
-  }
-  if (p === '/bpmn/approval/page' && req.method() === 'GET') {
-    return route.fulfill(json(R({ total: '0', rows: [] })))
+  // 工作台首屏聚合单请求（登录落首页触发——mock 空段防后端未起报网络失败；段结构见契约 2026-11-14-aggregate-workbench-api §1.2）
+  if (p === '/aggregate/workbench' && req.method() === 'GET') {
+    return route.fulfill(json(R({
+      todo: { status: 200, msg: '操作成功', data: { total: '0', rows: [] } },
+      approval: { status: 200, msg: '操作成功', data: { total: '0', rows: [] } },
+      notify: { status: 200, msg: '操作成功', data: { unreadCount: '0', latestId: '0' } },
+    })))
   }
   // Navbar 铃铛 30s 轮询（mock 零未读——不触发弹框链路）
   if (p === '/system/notify/summary' && req.method() === 'GET') {
