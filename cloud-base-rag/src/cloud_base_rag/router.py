@@ -46,15 +46,9 @@ logger = logging.getLogger(__name__)
 DONE_FRAME: str = "data: [DONE]\n\n"
 
 router = APIRouter(prefix="/rag/chat", dependencies=[Depends(require_perms("ai:chat:list"))])
-# 会话四端点独立 router（契约 §2-§5）：全端点复用 ai:chat:list，路由级依赖防线同上。
-session_router = APIRouter(prefix="/rag/chat/sessions",
-                           dependencies=[Depends(require_perms("ai:chat:list"))])
+session_router = APIRouter(prefix="/rag/chat/sessions",dependencies=[Depends(require_perms("ai:chat:list"))])
 kb_router = APIRouter(prefix="/rag/kb", dependencies=[Depends(require_perms("ai:kb:add"))])
-# 读端点独立 router：权限与写端点不同（查询 ai:kb:list / 创建+上传 ai:kb:add），
-# 路由级依赖保证今后挂进来的新端点自动受保护（漏写依赖即放行的防线）。
 kb_read_router = APIRouter(prefix="/rag/kb", dependencies=[Depends(require_perms("ai:kb:list"))])
-# 编辑/删除各挂独立 router：权限按动作分立（ai:kb:update / ai:kb:delete），
-# 路由级依赖防线延续——挂进 router 的新端点自动受保护。
 kb_update_router = APIRouter(prefix="/rag/kb", dependencies=[Depends(require_perms("ai:kb:update"))])
 kb_delete_router = APIRouter(prefix="/rag/kb", dependencies=[Depends(require_perms("ai:kb:delete"))])
 
