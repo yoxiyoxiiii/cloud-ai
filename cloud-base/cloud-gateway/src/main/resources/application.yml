@@ -4,10 +4,6 @@ server:
 spring:
   application:
     name: cloud-gateway
-  config:
-    import:
-      - optional:nacos:cloud-common.yaml
-      - optional:nacos:${spring.application.name}.yaml
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
@@ -111,3 +107,15 @@ management:
     web:
       exposure:
         include: health,info
+
+# Nacos 配置 import 门控：local 激活时跳过 import（本地离线模式——配置取备份脚本生成的
+# application-local.yml，从本 src/main/resources 目录启动才命中 file:./ 搜索位，不触碰 Nacos；
+# 网关无服务专属 dataId，仅消费 cloud-common.yaml）；非 local 启动照常从 Nacos 拉取。
+---
+spring:
+  config:
+    activate:
+      on-profile: "!local"
+    import:
+      - optional:nacos:cloud-common.yaml
+      - optional:nacos:${spring.application.name}.yaml

@@ -1,10 +1,15 @@
-"""Nacos 配置全量本地备份（防配置丢失的快照源）。
+"""Nacos 配置全量本地备份（防配置丢失的快照源 + 服务 local 离线配置生成器）。
 
 从宿主 MySQL 的 nacos_config 库导出全部租户的 config_info（含 3.x 灰度表若有数据），
 落盘到 cloud-base/nacos-local/（已 gitignore，含密钥真值，绝不入库）：
   snapshots/<时间戳>/<租户目录>/<data_id>   每次运行的历史快照
   current/<租户目录>/<data_id>              最近一次的镜像（服务本地兜底启动指向这里）
   snapshots/<时间戳>/manifest.json          清单（租户/数据ID/MD5/字节数，无内容）
+
+同时为仓库内服务生成 <服务>/src/main/resources/application-local.yml（gitignored）：
+  有 dataId 的服务 = cloud-common + 服务 yaml 快照多文档合并 + local 离线段；
+  gateway 无 dataId，按内置模板 = cloud-common 快照 + 离线段（验签必需 cloud.jwt.secret）。
+离线段 = Nacos discovery/import-check 关闭 + 七服务静态实例表（local 模式下 lb:// 解析来源）。
 
 安全口径：stdout 只打印配置键名、MD5、大小与双租户差异结论，绝不打印配置内容。
 
@@ -26,6 +31,39 @@ MYSQL_PORT = 3306
 MYSQL_USER = "root"
 MYSQL_PASSWORD = ""
 DB_NAME = "nacos_config"
+
+# local 离线段静态实例表（服务名→地址）：local 模式下 lb:// 解析的唯一来源。
+# 端口矩阵单点维护于此——改端口改这里，并与 CLAUDE.md 端口段人工同步。
+STATIC_INSTANCES = [
+    ("cloud-sso", "http://127.0.0.1:9201"),
+    ("cloud-system", "http://127.0.0.1:9202"),
+    ("cloud-bpmn", "http://127.0.0.1:9203"),
+    ("cloud-task", "http://127.0.0.1:9204"),
+    ("cloud-aggregate", "http://127.0.0.1:9205"),
+    ("cloud-base-rag", "http://127.0.0.1:8011"),
+    ("cloud-base-agent", "http://127.0.0.1:8012"),
+]
+
+# local 离线段：关闭 Nacos 发现注册与 import 检查，lb:// 改走静态实例表。
+# import-check 必须关闭：local 模式下 import 无 nacos 条目是预期形态，SCA 检查器会 fail-fast。
+OFFLINE_SEGMENT = (
+    "# local 离线段：不注册 Nacos 服务发现，lb:// 解析改走下表（声明即真相——\n"
+    "# 条目指向的实例未启动时流量会打到死端口，属本模式已知语义）。\n"
+    "# import-check 关闭：local 模式下 import 无 nacos 条目是预期，SCA 检查器会 fail-fast。\n"
+    "spring:\n"
+    "  cloud:\n"
+    "    nacos:\n"
+    "      config:\n"
+    "        import-check:\n"
+    "          enabled: false\n"
+    "      discovery:\n"
+    "        enabled: false\n"
+    "    discovery:\n"
+    "      client:\n"
+    "        simple:\n"
+    "          instances:\n"
+    + "".join(f"            {name}: [{{uri: '{uri}'}}]\n" for name, uri in STATIC_INSTANCES)
+)
 
 # 本脚本所在 .../cloud-base/scripts/nacos/ → cloud-base 根
 CLOUD_BASE_DIR = Path(__file__).resolve().parents[2]
@@ -111,18 +149,28 @@ def dump_gray_if_any(conn, snap_dir: Path) -> list:
 
 
 def generate_local_profiles(entries: list, snap_dir: Path) -> list:
-    """为每个有 Nacos 配置的仓库内服务生成 application-local.yml（profile=local 本地兜底）。
+    """为仓库内服务生成 application-local.yml（默认 local 启动 = 离线模式）。
 
+    有 dataId 的服务：cloud-common.yaml + 服务 yaml 快照多文档合并 + 离线段；
+    gateway 无 dataId：内置模板 = cloud-common.yaml 快照 + 离线段——网关验签必需
+    cloud.jwt.secret，缺 common 快照时带 token 请求会以 HTTP 200 + code 500 形态失败（易误诊）。
     落在 <服务>/src/main/resources/application-local.yml（gitignored，含密钥真值勿手改勿提交），
-    内容 = cloud-common.yaml + 服务 yaml 的多文档合并（--- 分隔，键冲突时服务段优先）。
-    每次备份重新生成，保证与 Nacos 备份同源同步。
+    每次备份整体重生成（幂等），保证与 Nacos 备份同源同步。
     """
     common_file = snap_dir / "default" / "cloud-common.yaml"
     common_text = common_file.read_text(encoding="utf-8").rstrip() if common_file.exists() else ""
     header = (
-        "# 本地兜底配置：backup_nacos_config.py 从 Nacos 备份自动生成，勿手改勿提交（含密钥真值）。\n"
-        "# Nacos 配置变更后重跑备份脚本即可再生本文件。\n"
-        "# 启用：java -jar ... --spring.profiles.active=local——激活后本地文件优先于 Nacos 取值，健康环境勿带 local。\n"
+        "# 本地离线配置：backup_nacos_config.py 从 Nacos 备份自动生成，勿手改勿提交（含密钥真值）。\n"
+        "# 默认启动即带 local（见 scripts/dev-services.sh 与 CLAUDE.md）——local = 离线模式：\n"
+        "# 不 import Nacos 配置、不注册 Nacos 服务发现，lb:// 走本文件末尾静态实例表。\n"
+        "# 改 Nacos 配置后由启动脚本在下次启动自动重生成本文件；不带 local 启动 = 传统路径。\n"
+    )
+    gateway_header = (
+        "# 网关本地离线配置：backup_nacos_config.py 从 Nacos 备份自动生成，勿手改勿提交（含密钥真值）。\n"
+        "# 网关无服务专属 dataId，本文件 = cloud-common.yaml 快照（cloud.jwt.secret 验签必需）+ 离线段。\n"
+        "# 默认启动即带 local（见 scripts/dev-services.sh 与 CLAUDE.md）——local = 离线模式：\n"
+        "# 不 import Nacos 配置、不注册 Nacos 服务发现，lb:// 走本文件末尾静态实例表。\n"
+        "# 改 Nacos 配置后由启动脚本在下次启动自动重生成本文件。\n"
     )
     generated, done = [], set()
     for e in entries:
@@ -141,9 +189,15 @@ def generate_local_profiles(entries: list, snap_dir: Path) -> list:
             parts.append(common_text)
         parts.append((snap_dir / tdir / e["dataId"]).read_text(encoding="utf-8").rstrip())
         target = res_dir / "application-local.yml"
-        target.write_text(header + "\n---\n".join(parts) + "\n",
+        target.write_text(header + "\n---\n".join(parts) + "\n---\n" + OFFLINE_SEGMENT,
                           encoding="utf-8", newline="\n")
         generated.append(target.relative_to(CLOUD_BASE_DIR).as_posix())
+    # gateway 分支：无 dataId 但 import 消费 cloud-common.yaml，须与快照同源刷新 local 面
+    if common_text:
+        gw_target = CLOUD_BASE_DIR / "cloud-gateway" / "src" / "main" / "resources" / "application-local.yml"
+        gw_target.write_text(gateway_header + common_text + "\n---\n" + OFFLINE_SEGMENT,
+                             encoding="utf-8", newline="\n")
+        generated.append(gw_target.relative_to(CLOUD_BASE_DIR).as_posix())
     return generated
 
 
@@ -220,7 +274,7 @@ def main() -> int:
             print(f"  - {k}: {v}")
     print(f"[OK] current/ 镜像已刷新: {current}")
     for p in local_profiles:
-        print(f"[OK] 已生成服务本地配置: {p}（--spring.profiles.active=local 启用）")
+        print(f"[OK] 已生成服务本地离线配置: {p}（默认启动即带 local 激活）")
     return 0
 
 

@@ -8,17 +8,28 @@
 #   ./scripts/dev-services.sh restart   # 停止后再启动
 #   ./scripts/dev-services.sh status    # 只看各服务端口状态
 #
-# 服务清单与启动顺序（网关最后——需业务服务先注册 Nacos）：
-#   cloud-sso     9201   java -jar
-#   cloud-system  9202   java -jar
-#   cloud-bpmn    9203   java -jar
-#   cloud-base-rag   8011  uvicorn（uv 绝对路径——不在 Git Bash PATH）
-#   cloud-base-agent 8012  uvicorn（同上；AI 基座拆分后双服务独立工程独立 venv）
-#   cloud-gateway 18080  java -jar（最后起）
-#   cloud-web     5173   npm run dev（前端，与网关并级最后）
+# 服务清单与启动顺序（网关最后起）：
+#   cloud-sso        9201   java -jar（带 --spring.profiles.active=local，下同）
+#   cloud-system     9202   java -jar
+#   cloud-bpmn       9203   java -jar
+#   cloud-task       9204   java -jar
+#   cloud-aggregate  9205   java -jar
+#   cloud-base-rag   8011   uvicorn（uv 绝对路径——不在 Git Bash PATH）
+#   cloud-base-agent 8012   uvicorn（同上；AI 基座拆分后双服务独立工程独立 venv）
+#   cloud-gateway    18080  java -jar（local 同上，最后起）
+#   cloud-web        5173   npm run dev（前端，与网关并级最后）
 #
-# 前置假设（本脚本不管理基础设施）：MySQL 3306 / Nacos 8848 / Redis 6379 /
-#   （上传链路另需 Milvus 19530 + Ollama 11434）已在运行。
+# 启动模式：Java 服务默认带 --spring.profiles.active=local（离线模式——不 import
+#   Nacos 配置、不注册 Nacos 服务发现，lb:// 走 application-local.yml 静态实例表）；
+#   start 起服前自动跑备份脚本从 MySQL nacos_config 库重生成各服务 local 面
+#   （改 Nacos → 下次重启即生效）；备份失败打 [WARN] 沿用既有 local 面继续起服，不阻断。
+#   Java 从各服务 src/main/resources 目录启动（见 SERVICES 定义处注释）——否则运行时
+#   读不到再生成的 local 面，会触发 SCA import-check fail-fast 起不来。
+#
+# 前置假设（本脚本不管理基础设施）：MySQL 3306（含 nacos_config 库——快照数据源，
+#   经 pymysql 直读不经 Nacos API）/ Redis 6379 /（上传链路另需 Milvus 19530 +
+#   Ollama 11434）已在运行。Nacos 8848 为编辑时依赖——仅改配置时需要它运行，
+#   默认启动路径不依赖 nacos 容器（容器停机下全栈照常可起）。
 # 日志：logs/dev-services-<服务名>.log（logs/ 整目录已 gitignore）。
 #
 # Windows 陷阱（踩坑记档，勿改）：
@@ -32,12 +43,18 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$ROOT/logs"
 mkdir -p "$LOG_DIR"
 
-# 服务定义：名称|端口|启动命令（在 $ROOT 下执行）|就绪方式
+# 服务定义：名称|端口|启动命令|启动目录（相对 $ROOT，空= $ROOT）
 # 网关必须排在业务服务之后；前端独立放最后。
+# Java 命令统一带 --spring.profiles.active=local（默认离线模式——不带即传统路径），
+# 且从各服务 src/main/resources 目录启动：Spring 默认搜索位 file:./ 恰命中备份脚本
+# 再生成的 application-local.yml，其优先级高于 jar 内打包副本——改 Nacos 后无需
+# 重新 mvn 打包，重启即读到新快照（jar 内副本是构建时刻的陈旧物，恒被压制）。
 SERVICES=(
-  "cloud-sso|9201|java -jar cloud-base/cloud-sso/target/cloud-sso-1.0.0-SNAPSHOT.jar"
-  "cloud-system|9202|java -jar cloud-base/cloud-system/target/cloud-system-1.0.0-SNAPSHOT.jar"
-  "cloud-bpmn|9203|java -jar cloud-base/cloud-bpmn/target/cloud-bpmn-1.0.0-SNAPSHOT.jar"
+  "cloud-sso|9201|java -jar ../../../target/cloud-sso-1.0.0-SNAPSHOT.jar --spring.profiles.active=local|cloud-base/cloud-sso/src/main/resources"
+  "cloud-system|9202|java -jar ../../../target/cloud-system-1.0.0-SNAPSHOT.jar --spring.profiles.active=local|cloud-base/cloud-system/src/main/resources"
+  "cloud-bpmn|9203|java -jar ../../../target/cloud-bpmn-1.0.0-SNAPSHOT.jar --spring.profiles.active=local|cloud-base/cloud-bpmn/src/main/resources"
+  "cloud-task|9204|java -jar ../../../target/cloud-task-1.0.0-SNAPSHOT.jar --spring.profiles.active=local|cloud-base/cloud-task/src/main/resources"
+  "cloud-aggregate|9205|java -jar ../../../target/cloud-aggregate-1.0.0-SNAPSHOT.jar --spring.profiles.active=local|cloud-base/cloud-aggregate/src/main/resources"
 )
 
 # uv 不在 Git Bash PATH，按候选路径探测（conda env 优先，会话实证口径）
@@ -57,7 +74,8 @@ find_uv() {
 
 GATEWAY_NAME="cloud-gateway"
 GATEWAY_PORT=18080
-GATEWAY_CMD="java -jar cloud-base/cloud-gateway/target/cloud-gateway-1.0.0-SNAPSHOT.jar"
+GATEWAY_CMD="java -jar ../../../target/cloud-gateway-1.0.0-SNAPSHOT.jar --spring.profiles.active=local"
+GATEWAY_DIR="cloud-base/cloud-gateway/src/main/resources"  # 同 SERVICES：file:./ 命中备份生成的 local 面
 WEB_NAME="cloud-web"
 WEB_PORT=5173
 WEB_CMD="npm run dev" # 需在 cloud-web 目录执行
@@ -136,11 +154,26 @@ cmd_status() {
 }
 
 cmd_start() {
-  echo "==> 启动后端业务服务（sso → system → bpmn）"
-  local row name port cmd
+  echo "==> 启动前自动快照：从 MySQL nacos_config 库重生成各服务 application-local.yml"
+  local uv_bin
+  if uv_bin="$(find_uv)"; then
+    if (cd "$ROOT" && "$uv_bin" run --project cloud-ai-common \
+        python cloud-base/scripts/nacos/backup_nacos_config.py) >/dev/null 2>&1; then
+      echo "  [OK   ] 备份完成，local 面已与 Nacos 同源刷新"
+    else
+      echo "  [WARN ] 备份失败（MySQL 不可达？）——沿用既有 application-local.yml 继续起服（快照陈旧属已知边界，logs 无线索时先查 MySQL）"
+    fi
+  else
+    echo "  [WARN ] 未找到 uv，跳过自动快照——沿用既有 application-local.yml 继续起服"
+  fi
+
+  echo "==> 启动后端业务服务（sso → system → bpmn → task → aggregate，均 local 离线模式）"
+  local row name port cmd dir
   for row in "${SERVICES[@]}"; do
-    name="${row%%|*}"; port="$(echo "$row" | cut -d'|' -f2)"; cmd="${row#*|*|}"
-    start_one "$name" "$port" "$cmd"
+    name="${row%%|*}"; port="$(echo "$row" | cut -d'|' -f2)"
+    cmd="$(echo "$row" | cut -d'|' -f3)"; dir="$(echo "$row" | cut -d'|' -f4)"
+    # 目录留空时 start_one 自身兜底回 $ROOT（第 4 参缺省），无需条件分支
+    start_one "$name" "$port" "$cmd" "$ROOT/$dir"
   done
   for row in "${SERVICES[@]}"; do
     port="$(echo "$row" | cut -d'|' -f2)"
@@ -159,7 +192,7 @@ cmd_start() {
   fi
 
   echo "==> 启动网关 $GATEWAY_NAME (:$GATEWAY_PORT，最后起)"
-  start_one "$GATEWAY_NAME" "$GATEWAY_PORT" "$GATEWAY_CMD"
+  start_one "$GATEWAY_NAME" "$GATEWAY_PORT" "$GATEWAY_CMD" "$ROOT/$GATEWAY_DIR"
   wait_port "$GATEWAY_PORT" "$GATEWAY_NAME" 90
 
   echo "==> 启动前端 $WEB_NAME (:$WEB_PORT)"
@@ -176,7 +209,7 @@ cmd_start() {
   if [ "$code" = "200" ]; then
     echo "  [OK   ] http://localhost:$GATEWAY_PORT/system/demo/ping -> 200"
   else
-    echo "  [WARN ] 网关 ping 非 200（当前 $code）——服务可能仍在注册 Nacos，稍等重试；持续不通则查 logs/"
+    echo "  [WARN ] 网关 ping 非 200（当前 $code）——服务可能仍在启动中，稍等重试；持续不通则查 logs/"
   fi
   echo "==> 完成。前端访问 http://localhost:$WEB_PORT（admin / admin123）"
 }

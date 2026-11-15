@@ -9,11 +9,6 @@ spring:
     username: root
     password: ""
     driver-class-name: com.mysql.cj.jdbc.Driver
-  config:
-    import:
-      - optional:nacos:${spring.application.name}.yaml
-      # 共享配置接线（公共项 cloud-common.yaml，optional 容缺向后安全）
-      - optional:nacos:cloud-common.yaml
   cloud:
     nacos:
       server-addr: ${NACOS_ADDR:127.0.0.1:8848}
@@ -61,3 +56,16 @@ mybatis-plus:
   configuration:
     # XML resultType 实体映射依赖驼峰映射；显式声明防将来配置漂移静默断列（三胞胎同款）
     map-underscore-to-camel-case: true
+
+# Nacos 配置 import 门控：local 激活时跳过 import（本地离线模式——配置取备份脚本生成的
+# application-local.yml，从本 src/main/resources 目录启动才命中 file:./ 搜索位，不触碰 Nacos）；
+# 非 local 启动照常从 Nacos 拉取。
+---
+spring:
+  config:
+    activate:
+      on-profile: "!local"
+    import:
+      - optional:nacos:${spring.application.name}.yaml
+      # 共享配置接线（公共项 cloud-common.yaml，optional 容缺向后安全）
+      - optional:nacos:cloud-common.yaml
