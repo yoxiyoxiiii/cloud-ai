@@ -1,0 +1,46 @@
+# 本地离线配置：backup_nacos_config.py 从 Nacos 备份自动生成，勿手改勿提交（含密钥真值）。
+# 默认启动即带 local（见 scripts/dev-services.sh 与 CLAUDE.md）——local = 离线模式：
+# 不 import Nacos 配置、不注册 Nacos 服务发现，lb:// 走本文件末尾静态实例表。
+# 改 Nacos 配置后由启动脚本在下次启动自动重生成本文件；不带 local 启动 = 传统路径。
+cloud:
+  jwt:
+    secret: a68fe7c59f21705f278d4353f56b1a3c19a059123dcca289e15bcbc9749edcea
+    access-token-ttl: 7200
+    refresh-token-ttl: 604800
+xxl:
+  job:
+    admin:
+      addresses: http://127.0.0.1:18081
+    executor:
+      logpath: D:/applogs/xxl-job
+      logretentiondays: 30
+---
+# 聚合服务 cloud-aggregate 配置（设计 2026-11-14-aggregate-service-design §8.2 最小壳）。
+# 双租户纪律：'' 与 public 两份内容必须逐字一致——3.x 双写同步会把不同真值合并成坏 YAML。
+cloud:
+  aggregate:
+    # 段并行线程池线程数（core=max；SynchronousQueue 不堆积 + CallerRuns 池满退化串行）
+    pool-size: 8
+---
+# local 离线段：不注册 Nacos 服务发现，lb:// 解析改走下表（声明即真相——
+# 条目指向的实例未启动时流量会打到死端口，属本模式已知语义）。
+# import-check 关闭：local 模式下 import 无 nacos 条目是预期，SCA 检查器会 fail-fast。
+spring:
+  cloud:
+    nacos:
+      config:
+        import-check:
+          enabled: false
+      discovery:
+        enabled: false
+    discovery:
+      client:
+        simple:
+          instances:
+            cloud-sso: [{uri: 'http://127.0.0.1:9201'}]
+            cloud-system: [{uri: 'http://127.0.0.1:9202'}]
+            cloud-bpmn: [{uri: 'http://127.0.0.1:9203'}]
+            cloud-task: [{uri: 'http://127.0.0.1:9204'}]
+            cloud-aggregate: [{uri: 'http://127.0.0.1:9205'}]
+            cloud-base-rag: [{uri: 'http://127.0.0.1:8011'}]
+            cloud-base-agent: [{uri: 'http://127.0.0.1:8012'}]
