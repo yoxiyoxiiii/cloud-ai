@@ -31,7 +31,7 @@ import static org.mockito.Mockito.when;
 /**
  * 执行引擎单测（设计 §5.1）：终态分类（成功/取消/异常重试或耗尽）、
  * 首次终态失败告警判定（手动重试顶过 max 不重发）、看门狗超时中断与运行表收拢。
- * 测试 handler 须带 @TaskHandler 注解（注册表启动校验的一致性要求），故具名声明。
+ * 测试 handler 须带 @Task 注解（注册表启动校验的一致性要求），故具名声明。
  */
 @ExtendWith(MockitoExtension.class)
 class TaskEngineTest {
@@ -39,7 +39,7 @@ class TaskEngineTest {
     private static final long POLL_TIMEOUT_MS = 5000;
 
     /** 正常返回 handler */
-    @com.cloudai.task.runtime.annotation.TaskHandler("t-ok")
+    @Task("t-ok")
     static class OkHandler implements TaskHandler {
         @Override
         public String taskType() {
@@ -53,7 +53,7 @@ class TaskEngineTest {
     }
 
     /** 检查点即取消 handler */
-    @com.cloudai.task.runtime.annotation.TaskHandler("t-cancel")
+    @Task("t-cancel")
     static class CancelHandler implements TaskHandler {
         @Override
         public String taskType() {
@@ -67,7 +67,7 @@ class TaskEngineTest {
     }
 
     /** 恒抛异常 handler（重试/耗尽场景共用） */
-    @com.cloudai.task.runtime.annotation.TaskHandler("t-fail")
+    @Task("t-fail")
     static class FailingHandler implements TaskHandler {
         @Override
         public String taskType() {
@@ -81,7 +81,7 @@ class TaskEngineTest {
     }
 
     /** 阻塞至释放/中断的 handler（看门狗超时场景） */
-    @com.cloudai.task.runtime.annotation.TaskHandler("t-block")
+    @Task("t-block")
     static class BlockingHandler implements TaskHandler {
         final CountDownLatch release = new CountDownLatch(1);
         final AtomicBoolean interrupted = new AtomicBoolean(false);

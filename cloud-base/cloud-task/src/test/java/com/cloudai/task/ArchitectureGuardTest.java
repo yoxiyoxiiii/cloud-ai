@@ -246,24 +246,24 @@ class ArchitectureGuardTest {
 
     // ---- 任务中心域规则（设计 2026-11-10-task-center-design §5） ----
 
-    /** @TaskHandler 注解使用处（带括号；注解声明本身是 @interface 无括号）：必须落 handler/ 包且值非空 */
+    /** @Task 注解使用处（带括号；注解声明本身是 @interface 无括号）：必须落 handler/ 包且值非空 */
     @Test
     void taskHandler_classes_must_live_in_handler_package_with_type() throws IOException {
         List<String> violations = new ArrayList<>();
         for (Path java : listFiles(MAIN_JAVA, "*.java")) {
             String content = Files.readString(java, StandardCharsets.UTF_8);
-            if (!content.contains("@TaskHandler(")) {
+            if (!content.contains("@Task(")) {
                 continue;
             }
             if (!java.toString().replace('\\', '/').contains("/handler/")) {
-                violations.add(java.getFileName() + " (@TaskHandler outside handler/ package)");
+                violations.add(java.getFileName() + " (@Task outside handler/ package)");
             }
-            // 空值注解（@TaskHandler() 或 @TaskHandler）= 类型码缺失，注册表运行期才炸——构建期拦截
-            if (Pattern.compile("@TaskHandler\\(\\s*\\)").matcher(content).find()) {
-                violations.add(java.getFileName() + " (@TaskHandler value empty)");
+            // 空值注解（@Task() 或 @Task）= 类型码缺失，注册表运行期才炸——构建期拦截
+            if (Pattern.compile("@Task\\(\\s*\\)").matcher(content).find()) {
+                violations.add(java.getFileName() + " (@Task value empty)");
             }
         }
-        assertThat(violations).as("@TaskHandler 任务类必须落 handler/ 包且类型码非空").isEmpty();
+        assertThat(violations).as("@Task 任务类必须落 handler/ 包且类型码非空").isEmpty();
     }
 
     /** 轮询线程是 SmartLifecycle 自管线程——@Scheduled 全禁（设计 §5.2，装配/生命周期归引擎自管） */

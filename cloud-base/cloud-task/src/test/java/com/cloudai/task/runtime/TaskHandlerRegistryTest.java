@@ -10,11 +10,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * 注册表 fail-fast 单测（设计 §5.3）：类型码空白/注解缺失或不一致/重复注册启动即炸；
  * 正常注册后 containsType 与 get 可用（提交面 6001 依据）。
- * 注解用 FQN 标注——同名接口在同包，import 注解会遮蔽接口引用。
+ * 注解 @Task 与本测试同包，无需 import。
  */
 class TaskHandlerRegistryTest {
 
-    @com.cloudai.task.runtime.annotation.TaskHandler("type-a")
+    @Task("type-a")
     static class HandlerA implements TaskHandler {
         @Override
         public String taskType() {
@@ -28,7 +28,7 @@ class TaskHandlerRegistryTest {
     }
 
     /** 与 HandlerA 同类型码（重复注册用） */
-    @com.cloudai.task.runtime.annotation.TaskHandler("type-a")
+    @Task("type-a")
     static class HandlerADup implements TaskHandler {
         @Override
         public String taskType() {
@@ -42,7 +42,7 @@ class TaskHandlerRegistryTest {
     }
 
     /** 注解值与 taskType() 不一致 */
-    @com.cloudai.task.runtime.annotation.TaskHandler("type-b")
+    @Task("type-b")
     static class HandlerMismatch implements TaskHandler {
         @Override
         public String taskType() {

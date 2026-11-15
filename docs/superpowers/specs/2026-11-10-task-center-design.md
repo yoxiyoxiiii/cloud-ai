@@ -152,6 +152,8 @@ public interface TaskHandler {
 
 `TaskContext`：taskId/params（String JSON）/`paramsAs(Class)`（Jackson 解析）/`reportProgress(int, String)`/`checkCanceled()`。`TaskHandlerRegistry`：`SmartInitializingSingleton` 收集全部 @TaskHandler bean 建 type→handler 表，**重复 type 启动即失败**（fail-fast）；提交时用注册表校验类型存在性（6001），不存在不落库。跨语言派发预留：Registry 实现类即未来 `TaskHandlerResolver` 的本地分支（接口签名现在就抽好，第二轮加远程分支不动调用方）。
 
+> **修订（2026-11-15）**：注册注解由 `@TaskHandler` 改名 `@Task`——原名与 SPI 接口 TaskHandler 同名，靠 runtime/annotation 子包消歧（本文 §5.3 原记档的取舍）；改名后注解上收 `com.cloudai.task.runtime` 包，annotation 子包撤销。机制零变化（元注解/注册校验/守护规则同步改名），仅命名消歧。
+
 ### 5.4 清扫任务（xxl-job id 13，CRON `0 * * * * ?`）
 
 `job/TaskSweepJobHandler`（@XxlJob，薄壳，落 job/ 包守仓规）单趟两件事：① 僵尸兜底（§5.1）；② 终态行保留期清理（`cloud.task.retention-days` 默认 30，`DELETE ... WHERE status IN (2,3,4) AND finish_time < ? LIMIT 200` 分批，每分钟自然推进）。

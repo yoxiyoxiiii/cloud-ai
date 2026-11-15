@@ -1,7 +1,8 @@
 package com.cloudai.task.handler;
 
+import com.cloudai.task.runtime.Task;
 import com.cloudai.task.runtime.TaskContext;
-import com.cloudai.task.runtime.annotation.TaskHandler;
+import com.cloudai.task.runtime.TaskHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -13,8 +14,8 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-@TaskHandler(DemoBatchHandler.TYPE)
-public class DemoBatchHandler implements com.cloudai.task.runtime.TaskHandler {
+@Task(DemoBatchHandler.TYPE)
+public class DemoBatchHandler implements TaskHandler {
 
     public static final String TYPE = "demo-batch";
 

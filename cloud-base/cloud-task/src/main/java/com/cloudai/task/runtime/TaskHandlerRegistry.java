@@ -10,7 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 任务处理器注册表（设计 §5.3）：容器就绪后收集全部 @TaskHandler bean 建 type→handler 表。
+ * 任务处理器注册表（设计 §5.3）：容器就绪后收集全部 @Task bean 建 type→handler 表。
  * 重复 type、注解值与 taskType() 不一致均启动即失败（fail-fast）；提交校验（6001）用 containsType。
  * 跨语言派发演进预留：未来远程执行器分支在本入口扩展（type→HTTP 端点注册表），提交方与任务表零改动。
  */
@@ -30,8 +30,7 @@ public class TaskHandlerRegistry implements SmartInitializingSingleton {
             if (type == null || type.isBlank()) {
                 throw new IllegalStateException("任务处理器类型码为空: " + handler.getClass().getName());
             }
-            com.cloudai.task.runtime.annotation.TaskHandler annotation =
-                    handler.getClass().getAnnotation(com.cloudai.task.runtime.annotation.TaskHandler.class);
+            Task annotation = handler.getClass().getAnnotation(Task.class);
             if (annotation == null || annotation.value().isBlank() || !type.equals(annotation.value())) {
                 throw new IllegalStateException("任务处理器注解缺失或与 taskType() 不一致: "
                         + handler.getClass().getName() + " type=" + type);
