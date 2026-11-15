@@ -14,9 +14,9 @@ from cloud_ai_common.db.tx import current_session, transactional
 from cloud_ai_common.exceptions import BusinessException
 from cloud_base_rag import dao, vectorstore
 from cloud_base_rag.entities import AiKnowledgeBase
-# 错误码常量与 service 层同源（文本即契约 §3.4，两处共用防漂移；本模块不得被
-# service 反向 import——chat 接检索轮若需引用，先把这些常量下沉到公共位）
-from cloud_base_rag.service import (
+# 错误码常量集中地（文本即契约 §3.4，两处共用防漂移；原从 service import，
+# 2026-11-15 抽取到 constants.py 公共位——本模块不再依赖 service）
+from cloud_base_rag.constants import (
     CODE_KB_NOT_EXISTS,
     CODE_KB_NO_ACCESS,
     MSG_KB_NOT_EXISTS,
