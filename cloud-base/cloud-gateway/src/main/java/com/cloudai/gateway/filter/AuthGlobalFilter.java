@@ -42,8 +42,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    private final StringRedisTemplate stringRedisTemplate;
     private final JwtProperties jwtProperties;
+    private final StringRedisTemplate stringRedisTemplate;
     private final AuthWhitelistProperties authWhitelistProperties;
 
     /** 忽略未知字段（会话 JSON 含网关不需的字段；值格式见 SecurityConstants.ONLINE_KEY_PREFIX 契约） */

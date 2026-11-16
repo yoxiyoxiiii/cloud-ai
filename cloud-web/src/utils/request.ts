@@ -42,6 +42,7 @@ function redirectToLogin(): void {
   }
 }
 
+// 请求拦截；设置请求头，携带token
 instance.interceptors.request.use((config) => {
   const auth = getAuth()
   if (auth?.accessToken) {
@@ -50,6 +51,7 @@ instance.interceptors.request.use((config) => {
   return config
 })
 
+// 请求返回拦截，解析数据
 instance.interceptors.response.use(
   (res) => {
     const body = res.data as R
