@@ -47,18 +47,25 @@ public class TokenService {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final SystemUserClient userClient;
-    private final StringRedisTemplate stringRedisTemplate;
-    private final PasswordEncoder passwordEncoder;
     private final JwtProperties jwtProperties;
+    private final PasswordEncoder passwordEncoder;
+    private final StringRedisTemplate stringRedisTemplate;
 
+    /**
+     * 登录：
+     * 1. 远程获取用户信息
+     * 2. 判定用户名/密码
+     * 3. 创建用户token
+     * 4. 存储用户登录信息到redis 中
+     * @param account
+     * @param password
+     * @param ip
+     * @return
+     */
     public LoginResult login(String account, String password, String ip) {
-        R<LoginUserDTO> resp;
-        try {
-            resp = userClient.getUserByAccount(account);
-        } catch (FeignException e) {
-            log.error("cloud-system 调用失败，account={}", account, e);
-            throw new BusinessException(2002, "用户服务不可用，请稍后重试");
-        }
+        // 获取用户信息
+        R<LoginUserDTO> resp = userClient.getUserByAccount(account);
+
         if (resp == null || resp.getCode() != 200) {
             throw new BusinessException(resp == null ? 2002 : resp.getCode(),
                     resp == null ? "用户服务不可用" : resp.getMsg());
@@ -76,6 +83,8 @@ public class TokenService {
         if (dto.getStatus() == null || dto.getStatus() != 0) {
             throw new BusinessException(2003, "账号已停用");
         }
+
+
         return issueTokens(dto, ip);
     }
 
@@ -228,6 +237,8 @@ public class TokenService {
         } catch (JsonProcessingException e) {
             throw new IllegalStateException("在线会话序列化失败", e);
         }
+
+        // token存储到redis
         stringRedisTemplate.opsForValue().set(SecurityConstants.ONLINE_KEY_PREFIX + tokenId,
                 sessionJson, jwtProperties.getAccessTokenTtl(), TimeUnit.SECONDS);
         String refreshJson;
@@ -257,7 +268,8 @@ public class TokenService {
         try {
             return JSON.readValue(json, RefreshTokenValue.class);
         } catch (JsonProcessingException e) {
-            return null; // 旧格式/损坏值一律视为不匹配
+            // 旧格式/损坏值一律视为不匹配
+            return null;
         }
     }
 
