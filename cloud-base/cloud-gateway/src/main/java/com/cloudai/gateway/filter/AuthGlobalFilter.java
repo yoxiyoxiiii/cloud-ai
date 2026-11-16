@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -120,6 +121,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         return chain.filter(authed);
     }
 
+    // 移除头
     private ServerWebExchange stripUserHeaders(ServerWebExchange exchange) {
         return exchange.mutate().request(builder -> builder
                 .headers(headers -> {
@@ -153,8 +155,7 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     /** 注入下游的身份头值聚合（五个 X-User-* 头的字符串形态；方法入参超 3 个须封装对象） */
     private record UserHeaderValues(String userId, String account, String perms,
-                                    String roleIds, String deptIds) {
-    }
+                                    String roleIds, String deptIds) {}
 
     private Mono<Void> unauthorized(ServerWebExchange exchange) {
         ServerHttpResponse response = exchange.getResponse();
@@ -174,12 +175,5 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
     public int getOrder() {
         return -100;
     }
-
-    /** 网关侧在线会话投影（只取权限/角色/部门字段；@class 头与其余字段被 ObjectMapper 忽略；旧会话缺新字段反序列化为 null → 注入空串） */
-    @lombok.Data
-    public static class OnlineSessionView {
-        private List<String> permissions;
-        private List<Long> roleIds;
-        private List<Long> deptIds;
-    }
+    
 }
