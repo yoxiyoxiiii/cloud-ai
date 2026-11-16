@@ -2,6 +2,7 @@ package com.cloudai.gateway.filter;
 
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.security.constant.SecurityConstants;
+import com.cloudai.gateway.config.AuthWhitelistProperties;
 import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -30,6 +31,7 @@ import java.util.stream.Collectors;
 /**
  * 网关鉴权：白名单放行；其余验签 JWT + Redis 在线检查（注销/强退立即生效）；
  * 通过后剥离外部 X-User-* 伪造 header 并注入真实用户信息透传下游。
+ * 白名单固化在 application.yml（cloud.gateway.auth.whitelist，不进 Nacos）——条目语义与坑见该处注释。
  * 401 返回统一 R JSON（网关层使用真实 HTTP 401 状态，与服务层 HTTP200+body.code 约定并存）。
  * 注：Redis 为同步调用（内网低延迟，MVP 取舍；高并发场景改 reactive 或本地缓存）。
  * @author jy-root
@@ -40,20 +42,9 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
 
     private static final String BEARER_PREFIX = "Bearer ";
 
-    /** 前缀白名单：登录/刷新、demo、inner 与 MCP 屏蔽（SetStatus 路由接管）、网关自身监控。
-     *  inner 各项带尾斜杠做段感知匹配——否则 startsWith 会误吞同级前缀路径（如 /system/inner-secret/** 管理端点会被跳过鉴权）。
-     *  MCP 屏蔽项无尾斜杠（同 /system/mcp 先例）：rag 域无 /mcp 同级前缀兄弟路径，无误吞面；
-     *  白名单使屏蔽路由跳过 JWT 鉴权——未带凭证请求也得 403 而非 401，屏蔽语义稳定。 */
-    private static final List<String> WHITELIST = List.of(
-            "/sso/auth/login", "/sso/auth/refresh",
-            "/sso/demo", "/system/demo", "/bpmn/demo", "/task/demo", "/aggregate/demo",
-            "/sso/inner/", "/system/inner/", "/bpmn/inner/", "/task/inner/",
-            "/system/mcp", "/ai/rag/mcp",
-            "/actuator"
-    );
-
     private final StringRedisTemplate stringRedisTemplate;
     private final JwtProperties jwtProperties;
+    private final AuthWhitelistProperties authWhitelistProperties;
 
     /** 忽略未知字段（会话 JSON 含网关不需的字段；值格式见 SecurityConstants.ONLINE_KEY_PREFIX 契约） */
     private final ObjectMapper objectMapper = new ObjectMapper()
@@ -62,10 +53,9 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         String path = exchange.getRequest().getPath().value();
-        // 白名单：剥离外部 X-User-* 后放行
+        // 白名单：剥离外部 X-User-* 后放行（startsWith 前缀语义，条目坑见 application.yml 注释）
         ServerWebExchange safeExchange = stripUserHeaders(exchange);
-        // 放行白名单
-        if (WHITELIST.stream().anyMatch(path::startsWith)) {
+        if (authWhitelistProperties.getWhitelist().stream().anyMatch(path::startsWith)) {
             return chain.filter(safeExchange);
         }
 

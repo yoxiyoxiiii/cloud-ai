@@ -3,6 +3,7 @@ package com.cloudai.gateway.filter;
 import com.cloudai.common.security.constant.SecurityConstants;
 import com.cloudai.common.security.props.JwtProperties;
 import com.cloudai.common.security.util.JwtUtil;
+import com.cloudai.gateway.config.AuthWhitelistProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,7 +19,10 @@ import org.springframework.mock.web.server.MockServerWebExchange;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
+import java.util.List;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verify;
@@ -45,8 +49,34 @@ class AuthGlobalFilterTest {
     void setUp() {
         JwtProperties jwtProperties = new JwtProperties();
         jwtProperties.setSecret(SECRET);
-        filter = new AuthGlobalFilter(stringRedisTemplate, jwtProperties);
+        filter = new AuthGlobalFilter(stringRedisTemplate, jwtProperties, whitelistProps("/sso/auth/login", "/actuator"));
         lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+    }
+
+    /** 构造带指定条目的白名单配置对象（生产条目固化在 gateway application.yml，不进 Nacos） */
+    private static AuthWhitelistProperties whitelistProps(String... entries) {
+        AuthWhitelistProperties props = new AuthWhitelistProperties();
+        props.setWhitelist(List.of(entries));
+        return props;
+    }
+
+    /** 白名单路径免 JWT 直接放行（登录端点未带凭证也必须可达，否则自锁） */
+    @Test
+    void whitelistPathPassesWithoutToken() {
+        when(chain.filter(any())).thenReturn(Mono.empty());
+        MockServerWebExchange exchange = get("http://localhost/sso/auth/login", h -> { });
+        filter.filter(exchange, chain).block();
+        verify(chain).filter(any());
+        assertThat(exchange.getResponse().getStatusCode()).isNull();
+    }
+
+    /** 空白名单启动 fail-fast：漏配 yml 直接拒绝启动而非静默全量鉴权 */
+    @Test
+    void emptyWhitelistFailsFast() {
+        AuthWhitelistProperties props = new AuthWhitelistProperties();
+        assertThatThrownBy(props::requireWhitelist)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("自锁");
     }
 
     /** spring-test 6.1 的 builder 无 headers(Consumer) 重载（6.2 才有）；HttpHeaders 本身是 MultiValueMap，中转适配 */

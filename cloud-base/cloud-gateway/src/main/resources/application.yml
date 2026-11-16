@@ -108,6 +108,33 @@ management:
       exposure:
         include: health,info
 
+# 网关鉴权白名单（AuthGlobalFilter 放行，startsWith 前缀匹配）：登录/刷新、demo、
+# inner 与 MCP 屏蔽（SetStatus 路由接管）、网关自身监控。
+# 固化在本文件随 jar 打包、刻意不进 Nacos——白名单是安全边界不开放热改；Nacos import
+# 优先级高于包内 yml，云上误配同名键会静默覆盖，以本文件为唯一真相源。
+# inner 各项带尾斜杠做段感知匹配——否则 startsWith 会误吞同级前缀路径
+# （如 /system/inner-secret/** 管理端点会被跳过鉴权）；MCP 屏蔽项无尾斜杠
+# （同 /system/mcp 先例）：rag 域无 /mcp 同级前缀兄弟路径，无误吞面；
+# 白名单使屏蔽路由跳过 JWT 鉴权——未带凭证请求也得 403 而非 401，屏蔽语义稳定。
+cloud:
+  gateway:
+    auth:
+      whitelist:
+        - /sso/auth/login
+        - /sso/auth/refresh
+        - /sso/demo
+        - /system/demo
+        - /bpmn/demo
+        - /task/demo
+        - /aggregate/demo
+        - /sso/inner/
+        - /system/inner/
+        - /bpmn/inner/
+        - /task/inner/
+        - /system/mcp
+        - /ai/rag/mcp
+        - /actuator
+
 # Nacos 配置 import 门控：local 激活时跳过 import（本地离线模式——配置取备份脚本生成的
 # application-local.yml，从本 src/main/resources 目录启动才命中 file:./ 搜索位，不触碰 Nacos；
 # 网关无服务专属 dataId，仅消费 cloud-common.yaml）；非 local 启动照常从 Nacos 拉取。

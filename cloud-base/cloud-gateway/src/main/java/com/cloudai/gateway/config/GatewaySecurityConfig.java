@@ -1,5 +1,6 @@
 package com.cloudai.gateway.config;
 
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.reactive.EnableWebFluxSecurity;
@@ -14,6 +15,7 @@ import org.springframework.security.web.server.SecurityWebFilterChain;
  */
 @Configuration
 @EnableWebFluxSecurity
+@EnableConfigurationProperties(AuthWhitelistProperties.class)
 public class GatewaySecurityConfig {
 
     @Bean
