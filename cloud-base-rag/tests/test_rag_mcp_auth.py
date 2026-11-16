@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cloud_base_rag.mcp_auth import RagMcpAuthMiddleware
+from cloud_base_rag.mcp.auth import RagMcpAuthMiddleware
 from cloud_ai_common.security import Identity, current_identity
 
 pytestmark = pytest.mark.anyio
@@ -106,11 +106,11 @@ def patched_deps(monkeypatch: pytest.MonkeyPatch):
                 error: Exception | None = None) -> FakeRedis:
         fake = FakeRedis(value=value, error=error)
         monkeypatch.setattr(
-            "cloud_base_rag.mcp_auth.get_settings",
+            "cloud_base_rag.mcp.auth.get_settings",
             lambda: SimpleNamespace(mcp=SimpleNamespace(client_secret=secret)),
         )
         monkeypatch.setattr(
-            "cloud_base_rag.mcp_auth.get_sso_redis_client", lambda: fake
+            "cloud_base_rag.mcp.auth.get_sso_redis_client", lambda: fake
         )
         return fake
 

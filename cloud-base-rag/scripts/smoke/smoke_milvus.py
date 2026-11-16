@@ -21,8 +21,8 @@ import time
 from langchain_core.documents import Document
 from langchain_milvus import Milvus
 
-from cloud_base_rag import embedding
-from cloud_base_rag import vectorstore
+from cloud_base_rag.pipeline import embedding
+from cloud_base_rag.pipeline import vectorstore
 
 sys.stdout.reconfigure(encoding="utf-8")  # Windows 控制台默认 GBK，强制 UTF-8 防中文乱码
 

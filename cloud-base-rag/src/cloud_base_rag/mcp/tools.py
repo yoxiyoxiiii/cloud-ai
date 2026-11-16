@@ -21,8 +21,8 @@ from pydantic import Field
 from starlette.middleware import Middleware
 
 from cloud_ai_common.exceptions import BusinessException
-from cloud_base_rag import retrieval
-from cloud_base_rag.mcp_auth import RagMcpAuthMiddleware
+from cloud_base_rag.mcp import retrieval
+from cloud_base_rag.mcp.auth import RagMcpAuthMiddleware
 from cloud_ai_common.security import current_identity
 
 logger = logging.getLogger(__name__)

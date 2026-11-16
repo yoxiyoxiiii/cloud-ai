@@ -1,4 +1,4 @@
-"""RAG 域业务编排：router → service → 管线组件（分层依赖单向）。
+"""RAG 域业务编排：router → service → pipeline 管线组件（分层依赖单向）。
 
 对话链（2026-10-13 首轮 + 2026-10-19 会话管理轮挂接）：service 负责会话校验/归属、
 问与答的落档编排（Redis message_store）、历史由服务端拼装（尾 history_limit 条单源）、
@@ -24,7 +24,8 @@ from cloud_base_rag.config import get_settings
 from cloud_ai_common.db.tx import current_session, transactional
 from cloud_ai_common.exceptions import BusinessException
 from cloud_ai_common.model_factory import get_chat_model
-from cloud_base_rag import dao, chunking, message_store, vectorstore
+from cloud_base_rag import dao
+from cloud_base_rag.pipeline import chunking, message_store, vectorstore
 from cloud_base_rag.entities import (
     AiChatSession,
     AiKnowledgeBase,
@@ -32,7 +33,7 @@ from cloud_base_rag.entities import (
     AiKbGrant,
     AiKnowledgeBaseFiles,
 )
-from cloud_base_rag.generation import to_lc_messages
+from cloud_base_rag.pipeline.generation import to_lc_messages
 from cloud_base_rag.constants import (
     CODE_CHUNK_PARAM_INVALID,
     CODE_FILE_NOT_EXISTS,
@@ -81,7 +82,7 @@ from cloud_base_rag.schemas import (
 )
 from cloud_ai_common.security import current_identity
 from cloud_base_rag.security import is_mgmt_exemption
-from cloud_base_rag.storage import get_storage
+from cloud_base_rag.pipeline.storage import get_storage
 
 logger = logging.getLogger(__name__)
 

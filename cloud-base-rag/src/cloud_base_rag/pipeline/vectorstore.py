@@ -5,7 +5,7 @@ from langchain_milvus import Milvus
 from pymilvus import MilvusClient
 
 from cloud_base_rag.config import get_settings
-from cloud_base_rag import embedding
+from cloud_base_rag.pipeline import embedding
 
 
 @lru_cache

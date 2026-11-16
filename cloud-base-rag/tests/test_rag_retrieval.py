@@ -1,4 +1,4 @@
-"""检索编排测试（rag/retrieval.search_kb_chunks）：SQLite 内存替身 + 假 Milvus。
+"""检索编排测试（mcp/retrieval.search_kb_chunks）：SQLite 内存替身 + 假 Milvus。
 
 覆盖五态（kb 不存在/无权/管理豁免/本人建库/授权命中）+ 空 chunks 合法 +
 Milvus 异常转 5030 + top_k 钳制；错误文本与契约 2026-11-13-rag-mcp-tools-api.md
@@ -11,7 +11,9 @@ from langchain_core.documents import Document
 from cloud_ai_common.db import tx
 from cloud_ai_common.db.base import set_current_account
 from cloud_ai_common.exceptions import BusinessException
-from cloud_base_rag import dao, retrieval, vectorstore
+from cloud_base_rag import dao
+from cloud_base_rag.mcp import retrieval
+from cloud_base_rag.pipeline import vectorstore
 from cloud_base_rag.entities import AiKbGrant, AiKnowledgeBase
 from cloud_ai_common.security import Identity, set_current_identity
 from tests.db_testing import make_service_session_factory

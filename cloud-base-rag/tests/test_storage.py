@@ -8,9 +8,9 @@ from datetime import timedelta
 
 import pytest
 
-from cloud_base_rag import storage
 from cloud_base_rag.config import MinIOSettings
-from cloud_base_rag.storage import MinioStorage, get_storage
+from cloud_base_rag.pipeline import storage
+from cloud_base_rag.pipeline.storage import MinioStorage, get_storage
 
 BUCKET = "test-bucket"
 

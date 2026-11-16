@@ -2,7 +2,7 @@
 
 职责边界：kb 存在/可见性前置校验（防越权面，判定链与 service.page_list_kb_files
 同源同判）→ Milvus 向量检索 → 契约出参 dict（2026-11-13-rag-mcp-tools-api.md §3.3）。
-工具定义与 FastMCP 实例在 mcp_tools.py；本模块不 import agent/mcp_server/mcp 域。
+工具定义与 FastMCP 实例在同包 tools.py；本模块不 import 兄弟工程（agent）包。
 
 事务口径：MySQL 点查走短事务辅助函数（@transactional 只包校验段，Milvus 检索
 不占数据库事务）；检索全程只读。
@@ -12,7 +12,8 @@ import logging
 
 from cloud_ai_common.db.tx import current_session, transactional
 from cloud_ai_common.exceptions import BusinessException
-from cloud_base_rag import dao, vectorstore
+from cloud_base_rag import dao
+from cloud_base_rag.pipeline import vectorstore
 from cloud_base_rag.entities import AiKnowledgeBase
 # 错误码常量集中地（文本即契约 §3.4，两处共用防漂移；原从 service import，
 # 2026-11-15 抽取到 constants.py 公共位——本模块不再依赖 service）

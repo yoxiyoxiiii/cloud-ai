@@ -1,4 +1,4 @@
-"""embedding 工厂断言（cloud_base_rag.embedding，三工程拆分后从原共享
+"""embedding 工厂断言（cloud_base_rag.pipeline.embedding，三工程拆分后从原共享
 test_model_factory.py 随功能迁入；chat 工厂用例在 cloud-ai-common/tests/）。
 
 OllamaEmbeddings 构造零网络，真构造断言 base_url/model 传递与单例语义；
@@ -8,9 +8,9 @@ monkeypatch 工厂模块的 get_settings 指向空 env 的 Settings。
 import pytest
 from langchain_ollama import OllamaEmbeddings
 
-from cloud_base_rag import embedding
 from cloud_base_rag.config import Settings
-from cloud_base_rag.embedding import get_embedding_model
+from cloud_base_rag.pipeline import embedding
+from cloud_base_rag.pipeline.embedding import get_embedding_model
 
 
 @pytest.fixture(autouse=True)

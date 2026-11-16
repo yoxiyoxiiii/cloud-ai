@@ -31,7 +31,7 @@ from cloud_base_rag.config import get_settings
 from cloud_ai_common.db import dispose_engine
 from cloud_ai_common.exception_handler import register_exception_handlers
 from cloud_ai_common.nacos_registration import NacosRegistration
-from cloud_base_rag.mcp_tools import build_mcp_asgi_app
+from cloud_base_rag.mcp.tools import build_mcp_asgi_app
 from cloud_base_rag.router import kb_delete_router
 from cloud_base_rag.router import kb_read_router
 from cloud_base_rag.router import kb_router

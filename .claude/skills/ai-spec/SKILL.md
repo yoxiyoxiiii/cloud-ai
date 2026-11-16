@@ -37,7 +37,7 @@ router  →  service  →  dao  →  entities
 | dao | 只写查询与 flush | commit / rollback / begin（守护测试检查）；import service/router |
 | entities | 表结构映射 | import dao/service/router |
 
-分层落位在各服务工程包内（如 `cloud_base_rag.router/service/dao/entities`）；共享的事务基建在 `cloud_ai_common.db`。外部系统（Milvus、Ollama、MinIO、模型）的封装放**服务工程包根**独立模块（如 `cloud_base_rag/vectorstore.py`、`cloud_base_rag/embedding.py`），由 service 调用，不进 dao、不进共享库（共享库只收两服务都消费的底座件）。
+分层落位在各服务工程包内（如 `cloud_base_rag.router/service/dao/entities`）；共享的事务基建在 `cloud_ai_common.db`。外部系统（Milvus、Ollama、MinIO、模型）的封装放服务工程 `pipeline/` 子包独立模块（如 `cloud_base_rag/pipeline/vectorstore.py`、`cloud_base_rag/pipeline/embedding.py`，2026-11-15 rag 分包轮起），由 service 调用，不进 dao、不进共享库（共享库只收两服务都消费的底座件）。MCP 服务端面（认证/工具/检索编排）归 `mcp/` 子包。
 
 ## 二、实体（entities.py）
 
@@ -103,7 +103,7 @@ async def create_xxx(req: CreateXxxReq) -> int:
 
 - 业务失败抛 `BusinessException(msg, code)`——**msg 在前，code 在后**，与 Java 习惯相反，别写反。
 - 全局 handler 转成 HTTP 200 + `R{code, msg}`。
-- AI 段错误码是 **5xxx**，在 service 模块顶部以常量声明（`CODE_X` 与 `MSG_X` 成对），接续上一个号分配。当前已用到 5030。
+- AI 段错误码是 **5xxx**，集中声明在包根 `constants.py`（`CODE_X` 与 `MSG_X` 成对，2026-11-15 从 service 顶部块下沉），接续上一个号分配。当前 rag 已用到 5014（下一可用 5015），检索失败 5030 另在 `mcp/retrieval.py`。
 - except 块要么记 `logger.error` 再转业务异常，要么第一行就是 `raise` 透传（守护测试检查）。
 - 错误信息里**不得含 API key 和上游原始响应**。
 

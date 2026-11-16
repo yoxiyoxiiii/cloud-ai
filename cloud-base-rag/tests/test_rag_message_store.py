@@ -7,8 +7,8 @@ redis-py：lpush 头插、ltrim 保留闭区间、delete 返回删除键数。
 
 import pytest
 
-from cloud_base_rag import message_store
-from cloud_base_rag.message_store import (
+from cloud_base_rag.pipeline import message_store
+from cloud_base_rag.pipeline.message_store import (
     MAX_MESSAGES_PER_SESSION,
     append_message,
     delete_messages,

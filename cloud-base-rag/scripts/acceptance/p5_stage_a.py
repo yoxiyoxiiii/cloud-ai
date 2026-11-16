@@ -51,7 +51,7 @@ def db_query(sql: str, args: tuple = ()) -> list[tuple]:
 
 
 def main() -> None:
-    from cloud_base_rag import message_store
+    from cloud_base_rag.pipeline import message_store
     from cloud_ai_common.redis_client import get_redis_client
 
     # ---- 基线 ----

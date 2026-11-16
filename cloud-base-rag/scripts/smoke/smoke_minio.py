@@ -16,7 +16,7 @@ import urllib.request
 
 from minio.error import S3Error
 
-from cloud_base_rag.storage import get_storage
+from cloud_base_rag.pipeline.storage import get_storage
 
 sys.stdout.reconfigure(encoding="utf-8")  # Windows 控制台默认 GBK，强制 UTF-8 防中文乱码
 
