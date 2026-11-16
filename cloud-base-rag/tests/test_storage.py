@@ -8,7 +8,7 @@ from datetime import timedelta
 
 import pytest
 
-from cloud_base_rag.config import MinIOSettings
+from cloud_base_rag.core.config import MinIOSettings
 from cloud_base_rag.pipeline import storage
 from cloud_base_rag.pipeline.storage import MinioStorage, get_storage
 

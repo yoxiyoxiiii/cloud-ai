@@ -10,7 +10,7 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from cloud_base_rag.schemas import (
+from cloud_base_rag.domain.schemas import (
     ChatSendReq,
     ChatSessionVo,
     RagChatAnswerVo,
@@ -97,7 +97,7 @@ def test_sessionmessagesvo_shape() -> None:
 
 # ---------- 知识库管理面出参 VO（2026-10-15 管理轮，契约 2026-10-14-ai-kb-api.md §4/§5） ----------
 
-from cloud_base_rag.schemas import (
+from cloud_base_rag.domain.schemas import (
     AiPageResult,
     KbFileVo,
     KbVo,

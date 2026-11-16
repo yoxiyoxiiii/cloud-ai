@@ -15,13 +15,13 @@ import pytest
 from langchain.messages import HumanMessage
 from sqlalchemy.exc import IntegrityError
 
-from cloud_base_rag.config import Settings
+from cloud_base_rag.core.config import Settings
 from cloud_ai_common.db import tx
 from cloud_ai_common.db.base import set_current_account
 from cloud_ai_common.exceptions import BusinessException
-from cloud_base_rag import service
-from cloud_base_rag.dao import delete_kb_by_id, find_kb_by_name
-from cloud_base_rag.schemas import ChatSendReq, CreateKBReq, RagChatMessage
+from cloud_base_rag.domain import service
+from cloud_base_rag.domain.dao import delete_kb_by_id, find_kb_by_name
+from cloud_base_rag.domain.schemas import ChatSendReq, CreateKBReq, RagChatMessage
 from cloud_ai_common.security import Identity, set_current_identity
 from tests.db_testing import make_service_session_factory
 
@@ -106,8 +106,8 @@ def _login_chat_identity(user_id: int | None = 952) -> None:
 
 async def _seed_session(factory, user_id: int = 952) -> int:
     """直接走 dao 造一条会话（不经 service.create_session，保持用例聚焦被测编排）。"""
-    from cloud_base_rag.dao import save_session
-    from cloud_base_rag.entities import AiChatSession
+    from cloud_base_rag.domain.dao import save_session
+    from cloud_base_rag.domain.entities import AiChatSession
     async with factory() as s:
         async with s.begin():
             row = await save_session(s, AiChatSession(user_id=user_id))
@@ -194,7 +194,7 @@ async def test_chat_history_from_store_tail_with_question(
 
 async def test_chat_first_question_renames_title(monkeypatch: pytest.MonkeyPatch) -> None:
     """首问改题：默认「新对话」被问句前 16 字符替换；第二问不再覆盖。"""
-    from cloud_base_rag.dao import find_session_by_id
+    from cloud_base_rag.domain.dao import find_session_by_id
     async with make_service_session_factory() as factory:
         store, session_id = await _prepare_chat_env(monkeypatch, factory)
         install_model(monkeypatch, FakeModel())
@@ -217,7 +217,7 @@ async def test_chat_llm_failure_question_kept_no_answer(
     async with make_service_session_factory() as factory:
         store, session_id = await _prepare_chat_env(monkeypatch, factory)
         install_model(monkeypatch, FakeModel(ainvoke_error=RuntimeError("connect timeout")))
-        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.service"):
+        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.domain.service"):
             with pytest.raises(BusinessException) as ei:
                 await service.chat_answer(_req(session_id))
     assert ei.value.code == 5001
@@ -322,7 +322,7 @@ async def test_create_session_returns_default_title(monkeypatch: pytest.MonkeyPa
 
 async def test_page_list_sessions_owner_scope_id_desc(monkeypatch: pytest.MonkeyPatch) -> None:
     """列表仅本人、id 倒序；他人会话与软删不可见。"""
-    from cloud_base_rag.dao import delete_session_by_id
+    from cloud_base_rag.domain.dao import delete_session_by_id
     async with make_service_session_factory() as factory:
         monkeypatch.setattr(tx, "get_session_factory", lambda: factory)
         first = await _seed_session(factory, user_id=952)
@@ -377,7 +377,7 @@ async def test_list_session_messages_not_owner_5013(monkeypatch: pytest.MonkeyPa
 async def test_delete_session_double_clear_redis_first(
         monkeypatch: pytest.MonkeyPatch) -> None:
     """双清：Redis DEL 先于 MySQL 软删（顺序保障最坏中间态可重删收敛、无孤儿键）。"""
-    from cloud_base_rag import dao as rag_dao
+    from cloud_base_rag.domain import dao as rag_dao
     async with make_service_session_factory() as factory:
         store, session_id = await _prepare_chat_env(monkeypatch, factory)
         store.append_message(session_id, "user", "hi")
@@ -406,14 +406,14 @@ async def test_delete_session_twice_5012(monkeypatch: pytest.MonkeyPatch) -> Non
 async def test_delete_session_redis_failure_mysql_untouched(
         monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     """Redis DEL 失败：log.error 后原样上抛（全局 500），MySQL 未动——软删未发生可重试。"""
-    from cloud_base_rag.dao import find_session_by_id
+    from cloud_base_rag.domain.dao import find_session_by_id
     async with make_service_session_factory() as factory:
         store, session_id = await _prepare_chat_env(monkeypatch, factory)
 
         def boom_delete(sid: int) -> None:
             raise RuntimeError("redis down")
         monkeypatch.setattr(store, "delete_messages", boom_delete)
-        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.service"):
+        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.domain.service"):
             with pytest.raises(RuntimeError, match="redis down"):
                 await service.delete_session(session_id)
         assert "redis down" in caplog.text
@@ -495,7 +495,7 @@ import json
 
 from sqlalchemy import select
 
-from cloud_base_rag.dao import (
+from cloud_base_rag.domain.dao import (
     delete_kb_file_by_id,
     find_chunk_by_id,
     find_kb_by_id,
@@ -504,13 +504,13 @@ from cloud_base_rag.dao import (
     save_kb,
     save_kb_file,
 )
-from cloud_base_rag.entities import (
+from cloud_base_rag.domain.entities import (
     AiKbChunk,
     AiKbGrant,
     AiKnowledgeBase,
     AiKnowledgeBaseFiles,
 )
-from cloud_base_rag.schemas import AiPageResult, KbFileVo, KbVo, UpdateKBReq
+from cloud_base_rag.domain.schemas import AiPageResult, KbFileVo, KbVo, UpdateKBReq
 
 
 async def _seed_kb(factory, name: str, description: str | None) -> int:
@@ -766,7 +766,7 @@ async def test_delete_kb_drop_failed_5008_mysql_untouched(
             monkeypatch, FakeStorage(), FakeVectorDrop(drop_error=RuntimeError("milvus down")),
             events)
         kb_id = await _seed_kb(factory, "e2e_kb_drop_fail", "d")
-        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.service"):
+        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.domain.service"):
             with pytest.raises(BusinessException) as ei:
                 await service.delete_kb(kb_id)
         assert ei.value.code == 5008
@@ -884,8 +884,8 @@ async def test_page_list_kb_files_soft_deleted_invisible(monkeypatch: pytest.Mon
 
 # ---------- 知识库授权编排（2026-10-18 权限轮，契约 §2/§3：全删全插 + 三组分型回显） ----------
 
-from cloud_base_rag import dao as rag_dao
-from cloud_base_rag.schemas import KbPermsSaveReq
+from cloud_base_rag.domain import dao as rag_dao
+from cloud_base_rag.domain.schemas import KbPermsSaveReq
 
 
 async def _seed_grants(factory, kb_id: int, role_ids: tuple[int, ...] = (),
@@ -1291,7 +1291,7 @@ async def test_upload_vector_write_failed_5014_file_registered(
     storage = FakeStorage()
     saved: dict = {}
     upload = _fake_upload("e2e_doc.pdf", b"%PDF-1.4 e2e", "application/pdf")
-    with caplog.at_level(logging.ERROR, logger="cloud_base_rag.service"):
+    with caplog.at_level(logging.ERROR, logger="cloud_base_rag.domain.service"):
         with pytest.raises(BusinessException) as ei:
             await _run_upload(monkeypatch, storage, saved, upload,
                               milvus=FakeMilvus(add_error=RuntimeError("milvus down")))
@@ -1306,8 +1306,8 @@ async def test_upload_vector_write_failed_5014_file_registered(
 
 from minio.error import S3Error
 
-from cloud_base_rag.dao import delete_chunks_by_file
-from cloud_base_rag.schemas import ReembeddingReq
+from cloud_base_rag.domain.dao import delete_chunks_by_file
+from cloud_base_rag.domain.schemas import ReembeddingReq
 
 _REEMBED_PARENT = Document(page_content="e2e parent text",
                            metadata={"id": "e2e-p", "parent_id": "", "type": 0})
@@ -1406,7 +1406,7 @@ async def test_reembedding_s3error_5007(monkeypatch: pytest.MonkeyPatch,
             None, "NoSuchKey", "The specified key does not exist",
             "/kb-bucket/kb/1/e2e_doc.pdf", "e2e-req-id", "e2e-host-id"))
         _install_reembed_fakes(monkeypatch, storage, FakeMilvus())
-        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.service"):
+        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.domain.service"):
             with pytest.raises(BusinessException) as ei:
                 await service.reembedding(ReembeddingReq(file_id=file_id))
         assert ei.value.code == 5007
@@ -1538,7 +1538,7 @@ async def test_reembedding_purge_false_5008(monkeypatch: pytest.MonkeyPatch,
         _, gen_child = await _seed_gen_chunk(factory, kb_id, file_id, "g1")
         milvus = FakeMilvus(delete_result=False)
         _install_reembed_fakes(monkeypatch, FakeStorage(), milvus)
-        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.service"):
+        with caplog.at_level(logging.ERROR, logger="cloud_base_rag.domain.service"):
             with pytest.raises(BusinessException) as ei:
                 await service.reembedding(ReembeddingReq(file_id=file_id))
         assert ei.value.code == 5008

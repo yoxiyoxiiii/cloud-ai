@@ -6,7 +6,7 @@
 
 import redis
 
-from cloud_base_rag.sso_redis import get_sso_redis_client
+from cloud_base_rag.core.sso_redis import get_sso_redis_client
 
 
 def test_sso_client_singleton() -> None:

@@ -27,17 +27,17 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 
-from cloud_base_rag.config import get_settings
+from cloud_base_rag.core.config import get_settings
 from cloud_ai_common.db import dispose_engine
 from cloud_ai_common.exception_handler import register_exception_handlers
 from cloud_ai_common.nacos_registration import NacosRegistration
 from cloud_base_rag.mcp.tools import build_mcp_asgi_app
-from cloud_base_rag.router import kb_delete_router
-from cloud_base_rag.router import kb_read_router
-from cloud_base_rag.router import kb_router
-from cloud_base_rag.router import kb_update_router
-from cloud_base_rag.router import router as rag_router
-from cloud_base_rag.router import session_router
+from cloud_base_rag.api.router import kb_delete_router
+from cloud_base_rag.api.router import kb_read_router
+from cloud_base_rag.api.router import kb_router
+from cloud_base_rag.api.router import kb_update_router
+from cloud_base_rag.api.router import router as rag_router
+from cloud_base_rag.api.router import session_router
 from cloud_ai_common.response import R
 
 # MCP 子应用模块级构造（/mcp 端点；内部路径 /，mount 前缀即对外路径）

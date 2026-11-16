@@ -4,7 +4,7 @@
 from langchain.messages import AIMessage, HumanMessage
 
 from cloud_base_rag.pipeline.generation import to_lc_messages
-from cloud_base_rag.schemas import RagChatMessage
+from cloud_base_rag.domain.schemas import RagChatMessage
 
 
 def test_to_lc_messages() -> None:

@@ -12,19 +12,19 @@ import logging
 
 from cloud_ai_common.db.tx import current_session, transactional
 from cloud_ai_common.exceptions import BusinessException
-from cloud_base_rag import dao
+from cloud_base_rag.domain import dao
 from cloud_base_rag.pipeline import vectorstore
-from cloud_base_rag.entities import AiKnowledgeBase
+from cloud_base_rag.domain.entities import AiKnowledgeBase
 # 错误码常量集中地（文本即契约 §3.4，两处共用防漂移；原从 service import，
 # 2026-11-15 抽取到 constants.py 公共位——本模块不再依赖 service）
-from cloud_base_rag.constants import (
+from cloud_base_rag.core.constants import (
     CODE_KB_NOT_EXISTS,
     CODE_KB_NO_ACCESS,
     MSG_KB_NOT_EXISTS,
     MSG_KB_NO_ACCESS,
 )
 from cloud_ai_common.security import Identity
-from cloud_base_rag.security import is_mgmt_exemption
+from cloud_base_rag.core.security import is_mgmt_exemption
 
 logger = logging.getLogger(__name__)
 

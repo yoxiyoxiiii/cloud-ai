@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from langchain_ollama import OllamaEmbeddings
 
-from cloud_base_rag.config import EmbeddingModelSettings, get_settings
+from cloud_base_rag.core.config import EmbeddingModelSettings, get_settings
 
 
 @lru_cache

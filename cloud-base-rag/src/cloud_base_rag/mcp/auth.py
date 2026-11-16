@@ -23,8 +23,8 @@ import logging
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from cloud_base_rag.config import get_settings
-from cloud_base_rag.sso_redis import get_sso_redis_client
+from cloud_base_rag.core.config import get_settings
+from cloud_base_rag.core.sso_redis import get_sso_redis_client
 from cloud_ai_common.security import Identity, reset_current_identity, set_current_identity
 
 logger = logging.getLogger(__name__)

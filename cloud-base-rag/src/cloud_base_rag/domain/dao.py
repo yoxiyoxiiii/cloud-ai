@@ -23,7 +23,7 @@ from cloud_ai_common.db.base import (
     fill_create_audit,
     fill_update_audit,
 )
-from cloud_base_rag.entities import (
+from cloud_base_rag.domain.entities import (
     AiChatSession,
     AiKbChunk,
     AiKbGrant,

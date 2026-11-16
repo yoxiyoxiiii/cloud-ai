@@ -10,8 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from cloud_ai_common.db.base import set_current_account
-from cloud_base_rag import dao
-from cloud_base_rag.dao import (
+from cloud_base_rag.domain import dao
+from cloud_base_rag.domain.dao import (
     count_chunks_by_kb,
     count_kb_files,
     count_kbs,
@@ -50,7 +50,7 @@ from cloud_base_rag.dao import (
     update_kb_file,
     update_session,
 )
-from cloud_base_rag.entities import (
+from cloud_base_rag.domain.entities import (
     AiChatSession,
     AiKbChunk,
     AiKbGrant,

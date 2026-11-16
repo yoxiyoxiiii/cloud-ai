@@ -20,13 +20,13 @@ from langchain_milvus import Milvus
 from minio.error import S3Error
 from sqlalchemy.exc import IntegrityError
 
-from cloud_base_rag.config import get_settings
+from cloud_base_rag.core.config import get_settings
 from cloud_ai_common.db.tx import current_session, transactional
 from cloud_ai_common.exceptions import BusinessException
 from cloud_ai_common.model_factory import get_chat_model
-from cloud_base_rag import dao
+from cloud_base_rag.domain import dao
 from cloud_base_rag.pipeline import chunking, message_store, vectorstore
-from cloud_base_rag.entities import (
+from cloud_base_rag.domain.entities import (
     AiChatSession,
     AiKnowledgeBase,
     AiKbChunk,
@@ -34,7 +34,7 @@ from cloud_base_rag.entities import (
     AiKnowledgeBaseFiles,
 )
 from cloud_base_rag.pipeline.generation import to_lc_messages
-from cloud_base_rag.constants import (
+from cloud_base_rag.core.constants import (
     CODE_CHUNK_PARAM_INVALID,
     CODE_FILE_NOT_EXISTS,
     CODE_FILE_NO_ORIGINAL,
@@ -64,7 +64,7 @@ from cloud_base_rag.constants import (
     PARENT_CHUNK_SIZE_FIXED,
     TITLE_MAX_CHARS,
 )
-from cloud_base_rag.schemas import (
+from cloud_base_rag.domain.schemas import (
     AiPageResult,
     ChatSendReq,
     ChatSessionVo,
@@ -81,7 +81,7 @@ from cloud_base_rag.schemas import (
     UpdateKBReq,
 )
 from cloud_ai_common.security import current_identity
-from cloud_base_rag.security import is_mgmt_exemption
+from cloud_base_rag.core.security import is_mgmt_exemption
 from cloud_base_rag.pipeline.storage import get_storage
 
 logger = logging.getLogger(__name__)

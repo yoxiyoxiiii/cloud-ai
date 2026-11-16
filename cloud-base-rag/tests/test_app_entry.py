@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cloud_base_rag.app import app
-from cloud_base_rag.config import get_settings
+from cloud_base_rag.core.config import get_settings
 
 
 class FakeNacosNamingService:

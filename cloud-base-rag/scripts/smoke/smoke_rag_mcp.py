@@ -22,7 +22,7 @@ import sys
 import urllib.error
 import urllib.request
 
-from cloud_base_rag.config import get_settings
+from cloud_base_rag.core.config import get_settings
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -100,7 +100,7 @@ def ai_headers(jwt: str) -> dict[str, str]:
 
 def check_session_source(jwt: str) -> None:
     """步骤 ②：6379 会话键连通——jti 命中 sso:online:{jti} 且五要素字段在。"""
-    from cloud_base_rag.sso_redis import get_sso_redis_client
+    from cloud_base_rag.core.sso_redis import get_sso_redis_client
 
     jti = jwt_jti(jwt)
     raw = get_sso_redis_client().get(f"sso:online:{jti}")
@@ -201,7 +201,7 @@ def _pick_active_kb() -> int | None:
     """挑一条活知识库行（优先有子块向量的；无则任一活行——空库空结果也是合法断言面）。"""
     import pymysql
 
-    from cloud_base_rag.config import get_settings
+    from cloud_base_rag.core.config import get_settings
 
     db = get_settings().db
     conn = pymysql.connect(host=db.host, port=db.port, user=db.user,

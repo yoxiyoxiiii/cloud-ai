@@ -2,7 +2,7 @@
 
 from sqlalchemy import UniqueConstraint, inspect
 
-from cloud_base_rag.entities import (
+from cloud_base_rag.domain.entities import (
     AiKbChunk,
     AiKbGrant,
     AiKnowledgeBase,
@@ -104,7 +104,7 @@ def test_grant_subject_type_enum():
 
 
 def test_chat_session_table_and_columns_match_ddl():
-    from cloud_base_rag.entities import AiChatSession
+    from cloud_base_rag.domain.entities import AiChatSession
     assert AiChatSession.__tablename__ == "ai_chat_session"
     cols = {c.name for c in inspect(AiChatSession).columns}
     assert cols == {"id", "user_id", "title",
@@ -112,7 +112,7 @@ def test_chat_session_table_and_columns_match_ddl():
 
 
 def test_chat_session_index_and_default_title():
-    from cloud_base_rag.entities import AiChatSession
+    from cloud_base_rag.domain.entities import AiChatSession
     assert any(ix.name == "idx_user" for ix in AiChatSession.__table__.indexes)
     # 无唯一键：会话是私有资源，重名无害无查重需求（与 kb 的 uk_name 对照）
     constraints = [c for c in AiChatSession.__table__.constraints

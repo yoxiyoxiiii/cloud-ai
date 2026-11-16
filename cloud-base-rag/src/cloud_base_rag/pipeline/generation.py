@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from langchain.messages import AIMessage, HumanMessage
 from langchain_core.messages import BaseMessage
 
-from cloud_base_rag.schemas import RagChatMessage
+from cloud_base_rag.domain.schemas import RagChatMessage
 
 
 def to_lc_messages(history: Sequence[RagChatMessage]) -> list[BaseMessage]:

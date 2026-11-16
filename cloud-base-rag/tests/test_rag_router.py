@@ -16,15 +16,15 @@ from fastapi.testclient import TestClient
 
 from cloud_ai_common.exception_handler import register_exception_handlers
 from cloud_ai_common.exceptions import BusinessException
-from cloud_base_rag import router as router_module
-from cloud_base_rag import service as service_module
-from cloud_base_rag.router import kb_delete_router
-from cloud_base_rag.router import kb_read_router
-from cloud_base_rag.router import kb_router
-from cloud_base_rag.router import kb_update_router
-from cloud_base_rag.router import router as rag_router
-from cloud_base_rag.router import session_router
-from cloud_base_rag.schemas import AiPageResult, KbFileVo, KbVo, RagChatAnswerVo
+from cloud_base_rag.api import router as router_module
+from cloud_base_rag.domain import service as service_module
+from cloud_base_rag.api.router import kb_delete_router
+from cloud_base_rag.api.router import kb_read_router
+from cloud_base_rag.api.router import kb_router
+from cloud_base_rag.api.router import kb_update_router
+from cloud_base_rag.api.router import router as rag_router
+from cloud_base_rag.api.router import session_router
+from cloud_base_rag.domain.schemas import AiPageResult, KbFileVo, KbVo, RagChatAnswerVo
 
 PERMS: dict[str, str] = {"X-User-Perms": "ai:chat:list"}
 BODY: dict[str, object] = {"session_id": 12, "question": "hi"}
@@ -236,8 +236,8 @@ def test_stream_real_5002_no_key_frame(client: TestClient,
     # 本用例变真网络调用），工厂 5002 → service 透传 → msg 帧。
     from cloud_ai_common.config import LLMSettings
     from cloud_ai_common import model_factory
-    from cloud_base_rag import service
-    from cloud_base_rag.config import Settings
+    from cloud_base_rag.domain import service
+    from cloud_base_rag.core.config import Settings
     from cloud_ai_common.model_factory import get_chat_model
     mock_prepare(monkeypatch)
     monkeypatch.setattr(service, "get_settings",
@@ -254,7 +254,7 @@ def test_stream_real_5002_no_key_frame(client: TestClient,
 
 from datetime import datetime
 
-from cloud_base_rag.schemas import ChatSessionVo, SessionMessageVo, SessionMessagesVo
+from cloud_base_rag.domain.schemas import ChatSessionVo, SessionMessageVo, SessionMessagesVo
 
 
 def fake_session_vo(session_id: int = 12) -> ChatSessionVo:
@@ -744,7 +744,7 @@ def test_kb_reembed_ok_data_null_and_body_passthrough(
 
 # ---------- 知识库授权端点（2026-10-18 权限轮，契约 2026-10-18-kb-permission-api.md §2/§3） ----------
 
-from cloud_base_rag.schemas import KbPermsVo
+from cloud_base_rag.domain.schemas import KbPermsVo
 
 
 def test_kb_perms_get_no_perms_403(client: TestClient) -> None:

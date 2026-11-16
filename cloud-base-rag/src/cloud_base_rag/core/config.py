@@ -18,10 +18,10 @@ from cloud_ai_common.config import CommonSettings, DatabaseSettings, set_setting
 # setdefault 提供；本模块级再 setdefault 一次兜测试链——测试 import config 不经入口。
 os.environ.setdefault("CLOUD_BASE_AI_NACOS__SERVICE_NAME", "cloud-base-rag")
 
-# 工程根绝对路径（src/cloud_base_rag/config.py 三层上 = cloud-base-rag/）。
+# 工程根绝对路径（src/cloud_base_rag/core/config.py 四层上 = cloud-base-rag/）。
 # env_file 必须绝对路径：pydantic-settings 相对路径按进程 cwd 解析，起服命令 cwd
 # 在仓库根会指错。
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 
 
 class EmbeddingModelSettings(BaseModel):
@@ -71,7 +71,7 @@ class SsoRedisSettings(BaseModel):
     默认本机事实值零配置即连。
 
     env 覆盖形态：CLOUD_BASE_AI_SSO_REDIS__HOST / __PORT / __PASSWORD。
-    消费方 cloud_base_rag.sso_redis.get_sso_redis_client()。
+    消费方 cloud_base_rag.core.sso_redis.get_sso_redis_client()。
     """
 
     host: str = "127.0.0.1"

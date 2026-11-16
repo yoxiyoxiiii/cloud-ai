@@ -11,7 +11,7 @@ docs/superpowers/specs/2026-10-19-ai-chat-session-design.md §3.2：回显是产
 （不套 run_in_threadpool）。
 """
 
-from cloud_base_rag.schemas import RagChatMessage
+from cloud_base_rag.domain.schemas import RagChatMessage
 from cloud_ai_common.redis_client import get_redis_client
 
 RAG_MESSAGE_KEY_PREFIX = "rag:messages:"

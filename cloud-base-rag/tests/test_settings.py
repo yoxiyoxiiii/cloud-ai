@@ -7,7 +7,7 @@ env 覆盖 + 库名/端口/env_file 落点（三工程拆分后从原共享 test
 
 from pathlib import Path
 
-from cloud_base_rag.config import BASE_DIR, Settings
+from cloud_base_rag.core.config import BASE_DIR, Settings
 
 
 def test_db_defaults_cloud_ai_rag(monkeypatch) -> None:
@@ -25,7 +25,7 @@ def test_app_port_default_8011(monkeypatch) -> None:
 
 
 def test_env_file_points_to_rag_project_root() -> None:
-    """env_file 落点=本工程根（config.py 在 src/cloud_base_rag/ 下三层上=cloud-base-rag/）。"""
+    """env_file 落点=本工程根（config.py 在 src/cloud_base_rag/core/ 下四层上=cloud-base-rag/）。"""
     assert BASE_DIR == Path(__file__).resolve().parents[1]
     assert Settings.model_config.get("env_file") == str(BASE_DIR / ".env")
 

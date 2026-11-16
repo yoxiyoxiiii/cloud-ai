@@ -11,10 +11,10 @@ from langchain_core.documents import Document
 from cloud_ai_common.db import tx
 from cloud_ai_common.db.base import set_current_account
 from cloud_ai_common.exceptions import BusinessException
-from cloud_base_rag import dao
+from cloud_base_rag.domain import dao
 from cloud_base_rag.mcp import retrieval
 from cloud_base_rag.pipeline import vectorstore
-from cloud_base_rag.entities import AiKbGrant, AiKnowledgeBase
+from cloud_base_rag.domain.entities import AiKbGrant, AiKnowledgeBase
 from cloud_ai_common.security import Identity, set_current_identity
 from tests.db_testing import make_service_session_factory
 

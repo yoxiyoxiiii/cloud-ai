@@ -8,7 +8,7 @@ monkeypatch 工厂模块的 get_settings 指向空 env 的 Settings。
 import pytest
 from langchain_ollama import OllamaEmbeddings
 
-from cloud_base_rag.config import Settings
+from cloud_base_rag.core.config import Settings
 from cloud_base_rag.pipeline import embedding
 from cloud_base_rag.pipeline.embedding import get_embedding_model
 
@@ -26,7 +26,7 @@ def _use_embedding(cfg, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_embedding_construct_passes_params(monkeypatch: pytest.MonkeyPatch) -> None:
-    from cloud_base_rag.config import EmbeddingModelSettings
+    from cloud_base_rag.core.config import EmbeddingModelSettings
     _use_embedding(EmbeddingModelSettings(base_url="http://127.0.0.1:11434",
                                           model="qllama/bge-large-zh-v1.5:latest"), monkeypatch)
     e = get_embedding_model()  # OllamaEmbeddings 构造零网络调用
@@ -36,6 +36,6 @@ def test_embedding_construct_passes_params(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_embedding_factory_cached(monkeypatch: pytest.MonkeyPatch) -> None:
-    from cloud_base_rag.config import EmbeddingModelSettings
+    from cloud_base_rag.core.config import EmbeddingModelSettings
     _use_embedding(EmbeddingModelSettings(), monkeypatch)  # 默认值即可（本地端点零鉴权）
     assert get_embedding_model() is get_embedding_model()

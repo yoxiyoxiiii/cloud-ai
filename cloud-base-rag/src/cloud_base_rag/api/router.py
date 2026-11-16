@@ -22,8 +22,8 @@ from fastapi import APIRouter, Depends, Query, UploadFile, File
 from fastapi.responses import StreamingResponse
 
 from cloud_ai_common.exceptions import BusinessException
-from cloud_base_rag import service
-from cloud_base_rag.schemas import (
+from cloud_base_rag.domain import service
+from cloud_base_rag.domain.schemas import (
     AiPageResult,
     ChatSendReq,
     ChatSessionVo,
@@ -37,7 +37,7 @@ from cloud_base_rag.schemas import (
     SessionMessagesVo,
     UpdateKBReq,
 )
-from cloud_base_rag.service import chat_answer, prepare_chat, stream_chat_answer
+from cloud_base_rag.domain.service import chat_answer, prepare_chat, stream_chat_answer
 from cloud_ai_common.response import R
 from cloud_ai_common.security import require_perms
 
