@@ -38,6 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * Collection/数组展开；白名单实例消费后<b>不再下钻其字段</b>（列 VO 字段是叶子，其翻译字段归
  * TranslateAdvisor）；其余 POJO 经 com.cloudai 剪枝下钻（JDK/枚举/String 不下钻，Map 不支持记档）；
  * MAX_DEPTH=5 + IdentitySet 防环。本工程 VO 无继承（applier 同口径），下钻只走 getDeclaredFields。</p>
+ * @author jy-root
  */
 @Slf4j
 @RestControllerAdvice

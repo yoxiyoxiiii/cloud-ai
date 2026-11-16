@@ -16,6 +16,7 @@ import java.io.IOException;
  * <p>双层缺一不可（设计红线 7）：只留 finally——finally 自身异常前丢；只留入口——本请求内
  * 残留窗口拖到序列化后。OncePerRequestFilter 形态不依赖 InterceptorRegistry 注册，
  * filter bean 即被 Boot 自动注册（api 模块仅需 provided servlet-api）。</p>
+ * @author jy-root
  */
 public class DataPermColumnContextFilter extends OncePerRequestFilter {
 

@@ -9,6 +9,7 @@ import java.util.Set;
  * SysDataPermColumn.ActionEnum.label()，api 模块不可见实体，标签内联为私有常量，输出格式逐字不变）：
  * hidden 置 null / masked 整值替换 {@code ***}（单一策略 MVP，设计 D11）。
  * isEmpty=无任何列动作（读路径零处理，免遍历）。
+ * @author jy-root
  */
 public final class ColumnScope {
 

@@ -12,6 +12,7 @@ import java.util.List;
  * ⓪ voClass 已标注 @DataPermVo（advice 白名单可达前提，注解化轮 D56 首断言）；
  * ①是 voClass 的真实实例字段（排除 static，serialVersionUID 不干扰）；②字段类型为 String
  * （masked 整值替换 *** 的语义前提，D11）。violation → IllegalStateException。
+ * @author jy-root
  */
 public final class DataPermColumns {
 

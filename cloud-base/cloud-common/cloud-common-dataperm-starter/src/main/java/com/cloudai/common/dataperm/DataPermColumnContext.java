@@ -4,6 +4,7 @@ package com.cloudai.common.dataperm;
  * 列处理上下文（设计 D52）：Service 求值后 set——语义是「本请求列处理已接线」而非数据本身：
  * 空 ColumnScope（无列动作）也必须 set；advice 判定「树中白名单实例存在而上下文空」= 漏接
  * → fail-closed 3042。生命周期归 {@link DataPermColumnContextFilter}（双层清理，D54）。
+ * @author jy-root
  */
 public final class DataPermColumnContext {
 

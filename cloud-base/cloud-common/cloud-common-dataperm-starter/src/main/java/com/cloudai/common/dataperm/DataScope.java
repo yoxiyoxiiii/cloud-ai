@@ -1,5 +1,7 @@
 package com.cloudai.common.dataperm;
 
+import lombok.Getter;
+
 import java.util.Set;
 
 /**
@@ -7,7 +9,9 @@ import java.util.Set;
  * 实现零变更——消费方引 jar 即得）：all=true 过滤豁免；否则 accounts 白名单
  * （空集=看不到任何行，Service 短路不进 mapper——XML 永不收到空集合，规避 IN () 非法 SQL）。
  * 语义按账号列（apply_user）过滤是试点资源的既定事实（数据权限设计 D4 记档）。
+ * @author jy-root
  */
+@Getter
 public final class DataScope {
 
     private final boolean all;
@@ -26,14 +30,6 @@ public final class DataScope {
     /** 账号白名单档（空集合法=空范围） */
     public static DataScope of(Set<String> accounts) {
         return new DataScope(false, accounts);
-    }
-
-    public boolean isAll() {
-        return all;
-    }
-
-    public Set<String> getAccounts() {
-        return accounts;
     }
 
     /** 空范围：看不到任何行（Service 短路判据） */

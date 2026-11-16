@@ -23,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>性能记档（设计 D16）：FIELD_CACHE 惰性缓存后字段查找 O(1)，分页 ≤200 行 × ≤几列的反射 set
  * 开销可忽略——求值本身每请求 4-5 次索引查询才是读路径大头（D10），反射非热点，不做启动预热。
  * 不设批量重载：消费方 forEach 一行等价，批量方法是签名膨胀无行为增益。
+ * @author jy-root
  */
 @Slf4j
 public final class DataPermColumnApplier {
