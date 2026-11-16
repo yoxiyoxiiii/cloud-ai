@@ -43,6 +43,12 @@
             <artifactId>jakarta.servlet-api</artifactId>
             <scope>provided</scope>
         </dependency>
+        <!-- 数据权限求值切面（@DataPermEvaluate）：@Aspect/@Around 织入所需，
+             沿 cloud-common-mcp-starter 同款声明（引本 jar 的宿主传递获得；无标注方法零代理零行为变化） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

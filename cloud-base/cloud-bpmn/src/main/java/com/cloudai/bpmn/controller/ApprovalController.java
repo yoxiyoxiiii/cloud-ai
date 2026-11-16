@@ -32,11 +32,12 @@ public class ApprovalController {
     private final ApprovalQueryService queryService;
     private final ApprovalWorkflowService workflowService;
 
-    /** 我的审批分页（当前登录人数据权限行集 + title 列级，id 倒序，含全部状态与业务类型） */
+    /** 我的审批分页（当前登录人数据权限行集 + title 列级，id 倒序，含全部状态与业务类型；
+     *  求值账号由切面侧 provider 自 SecurityUtils 解析） */
     @GetMapping("/page")
     @PreAuthorize("hasAuthority('bpmn:approval:list')")
     public R<PageResult<ApprovalVo>> page(PageQuery query) {
-        PageResult<ApprovalVo> page = queryService.pageListMy(query, SecurityUtils.currentAccount());
+        PageResult<ApprovalVo> page = queryService.pageListMy(query);
         return R.ok(page);
     }
 

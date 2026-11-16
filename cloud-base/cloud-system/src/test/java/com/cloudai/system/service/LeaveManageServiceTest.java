@@ -10,8 +10,12 @@ import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
 import com.cloudai.system.api.dataperm.ColumnScope;
 import com.cloudai.system.api.dataperm.DataPermColumnContext;
+import com.cloudai.system.api.dataperm.DataPermEvaluateAspect;
+import com.cloudai.system.api.dataperm.DataPermEvaluation;
+import com.cloudai.system.api.dataperm.DataPermEvaluationProvider;
 import com.cloudai.system.service.dataperm.DataPermDecision;
 import com.cloudai.system.service.dataperm.DataPermEvaluator;
+import com.cloudai.system.service.dataperm.LocalDataPermEvaluationProvider;
 import com.cloudai.system.api.dataperm.DataScope;
 import com.cloudai.system.api.dataperm.PredicateOperatorEnum;
 import com.cloudai.system.api.dataperm.RowFilter;
@@ -27,6 +31,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -39,17 +45,20 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * 请假读路径单测（数据权限轮契约 §4 + 谓词轮 2026-10-11 增量 + 注解化轮 2026-10-12 适配）：
+ * 请假读路径单测（数据权限轮契约 §4 + 谓词轮 2026-10-11 增量 + 求值 AOP 化 2026-11-16 适配）：
  * 分页按求值范围（rowAll 豁免/空集短路/组间 OR——条件组透传）+ 姓名恒返 + 列级接线声明断言
- * （D51-D58：Service 求值后仅 DataPermColumnContext.set——resource/columnScope 正确且 VO 不再
- * mutate，列改写归 advice；空集短路前已 set 为红态锚）；详情行级判定升级 allowsDetail（D34 行属性：
- * ALL+条件 owner 无关拒绝/VO String 形态归一）+ 3026 IDOR 收口（deny 留痕）；无条件用例经
- * toRowFilter 脚手架保持 v1 断言语义（mapper mock，SQL 正确性靠 B5 EXPLAIN+联调）。
+ * （切面求值并 set——resource/columnScope 正确且 VO 不再 mutate，列改写归 advice；空集短路前
+ * 已 set 为红态锚）；详情行级判定 allowsDetail（行属性：ALL+条件 owner 无关拒绝/VO String 形态
+ * 归一）+ 3026 IDOR 收口（deny 留痕）；无条件用例经 toRowFilter 脚手架保持 v1 断言语义
+ * （mapper mock，SQL 正确性靠 B5 EXPLAIN+联调）。读路径经 AspectJProxyFactory 织入真实切面
+ * （provider = 本地后端包 mock 求值器）——与生产代理路径同构。
  */
 @ExtendWith(MockitoExtension.class)
 class LeaveManageServiceTest {
@@ -69,6 +78,18 @@ class LeaveManageServiceTest {
     void clearColumnContext() {
         // 求值后即 set：全用例都可能留上下文——防跨用例污染（真 ThreadLocal）
         DataPermColumnContext.clear();
+        DataPermEvaluation.clear();
+    }
+
+    /** 织入求值切面的服务代理（读路径测试专用；provider = 真实本地后端包 mock 求值器） */
+    @SuppressWarnings("unchecked")
+    private LeaveManageService proxiedService() {
+        ObjectProvider<DataPermEvaluationProvider> provider = mock(ObjectProvider.class);
+        lenient().when(provider.getIfAvailable())
+                .thenReturn(new LocalDataPermEvaluationProvider(dataPermEvaluator));
+        AspectJProxyFactory factory = new AspectJProxyFactory(service);
+        factory.addAspect(new DataPermEvaluateAspect(provider));
+        return factory.getProxy();
     }
 
     // ---- 分页：求值范围三态 + 姓名回填 + 列级动作 ----
@@ -82,7 +103,7 @@ class LeaveManageServiceTest {
                 .thenReturn(pageOf(List.of(row)));
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
-        PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
+        PageResult<SysLeaveVo> result = proxiedService().pageList(query(1, 10));
 
         assertThat(result.getTotal()).isEqualTo(1);
         assertThat(result.getRows().get(0).getStatus()).isEqualTo("1");
@@ -94,7 +115,7 @@ class LeaveManageServiceTest {
         when(dataPermEvaluator.evaluate("leave", "list", null))
                 .thenReturn(decision(DataScope.of(Set.of()), ColumnScope.of(Set.of(), Set.of())));
 
-        PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
+        PageResult<SysLeaveVo> result = proxiedService().pageList(query(1, 10));
 
         // 展开空集（如未挂部门用户仅本部门档规则）→ 空页不查库（契约 §4.1）；
         // 空集短路前已接线（set 位置红态锚——空响应无白名单实例不触发 3042，但语义上已声明）
@@ -114,7 +135,7 @@ class LeaveManageServiceTest {
         when(leaveMapper.pageList(any(Page.class), eq("leave"), any(RowFilter.class)))
                 .thenReturn(pageOf(List.of()));
 
-        service.pageList(query(1, 10));
+        proxiedService().pageList(query(1, 10));
 
         // 白名单档：mapper 收到的 filter 即求值终态（XML 展开为组骨架 apply_user IN——机械切换，断言语义不变）
         ArgumentCaptor<RowFilter> filterCaptor = ArgumentCaptor.forClass(RowFilter.class);
@@ -136,7 +157,7 @@ class LeaveManageServiceTest {
         when(translationCache.findUserNames(anySet()))
                 .thenReturn(Map.of("userA", "UserA Name", "admin", "Admin"));
 
-        PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
+        PageResult<SysLeaveVo> result = proxiedService().pageList(query(1, 10));
 
         SysLeaveVo out = result.getRows().get(0);
         // 列级接线声明（D52）：上下文 resource/hidden/masked 正确；VO 在 Service 返回时是原始值
@@ -160,7 +181,7 @@ class LeaveManageServiceTest {
                 .thenReturn(pageOf(List.of(row)));
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
-        PageResult<SysLeaveVo> result = service.pageList(query(1, 10));
+        PageResult<SysLeaveVo> result = proxiedService().pageList(query(1, 10));
 
         assertThat(result.getRows().get(0).getStatus()).isEqualTo("0");
         assertThat(result.getRows().get(0).getApprovalId()).isNull();
@@ -178,7 +199,7 @@ class LeaveManageServiceTest {
         when(leaveMapper.pageList(any(Page.class), eq("leave"), any(RowFilter.class)))
                 .thenReturn(pageOf(List.of()));
 
-        service.pageList(query(1, 10));
+        proxiedService().pageList(query(1, 10));
 
         // 条件组透传：无条件并组在首 + ALL 条件组（含谓词）原样达 mapper（XML 组间 OR 渲染输入）
         ArgumentCaptor<RowFilter> filterCaptor = ArgumentCaptor.forClass(RowFilter.class);
@@ -193,13 +214,16 @@ class LeaveManageServiceTest {
 
     @Test
     void findById_notFoundRejected_3018() {
+        // 求值先行（切面在方法入口求值——先于存在性检查，AOP 化后的语义变化点）
+        when(dataPermEvaluator.evaluate("leave", "detail", "9"))
+                .thenReturn(decision(DataScope.all(), ColumnScope.of(Set.of(), Set.of())));
         when(leaveMapper.findById("leave", 9L)).thenReturn(null);
 
-        BusinessException ex = catchThrowableOfType(() -> service.findById(9L), BusinessException.class);
+        BusinessException ex = catchThrowableOfType(() -> proxiedService().findById(9L), BusinessException.class);
 
         assertThat(ex.getCode()).isEqualTo(3018);
         assertThat(ex.getMessage()).isEqualTo("请假单不存在");
-        verifyNoInteractions(dataPermEvaluator);
+        verify(dataPermEvaluator, org.mockito.Mockito.never()).logDeny(any(), anyString(), anyString());
     }
 
     @Test
@@ -208,7 +232,7 @@ class LeaveManageServiceTest {
         when(dataPermEvaluator.evaluate("leave", "detail", "5"))
                 .thenReturn(decision(DataScope.of(Set.of("someone-else")), ColumnScope.of(Set.of(), Set.of())));
 
-        BusinessException ex = catchThrowableOfType(() -> service.findById(5L), BusinessException.class);
+        BusinessException ex = catchThrowableOfType(() -> proxiedService().findById(5L), BusinessException.class);
 
         // 归属账号不在范围 → 3026 + deny 留痕（IDOR 收口，D13；组件化 D23 三参——测试无登录上下文 account=null）
         assertThat(ex.getCode()).isEqualTo(3026);
@@ -223,7 +247,7 @@ class LeaveManageServiceTest {
         when(translationCache.findDictLabels(anyString(), anySet())).thenReturn(Map.of());
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
-        SysLeaveDetailVo detail = service.findById(5L);
+        SysLeaveDetailVo detail = proxiedService().findById(5L);
 
         assertThat(detail.getLeave().getStatus()).isEqualTo("2");
         verify(dataPermEvaluator, org.mockito.Mockito.never()).logDeny(any(), anyString(), anyString());
@@ -238,7 +262,7 @@ class LeaveManageServiceTest {
         when(dataPermEvaluator.evaluate("leave", "detail", "150"))
                 .thenReturn(decisionOf(filter, ColumnScope.of(Set.of(), Set.of())));
 
-        BusinessException ex = catchThrowableOfType(() -> service.findById(150L), BusinessException.class);
+        BusinessException ex = catchThrowableOfType(() -> proxiedService().findById(150L), BusinessException.class);
 
         // ALL+条件 owner 无关：本人单 id=150 ∉ [1,100] → 谓词不满足 → 组失败 → 3026 + deny 留痕（D34）
         assertThat(ex.getCode()).isEqualTo(3026);
@@ -258,7 +282,7 @@ class LeaveManageServiceTest {
         when(translationCache.findDictLabels(anyString(), anySet())).thenReturn(Map.of());
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
-        SysLeaveDetailVo detail = service.findById(5L);
+        SysLeaveDetailVo detail = proxiedService().findById(5L);
 
         // D34 双形态：VO leaveType "1"（投影 CAST 直出 String）与类型化 BigDecimal("1") 归一相等 → 可见
         assertThat(detail.getLeave().getId()).isEqualTo(5L);
@@ -278,7 +302,7 @@ class LeaveManageServiceTest {
                 .thenReturn(Map.of("1", "Approved"));
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of("userA", "UserA Name", "admin", "Admin"));
 
-        SysLeaveDetailVo detail = service.findById(6L);
+        SysLeaveDetailVo detail = proxiedService().findById(6L);
 
         assertThat(detail.getLeave().getLeaveTypeLabel()).isEqualTo("Annual");
         assertThat(detail.getLeave().getStatusLabel()).isEqualTo("Approved");
@@ -294,7 +318,7 @@ class LeaveManageServiceTest {
         when(translationCache.findDictLabels(anyString(), anySet())).thenReturn(Map.of());
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
-        SysLeaveDetailVo detail = service.findById(6L);
+        SysLeaveDetailVo detail = proxiedService().findById(6L);
 
         assertThat(detail.getLeave().getStatusLabel()).isNull();
         assertThat(detail.getLeave().getApplyUserName()).isNull();
@@ -312,7 +336,7 @@ class LeaveManageServiceTest {
         when(translationCache.findDictLabels(anyString(), anySet())).thenReturn(Map.of());
         when(translationCache.findUserNames(anySet())).thenReturn(Map.of());
 
-        SysLeaveDetailVo detail = service.findById(6L);
+        SysLeaveDetailVo detail = proxiedService().findById(6L);
 
         // 详情列级接线声明同列表（契约 §4.2）：上下文 masked=reason；嵌套 leave 原始值（advice 下钻改写）
         assertThat(DataPermColumnContext.get()).isNotNull();

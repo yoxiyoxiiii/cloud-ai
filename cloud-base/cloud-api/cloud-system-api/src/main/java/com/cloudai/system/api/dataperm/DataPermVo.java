@@ -16,6 +16,7 @@ import java.lang.annotation.Target;
  *
  * <p>detail 包装类（如 SysLeaveDetailVo/ApprovalDetailVo）与步骤 VO 不标——advice 树遍历
  * 经 com.cloudai 字段下钻自然到达（D55，与翻译「只下钻标注类」的差异理由见设计）。</p>
+ * @author jy-root
  */
 @Documented
 @Target(ElementType.TYPE)

@@ -19,13 +19,12 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.core.exception.ErrorCode;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.client.DataPermClient;
-import com.cloudai.system.api.dataperm.DataPermColumnContext;
+import com.cloudai.system.api.dataperm.DataPermEvaluate;
+import com.cloudai.system.api.dataperm.DataPermEvaluation;
 import com.cloudai.system.api.dataperm.DataPermOperation;
 import com.cloudai.system.api.dataperm.EntityFieldResolver;
 import com.cloudai.system.api.dataperm.RowFilter;
 import com.cloudai.system.api.domain.DataPermDenyRequest;
-import com.cloudai.system.api.domain.DataPermEvaluateRequest;
-import com.cloudai.system.api.domain.DataPermScopeVo;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flowable.engine.HistoryService;
@@ -52,9 +51,11 @@ import java.util.Set;
  * 组件化轮（D18-D25）：列表按当前登录人规则求值行集（无规则=SELF 与旧版「恒按申请人」逐字等价），
  * title 列级应用；详情/图数据 IDOR 收口（4010 先行 → 行级判定不通过 4018 + deny 远程补痕）；
  * system 不可用 fail-closed（D21：拒绝访问，不降级无过滤/空集）。求值每读路径一次（list/detail），
- * 留痕集中落 system 库（D7/D23）。列应用迁移至 advice（2026-10-12 D51-D58）：求值后仅
- * DataPermColumnContext.set 声明接线（空 scope 也 set），循环内逐行 mutate 退役；diagram
- * 返回树无白名单类不 set 不触发（设计 §3.7 记档）。详情嵌套 VO 不在 TranslateAdvisor 容器下钻范围（候选①挂账）——
+ * 留痕集中落 system 库（D7/D23）。求值 AOP 化（2026-11-16，翻案 2026-10-10 设计 D5 显式
+ * 编程式）：求值与列上下文接线收敛到 @DataPermEvaluate 切面（Feign fail-closed 胶水迁至
+ * RemoteDataPermEvaluationProvider；设计 docs/superpowers/specs/2026-11-16-dataperm-aop-evaluate-design.md）；
+ * 列应用仍由 advice 统一处理（循环内逐行 mutate 早已退役）；diagram 返回树无白名单类，
+ * 切面照常 set 上下文但 advice 不触发（no-op）。详情嵌套 VO 不在 TranslateAdvisor 容器下钻范围（候选①挂账）——
  * 译文字段经 TranslationCacheService 手动回填，未命中 null 同降级语义。
  * 图数据（§3.3）：实例定位精确 id 优先、businessKey=approvalId 回退（限定本类型流程 key 取最新，
  * 防旧时代/异类型同号历史实例多行——singleResult 撞两行抛 FlowableException，F9 实证修复）。
@@ -91,14 +92,13 @@ public class ApprovalQueryService {
 
     /**
      * 我的审批分页（契约 §3.1 + 谓词轮 §4.1/D33：行集=toRowFilter 组间 OR——rowAll 豁免全量、
-     * 空集短路空页不查库、组=(allAccounts || 账号 IN) ∧ 组谓词全过；title 列级隐藏/脱敏由
-     * advice 统一应用（求值后 set 接线声明——空集短路/空 scope 均在 set 之后，D52）；
+     * 空集短路空页不查库、组=(allAccounts || 账号 IN) ∧ 组谓词全过；@DataPermEvaluate 切面求值
+     * 并接线列上下文（空 scope 也 set），title 列级隐藏/脱敏由 advice 统一应用；
      * id 倒序含全部状态与业务类型）。
      */
-    public PageResult<ApprovalVo> pageListMy(PageQuery query, String account) {
-        DataPermScopeVo scopeVo = evalScope(account, DataPermOperation.LIST, null);
-        DataPermColumnContext.set(RESOURCE_APPROVAL, scopeVo.toColumnScope());
-        RowFilter filter = scopeVo.toRowFilter();
+    @DataPermEvaluate(resource = RESOURCE_APPROVAL, operation = DataPermOperation.LIST)
+    public PageResult<ApprovalVo> pageListMy(PageQuery query) {
+        RowFilter filter = DataPermEvaluation.currentRowFilter();
         if (filter.isEmptyScope()) {
             return PageResult.of(0, List.of());
         }
@@ -114,16 +114,15 @@ public class ApprovalQueryService {
     }
 
     /**
-     * 审批单详情（契约 dataperm-component §3.2 IDOR 收口）：4010 真不存在先行 → 行级判定
-     * （不通过 deny 远程补痕 + 4018）→ 可见则 title 列级由 advice 经 detail 包装下钻应用
-     * （求值后 set 接线声明，4018 抛出路径上下文由 filter finally 收尾，D52/D54）+
-     * steps 时间线（时间升序）。
+     * 审批单详情（契约 dataperm-component §3.2 IDOR 收口）：切面先行求值（留痕 businessKey=单据 id）
+     * → 4010 真不存在 → 行级判定（不通过 deny 远程补痕 + 4018）→ 可见则 title 列级由 advice
+     * 经 detail 包装下钻应用（4018 抛出路径上下文由 filter finally 收尾）+ steps 时间线（时间升序）。
      */
+    @DataPermEvaluate(resource = RESOURCE_APPROVAL, operation = DataPermOperation.DETAIL,
+            businessKey = "#p0")
     public ApprovalDetailVo findById(Long id, String account) {
         BpmnApproval approval = requireApproval(id);
-        DataPermScopeVo scopeVo = evalScope(account, DataPermOperation.DETAIL, String.valueOf(id));
-        DataPermColumnContext.set(RESOURCE_APPROVAL, scopeVo.toColumnScope());
-        assertRowVisible(approval, account, scopeVo);
+        assertRowVisible(approval, account, DataPermEvaluation.current());
         ApprovalVo approvalVo = toEnrichedVo(approval, new HashMap<>());
         ApprovalDetailVo detail = new ApprovalDetailVo();
         detail.setApproval(approvalVo);
@@ -133,14 +132,15 @@ public class ApprovalQueryService {
     }
 
     /**
-     * 审批单图数据（契约 dataperm-component §3.3）：4010 先行 → 同详情行级判定（4018/deny 同路径）
-     * → 实例定位（精确 id 优先，businessKey 回退取最新）→ 高亮四字段；
+     * 审批单图数据（契约 dataperm-component §3.3）：切面先行求值 → 4010 先行 → 同详情行级判定
+     * （4018/deny 同路径）→ 实例定位（精确 id 优先，businessKey 回退取最新）→ 高亮四字段；
      * 历史缺失防御态返回 definitionId=null 空集合（不设错误码，前端隐藏图区）。
      */
+    @DataPermEvaluate(resource = RESOURCE_APPROVAL, operation = DataPermOperation.DETAIL,
+            businessKey = "#p0")
     public ApprovalDiagramVo findDiagram(Long id, String account) {
         BpmnApproval approval = requireApproval(id);
-        DataPermScopeVo scopeVo = evalScope(account, DataPermOperation.DETAIL, String.valueOf(id));
-        assertRowVisible(approval, account, scopeVo);
+        assertRowVisible(approval, account, DataPermEvaluation.current());
         HistoricProcessInstance historic = findHistoricInstance(approval);
         if (historic == null) {
             return emptyDiagram();
@@ -148,36 +148,12 @@ public class ApprovalQueryService {
         return buildDiagram(historic);
     }
 
-    // ---- 数据权限胶水（三读路径共用，D21/D23/D24） ----
+    // ---- 数据权限胶水（详情/图数据共用；求值胶水已迁 RemoteDataPermEvaluationProvider） ----
 
-    /**
-     * 求值收敛胶水（fail-closed 全路径）：Feign evaluate → 非 200/data 空一律 BusinessException
-     * 拒绝访问（默认 1002「数据权限服务不可用」；降级 R 沿 msg 透传）——任何分支不得在求值失败时
-     * 返回数据；二层兜底 catch FeignException（circuitbreaker 关闭时降级不生效的直连异常）。
-     */
-    private DataPermScopeVo evalScope(String account, String operation, String businessKey) {
-        R<DataPermScopeVo> resp;
-        try {
-            resp = dataPermClient.evaluate(
-                    new DataPermEvaluateRequest(account, RESOURCE_APPROVAL, operation, businessKey));
-        } catch (Exception e) {
-            log.error("数据权限求值 Feign 调用失败（fail-closed 拒绝访问）: account={}, operation={}",
-                    account, operation, e);
-            throw new BusinessException("数据权限服务不可用，请稍后重试");
-        }
-        if (resp == null || resp.getCode() != ErrorCode.SUCCESS.getCode() || resp.getData() == null) {
-            log.error("数据权限求值返回失败（fail-closed 拒绝访问）: account={}, operation={}, code={}",
-                    account, operation, resp == null ? null : resp.getCode());
-            throw new BusinessException(resp == null || resp.getMsg() == null
-                    ? "数据权限服务不可用，请稍后重试" : resp.getMsg());
-        }
-        return resp.getData();
-    }
-
-    /** 行级判定（详情/图数据共用，D24 + 谓词轮 D34 行属性升级）：无任一组匹配 →
-     *  deny 远程补痕（降级仅记日志）→ 4018；entity typed 形态取值（D34 双形态 bpmn 侧验证点） */
-    private void assertRowVisible(BpmnApproval approval, String account, DataPermScopeVo scopeVo) {
-        if (scopeVo.toRowFilter().allowsDetail(approval.getApplyUser(), EntityFieldResolver.of(approval))) {
+    /** 行级判定（详情/图数据共用，谓词轮 D34 行属性升级）：无任一组匹配 → deny 远程补痕
+     *  （降级仅记日志）→ 4018；entity typed 形态取值（D34 双形态 bpmn 侧验证点） */
+    private void assertRowVisible(BpmnApproval approval, String account, DataPermEvaluation evaluation) {
+        if (evaluation.rowFilter().allowsDetail(approval.getApplyUser(), EntityFieldResolver.of(approval))) {
             return;
         }
         denyQuietly(account, approval.getId());

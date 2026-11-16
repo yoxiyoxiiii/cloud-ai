@@ -49,7 +49,7 @@ class AuthGlobalFilterTest {
     void setUp() {
         JwtProperties jwtProperties = new JwtProperties();
         jwtProperties.setSecret(SECRET);
-        filter = new AuthGlobalFilter(stringRedisTemplate, jwtProperties, whitelistProps("/sso/auth/login", "/actuator"));
+        filter = new AuthGlobalFilter(jwtProperties, stringRedisTemplate, whitelistProps("/sso/auth/login", "/actuator"));
         lenient().when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
     }
 

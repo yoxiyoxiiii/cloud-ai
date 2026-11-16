@@ -6,14 +6,14 @@ import com.cloudai.common.core.domain.PageQuery;
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
-import com.cloudai.system.api.dataperm.DataPermColumnContext;
+import com.cloudai.system.api.dataperm.DataPermEvaluate;
+import com.cloudai.system.api.dataperm.DataPermEvaluation;
 import com.cloudai.system.api.dataperm.DataPermOperation;
 import com.cloudai.system.api.dataperm.EntityFieldResolver;
 import com.cloudai.system.api.dataperm.RowFilter;
 import com.cloudai.system.entity.SysUser;
 import com.cloudai.system.mapper.SysLeaveMapper;
 import com.cloudai.system.mapper.SysUserMapper;
-import com.cloudai.system.service.dataperm.DataPermDecision;
 import com.cloudai.system.service.dataperm.DataPermEvaluator;
 import com.cloudai.system.service.dataperm.DataPermResources;
 import com.cloudai.system.vo.SysLeaveDetailVo;
@@ -38,8 +38,9 @@ import java.util.Set;
  * （列级隐藏/脱敏）；详情行级判定 + IDOR 收口（3026 + deny 留痕，D13）。
  * 组件化轮（2026-10-10 D26）：求值保持本地注入（提供方不自我 Feign），仅类型 import 切换
  * 至 api 包 + logDeny 账号显式传参——行为零变化。
- * 列应用迁移至 advice（2026-10-12 D51-D58）：Service 求值后仅 DataPermColumnContext.set 声明
- * 接线（空 scope 也 set），逐行 mutate 退役——漏接由 advice fail-closed 3042 显性拒绝。
+ * 求值 AOP 化（2026-11-16，翻案 2026-10-10 设计 D5 显式编程式）：求值与列上下文接线
+ * 收敛到 @DataPermEvaluate 切面（设计 docs/superpowers/specs/2026-11-16-dataperm-aop-evaluate-design.md）；
+ * 行级消费（rowFilter/deny 留痕）留在方法体，mapper 仍显式收参数。
  */
 @Slf4j
 @Service
@@ -62,16 +63,14 @@ public class LeaveManageService {
     private final DataPermEvaluator dataPermEvaluator;
 
     /**
-     * 请假分页（契约 §4.1，谓词轮 D33 改型）：按当前登录人数据权限求值——rowAll 豁免全量、
-     * 空集档短路空页（不查库）、否则组间 OR（账号 IN ∧ 组谓词）；行内姓名批量回填；
-     * 列级动作由 advice 统一应用（求值后 set 接线声明——空集短路/空 scope 均在 set 之后，D52）。
-     * DataScope 参数退役，行集判定唯一权威 = rowFilter（D31）。
+     * 请假分页（契约 §4.1，谓词轮 D33 改型）：@DataPermEvaluate 切面按当前登录人求值并接线
+     * 列上下文（空 scope 也 set，接线声明语义）——rowAll 豁免全量、空集档短路空页（不查库）、
+     * 否则组间 OR（账号 IN ∧ 组谓词）；行内姓名批量回填；列级动作由 advice 统一应用。
+     * 行集判定唯一权威 = rowFilter（自切面 holder 取）。
      */
+    @DataPermEvaluate(resource = DataPermResources.LEAVE, operation = DataPermOperation.LIST)
     public PageResult<SysLeaveVo> pageList(PageQuery query) {
-        DataPermDecision decision = dataPermEvaluator.evaluate(
-                DataPermResources.LEAVE, DataPermOperation.LIST, null);
-        DataPermColumnContext.set(DataPermResources.LEAVE, decision.getColumnScope());
-        RowFilter filter = decision.getRowFilter();
+        RowFilter filter = DataPermEvaluation.currentRowFilter();
         if (filter.isEmptyScope()) {
             return PageResult.of(0, List.of());
         }
@@ -83,19 +82,20 @@ public class LeaveManageService {
     }
 
     /**
-     * 请假单详情（契约 §4.2）：行不存在 3018 → 行级判定（求值 DETAIL，留痕 businessKey=单据 id）——
-     * 归属账号不在范围 3026 + deny 留痕（IDOR 收口）；可见则译文回填 + 列级由 advice 经 detail
-     * 包装下钻应用（求值后 set 接线声明，3026 抛出路径上下文由 filter finally 收尾，D52/D54）。
+     * 请假单详情（契约 §4.2）：切面先行求值（留痕 businessKey=单据 id）——行不存在 3018 →
+     * 行级判定：归属账号不在范围 3026 + deny 留痕（IDOR 收口）；可见则译文回填 + 列级由
+     * advice 经 detail 包装下钻应用（3026 抛出路径上下文由 filter finally 收尾）。
+     * 注：求值在方法入口发生（先于 3018 存在性检查）——留痕多出不存在单的求值行，
+     * 且权限设施故障时 nonexistent id 报权限服务不可用而非 3018（fail-closed 方向，不泄露存在性）。
      */
+    @DataPermEvaluate(resource = DataPermResources.LEAVE, operation = DataPermOperation.DETAIL,
+            businessKey = "#p0")
     public SysLeaveDetailVo findById(Long id) {
         SysLeaveVo vo = leaveMapper.findById(BUSINESS_TYPE_LEAVE, id);
         if (vo == null) {
             throw new BusinessException(ERR_LEAVE_NOT_FOUND, "请假单不存在");
         }
-        DataPermDecision decision = dataPermEvaluator.evaluate(
-                DataPermResources.LEAVE, DataPermOperation.DETAIL, String.valueOf(id));
-        DataPermColumnContext.set(DataPermResources.LEAVE, decision.getColumnScope());
-        if (!decision.getRowFilter().allowsDetail(vo.getApplyUser(), EntityFieldResolver.of(vo))) {
+        if (!DataPermEvaluation.currentRowFilter().allowsDetail(vo.getApplyUser(), EntityFieldResolver.of(vo))) {
             dataPermEvaluator.logDeny(SecurityUtils.currentAccount(), DataPermResources.LEAVE, String.valueOf(id));
             throw new BusinessException(ERR_LEAVE_NO_ACCESS, "无权访问该数据");
         }

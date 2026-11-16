@@ -6,6 +6,7 @@ import com.cloudai.bpmn.entity.BpmnApproval;
 import com.cloudai.bpmn.entity.BpmnApproval.StatusEnum;
 import com.cloudai.bpmn.entity.BpmnBusinessType;
 import com.cloudai.bpmn.mapper.BpmnApprovalMapper;
+import com.cloudai.bpmn.service.dataperm.RemoteDataPermEvaluationProvider;
 import com.cloudai.bpmn.vo.ApprovalDetailVo;
 import com.cloudai.bpmn.vo.ApprovalDiagramVo;
 import com.cloudai.bpmn.vo.ApprovalStepVo;
@@ -17,6 +18,9 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.client.DataPermClient;
 import com.cloudai.system.api.dataperm.DataPermColumnContext;
+import com.cloudai.system.api.dataperm.DataPermEvaluateAspect;
+import com.cloudai.system.api.dataperm.DataPermEvaluation;
+import com.cloudai.system.api.dataperm.DataPermEvaluationProvider;
 import com.cloudai.system.api.dataperm.FilterColumnTypeEnum;
 import com.cloudai.system.api.dataperm.RowFilter;
 import com.cloudai.system.api.domain.DataPermDenyRequest;
@@ -37,6 +41,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.time.LocalDateTime;
 import java.util.Date;
@@ -59,14 +65,17 @@ import static org.mockito.Mockito.when;
 
 /**
  * 审批单查询单测（契约 2026-10-08-approval-platform-api §3 行为面 + 2026-10-10-dataperm-component-api
- * §3 行级/列级语义 + 谓词轮 2026-10-11 §4.1 增量）：分页配置渲染 / 4010 先行 / 三源时间线 /
+ * §3 行级/列级语义 + 谓词轮 2026-10-11 §4.1 增量）：分页配置渲染 / 4010 存在性 / 三源时间线 /
  * 嵌套 VO 手动翻译 / 图数据三态矩阵；组件化轮：list 三态（全部档白名单/空集短路零查库/
  * 求值失败 fail-closed）、detail/diagram IDOR 收口（4018 + deny 三参补痕 + deny 降级不阻断）、
  * title 列级经真 DataPermColumnApplier + 真 DataPermScopeVo.toColumnScope() 端到端
- * （D14 教训：不 mock 到底）；谓词轮（D33/D34）：条件组 toRowFilter 透传 + detail 行属性判定
+ * （不 mock 到底）；谓词轮（2026-10-10-11）：条件组 toRowFilter 透传 + detail 行属性判定
  * （entity typed 形态 / ALL+条件 owner 无关 4018）——v1 四参构造 ScopeVo 经 toRowFilter
- * 回退分支保持既有断言语义（机械切换）。注解化轮（2026-10-12 D51-D58）适配：列级改断言
- * DataPermColumnContext 接线声明（resource/hidden/masked，VO 不再 mutate），diagram 零上下文锚。
+ * 回退分支保持既有断言语义（机械切换）。注解化轮（2026-10-12）适配：列级改断言
+ * DataPermColumnContext 接线声明（resource/hidden/masked，VO 不再 mutate）。求值 AOP 化
+ * （2026-11-16）适配：读路径经 AspectJProxyFactory 织入真实切面（provider = 真实远端后端包
+ * mock Feign client）与生产代理路径同构；求值先行于 4010（方法入口即求值）；diagram 返回树
+ * 无白名单实例但切面照常接线列上下文（advice no-op）。
  */
 @ExtendWith(MockitoExtension.class)
 class ApprovalQueryServiceTest {
@@ -90,22 +99,34 @@ class ApprovalQueryServiceTest {
 
     @AfterEach
     void clearColumnContext() {
-        // 求值后即 set：list/detail 用例都可能留上下文——防跨用例污染（真 ThreadLocal）
+        // 求值后即 set：list/detail/diagram 用例都可能留上下文——防跨用例污染（真 ThreadLocal）
         DataPermColumnContext.clear();
+        DataPermEvaluation.clear();
+    }
+
+    /** 织入求值切面的服务代理（读路径测试专用；provider = 真实远端后端包 mock Feign client） */
+    @SuppressWarnings("unchecked")
+    private ApprovalQueryService proxiedService() {
+        ObjectProvider<DataPermEvaluationProvider> provider = mock(ObjectProvider.class);
+        lenient().when(provider.getIfAvailable())
+                .thenReturn(new RemoteDataPermEvaluationProvider(dataPermClient));
+        AspectJProxyFactory factory = new AspectJProxyFactory(service);
+        factory.addAspect(new DataPermEvaluateAspect(provider));
+        return factory.getProxy();
     }
 
     // ---- pageListMy：既有行为面（全部档 = 旧「恒按申请人」无过滤语义） ----
 
     @Test
     void pageListMy_enrichesWithConfig() {
-        stubEvalAll("userA", "list", null);
+        stubEvalAll("list", null);
         Page<BpmnApproval> page = new Page<>(1, 5);
         page.setRecords(List.of(approval(StatusEnum.APPROVING.getCode())));
         page.setTotal(1);
         when(approvalMapper.pageList(any(Page.class), argThat(RowFilter::isRowAll))).thenReturn(page);
         stubConfig();
 
-        PageResult<ApprovalVo> result = service.pageListMy(query(), "userA");
+        PageResult<ApprovalVo> result = proxiedService().pageListMy(query());
 
         assertThat(result.getTotal()).isEqualTo(1);
         ApprovalVo vo = result.getRows().get(0);
@@ -120,14 +141,14 @@ class ApprovalQueryServiceTest {
 
     @Test
     void pageListMy_configMissing_degradesToNull() {
-        stubEvalAll("userA", "list", null);
+        stubEvalAll("list", null);
         Page<BpmnApproval> page = new Page<>(1, 5);
         page.setRecords(List.of(approval(StatusEnum.APPROVING.getCode())));
         page.setTotal(1);
         when(approvalMapper.pageList(any(Page.class), argThat(RowFilter::isRowAll))).thenReturn(page);
         when(businessTypeRegistry.findByTypeCodeOrNull("leave")).thenReturn(null);
 
-        PageResult<ApprovalVo> result = service.pageListMy(query(), "userA");
+        PageResult<ApprovalVo> result = proxiedService().pageListMy(query());
 
         assertThat(result.getRows()).hasSize(1);
         assertThat(result.getRows().get(0).getBusinessTypeName()).isNull();
@@ -139,7 +160,7 @@ class ApprovalQueryServiceTest {
     @Test
     void pageListMy_whitelistScope_passesAccountFilterAndDeclaresColumnScope() {
         // 白名单 {userA} + title 脱敏：真 ScopeVo → 真 toColumnScope → 接线声明（D52——列改写归 advice）
-        stubEval(new DataPermScopeVo(false, List.of("userA"), List.of(), List.of("title")), "userA", "list", null);
+        stubEval(new DataPermScopeVo(false, List.of("userA"), List.of(), List.of("title")), "list", null);
         Page<BpmnApproval> page = new Page<>(1, 5);
         page.setRecords(List.of(approval(StatusEnum.APPROVING.getCode())));
         page.setTotal(1);
@@ -148,7 +169,7 @@ class ApprovalQueryServiceTest {
                 .thenReturn(page);
         stubConfig();
 
-        PageResult<ApprovalVo> result = service.pageListMy(query(), "userA");
+        PageResult<ApprovalVo> result = proxiedService().pageListMy(query());
 
         assertThat(result.getRows()).hasSize(1);
         assertThat(DataPermColumnContext.get()).isNotNull();
@@ -163,9 +184,9 @@ class ApprovalQueryServiceTest {
     void pageListMy_emptyScope_shortCircuitsWithoutDbHit() {
         // 空集范围（无规则账号收敛 SELF 后仍无行）：短路空页，mapper 零交互（防 IN ()）；
         // 空集短路前已接线（set 位置红态锚，D52）
-        stubEval(new DataPermScopeVo(false, List.of(), List.of(), List.of()), "userA", "list", null);
+        stubEval(new DataPermScopeVo(false, List.of(), List.of(), List.of()), "list", null);
 
-        PageResult<ApprovalVo> result = service.pageListMy(query(), "userA");
+        PageResult<ApprovalVo> result = proxiedService().pageListMy(query());
 
         assertThat(result.getTotal()).isEqualTo(0);
         assertThat(result.getRows()).isEmpty();
@@ -181,7 +202,7 @@ class ApprovalQueryServiceTest {
         when(dataPermClient.evaluate(any(DataPermEvaluateRequest.class)))
                 .thenReturn(R.fail(1002, "数据权限服务不可用，请稍后重试"));
 
-        assertThatThrownBy(() -> service.pageListMy(query(), "userA"))
+        assertThatThrownBy(() -> proxiedService().pageListMy(query()))
                 .isInstanceOf(BusinessException.class)
                 .hasMessage("数据权限服务不可用，请稍后重试");
         verifyNoInteractions(approvalMapper);
@@ -193,7 +214,7 @@ class ApprovalQueryServiceTest {
         when(dataPermClient.evaluate(any(DataPermEvaluateRequest.class)))
                 .thenThrow(new RuntimeException("connect refused"));
 
-        assertThatThrownBy(() -> service.pageListMy(query(), "userA"))
+        assertThatThrownBy(() -> proxiedService().pageListMy(query()))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(1002);
@@ -207,7 +228,7 @@ class ApprovalQueryServiceTest {
         DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of("userA"), List.of(), List.of(),
                 List.of(new RowGroupVo(false, List.of("userA"), List.of()),
                         new RowGroupVo(true, List.of(), List.of(idBetween(1, 100)))));
-        stubEval(scopeVo, "userA", "list", null);
+        stubEval(scopeVo, "list", null);
         Page<BpmnApproval> page = new Page<>(1, 5);
         page.setTotal(0);
         when(approvalMapper.pageList(any(Page.class), argThat(filter ->
@@ -216,7 +237,7 @@ class ApprovalQueryServiceTest {
                         && filter.getGroups().get(1).isAllAccounts()
                         && filter.getGroups().get(1).getPredicates().size() == 1))).thenReturn(page);
 
-        service.pageListMy(query(), "userA");
+        proxiedService().pageListMy(query());
 
         // matcher 内联即断言：组形态达 mapper（类型化值 BigDecimal 由 argThat 形状间接覆盖）
         verify(approvalMapper).pageList(any(Page.class), any(RowFilter.class));
@@ -225,22 +246,22 @@ class ApprovalQueryServiceTest {
     // ---- findById ----
 
     @Test
-    void findById_notFoundRejected_4010_beforeEvaluation() {
+    void findById_notFoundRejected_4010() {
+        // 求值先行（切面在方法入口求值——先于存在性检查，AOP 化后的语义变化点）；真不存在仍 4010
+        stubEvalAll("detail", "9");
         when(approvalMapper.findById(9L)).thenReturn(null);
 
-        assertThatThrownBy(() -> service.findById(9L, "userA"))
+        assertThatThrownBy(() -> proxiedService().findById(9L, "userA"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4010);
-        // 4010 先行：真不存在不做数据权限求值（不泄漏存在性差异给越权探测）
-        verifyNoInteractions(dataPermClient);
     }
 
     @Test
     void findById_approving_assemblesApplyAndApprovalStepsOnly() {
         BpmnApproval approval = approval(StatusEnum.APPROVING.getCode());
         when(approvalMapper.findById(5L)).thenReturn(approval);
-        stubEvalAll("userA", "detail", "5");
+        stubEvalAll("detail", "5");
         stubConfig();
         Comment comment = mock(Comment.class);
         lenient().when(comment.getUserId()).thenReturn("admin");
@@ -252,7 +273,7 @@ class ApprovalQueryServiceTest {
         when(translationCacheService.findUserNames(anySet()))
                 .thenReturn(Map.of("userA", "nick-userA", "admin", "nick-admin"));
 
-        ApprovalDetailVo detail = service.findById(5L, "userA");
+        ApprovalDetailVo detail = proxiedService().findById(5L, "userA");
 
         assertThat(detail.getApproval().getStatusLabel()).isEqualTo("审批中");
         assertThat(detail.getApproval().getApplyUserName()).isEqualTo("nick-userA");
@@ -273,14 +294,14 @@ class ApprovalQueryServiceTest {
         cancelled.setProcessInstanceId(null);
         cancelled.setUpdateTime(LocalDateTime.of(2026, 10, 8, 12, 0));
         when(approvalMapper.findById(5L)).thenReturn(cancelled);
-        stubEvalAll("userA", "detail", "5");
+        stubEvalAll("detail", "5");
         stubConfig();
         // 撤销单实例关联已清空（processInstanceId=null）——不触评论查询
         when(translationCacheService.findDictLabels(eq("bpmn_approval_status"), anySet()))
                 .thenReturn(Map.of());
         when(translationCacheService.findUserNames(anySet())).thenReturn(Map.of());
 
-        ApprovalDetailVo detail = service.findById(5L, "userA");
+        ApprovalDetailVo detail = proxiedService().findById(5L, "userA");
 
         assertThat(detail.getSteps()).extracting(ApprovalStepVo::getStepKey)
                 .containsExactly("apply", "end");
@@ -296,13 +317,13 @@ class ApprovalQueryServiceTest {
         // 白名单含归属账号（可见）+ title 脱敏：详情接线声明同列表（嵌套 approval 原始值，advice 下钻改写）
         when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
         stubEval(new DataPermScopeVo(false, List.of("userA"), List.of(), List.of("title")),
-                "userA", "detail", "5");
+                "detail", "5");
         stubConfig();
         when(taskService.getProcessInstanceComments("pid-1")).thenReturn(List.of());
         when(translationCacheService.findDictLabels(eq("bpmn_approval_status"), anySet())).thenReturn(Map.of());
         when(translationCacheService.findUserNames(anySet())).thenReturn(Map.of());
 
-        ApprovalDetailVo detail = service.findById(5L, "userA");
+        ApprovalDetailVo detail = proxiedService().findById(5L, "userA");
 
         assertThat(DataPermColumnContext.get()).isNotNull();
         assertThat(DataPermColumnContext.get().resource()).isEqualTo("bpmn_approval");
@@ -316,11 +337,11 @@ class ApprovalQueryServiceTest {
         // 白名单不含归属账号 userA（他人单）→ deny 三参补痕 + 4018
         when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
         stubEval(new DataPermScopeVo(false, List.of("peerB"), List.of(), List.of()),
-                "userB", "detail", "5");
+                "detail", "5");
         when(dataPermClient.deny(new DataPermDenyRequest("userB", "bpmn_approval", "5")))
                 .thenReturn(R.ok());
 
-        assertThatThrownBy(() -> service.findById(5L, "userB"))
+        assertThatThrownBy(() -> proxiedService().findById(5L, "userB"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4018);
@@ -334,11 +355,11 @@ class ApprovalQueryServiceTest {
         // deny 补痕降级（R.fail 1002）：仅记日志，4018 拒绝语义不受影响（D21/D23）
         when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
         stubEval(new DataPermScopeVo(false, List.of("peerB"), List.of(), List.of()),
-                "userB", "detail", "5");
+                "detail", "5");
         when(dataPermClient.deny(any(DataPermDenyRequest.class)))
                 .thenReturn(R.fail(1002, "数据权限服务不可用"));
 
-        assertThatThrownBy(() -> service.findById(5L, "userB"))
+        assertThatThrownBy(() -> proxiedService().findById(5L, "userB"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4018);
@@ -355,11 +376,11 @@ class ApprovalQueryServiceTest {
         when(approvalMapper.findById(150L)).thenReturn(approval);
         DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
                 List.of(new RowGroupVo(true, List.of(), List.of(idBetween(1, 100)))));
-        stubEval(scopeVo, "userA", "detail", "150");
+        stubEval(scopeVo, "detail", "150");
         when(dataPermClient.deny(new DataPermDenyRequest("userA", "bpmn_approval", "150")))
                 .thenReturn(R.ok());
 
-        assertThatThrownBy(() -> service.findById(150L, "userA"))
+        assertThatThrownBy(() -> proxiedService().findById(150L, "userA"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4018);
@@ -375,14 +396,14 @@ class ApprovalQueryServiceTest {
                 FilterColumnTypeEnum.DATETIME, List.of("2026-01-01 00:00:00"));
         DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
                 List.of(new RowGroupVo(true, List.of(), List.of(createTimeGte))));
-        stubEval(scopeVo, "userA", "detail", "5");
+        stubEval(scopeVo, "detail", "5");
         stubConfig();
         when(taskService.getProcessInstanceComments("pid-1")).thenReturn(List.of());
         when(translationCacheService.findDictLabels(eq("bpmn_approval_status"), anySet()))
                 .thenReturn(Map.of());
         when(translationCacheService.findUserNames(anySet())).thenReturn(Map.of());
 
-        ApprovalDetailVo detail = service.findById(5L, "userA");
+        ApprovalDetailVo detail = proxiedService().findById(5L, "userA");
 
         // approval.createTime=2026-10-08 10:00 ≥ 2026-01-01 → 可见（BaseEntity 层级字段取值命中）
         assertThat(detail.getApproval().getId()).isEqualTo(5L);
@@ -392,14 +413,16 @@ class ApprovalQueryServiceTest {
     // ---- findDiagram（三态矩阵：撤销=历史缺失防御 / 运行中 / 终态） ----
 
     @Test
-    void findDiagram_notFoundRejected_4010_beforeEvaluation() {
+    void findDiagram_notFoundRejected_4010() {
+        // 同详情：切面求值先行，真不存在仍 4010、不触引擎查询
+        stubEvalAll("detail", "9");
         when(approvalMapper.findById(9L)).thenReturn(null);
 
-        assertThatThrownBy(() -> service.findDiagram(9L, "userA"))
+        assertThatThrownBy(() -> proxiedService().findDiagram(9L, "userA"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4010);
-        verifyNoInteractions(dataPermClient);
+        verifyNoInteractions(historyService, runtimeService);
     }
 
     @Test
@@ -407,11 +430,11 @@ class ApprovalQueryServiceTest {
         // 图数据同详情行级判定路径（D24）：不通过 deny + 4018，不触引擎查询
         when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
         stubEval(new DataPermScopeVo(false, List.of("peerB"), List.of(), List.of()),
-                "userB", "detail", "5");
+                "detail", "5");
         when(dataPermClient.deny(new DataPermDenyRequest("userB", "bpmn_approval", "5")))
                 .thenReturn(R.ok());
 
-        assertThatThrownBy(() -> service.findDiagram(5L, "userB"))
+        assertThatThrownBy(() -> proxiedService().findDiagram(5L, "userB"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4018);
@@ -424,12 +447,12 @@ class ApprovalQueryServiceTest {
         BpmnApproval cancelled = approval(StatusEnum.CANCELLED.getCode());
         cancelled.setProcessInstanceId(null);
         when(approvalMapper.findById(5L)).thenReturn(cancelled);
-        stubEvalAll("userA", "detail", "5");
+        stubEvalAll("detail", "5");
         stubConfig();
         org.flowable.engine.history.HistoricProcessInstanceQuery hq = stubBusinessKeyFallback();
         when(hq.list()).thenReturn(List.of());
 
-        ApprovalDiagramVo vo = service.findDiagram(5L, "userA");
+        ApprovalDiagramVo vo = proxiedService().findDiagram(5L, "userA");
 
         assertThat(vo.getDefinitionId()).isNull();
         assertThat(vo.getProcessInstanceId()).isNull();
@@ -449,17 +472,18 @@ class ApprovalQueryServiceTest {
         when(runtimeService.getActiveActivityIds("pid-1")).thenReturn(List.of("approval"));
         stubHistoricActivities("pid-1", "start", "approval");
         when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVING.getCode()));
-        stubEvalAll("userA", "detail", "5");
+        stubEvalAll("detail", "5");
 
-        ApprovalDiagramVo vo = service.findDiagram(5L, "userA");
+        ApprovalDiagramVo vo = proxiedService().findDiagram(5L, "userA");
 
         assertThat(vo.getDefinitionId()).isEqualTo("def-1");
         assertThat(vo.getProcessInstanceId()).isEqualTo("pid-1");
         assertThat(vo.getActiveActivityIds()).containsExactly("approval");
         assertThat(vo.getCompletedActivityIds()).containsExactly("start", "approval");
         assertThat(vo.getEndActivityId()).isNull();
-        // diagram 返回树无白名单类：求值后零接线零上下文（设计 §3.7 记档——不 set 不触发 advice）
-        assertThat((Object) DataPermColumnContext.get()).isNull();
+        // diagram 切面照常接线列上下文，但返回树无白名单实例——advice 不触发（no-op，改写零发生）
+        assertThat(DataPermColumnContext.get()).isNotNull();
+        assertThat(DataPermColumnContext.get().resource()).isEqualTo("bpmn_approval");
     }
 
     @Test
@@ -472,9 +496,9 @@ class ApprovalQueryServiceTest {
         when(runtimeQuery.count()).thenReturn(0L);
         stubHistoricActivities("pid-1", "start", "approval", "decision", "endApprove");
         when(approvalMapper.findById(5L)).thenReturn(approval(StatusEnum.APPROVED.getCode()));
-        stubEvalAll("userA", "detail", "5");
+        stubEvalAll("detail", "5");
 
-        ApprovalDiagramVo vo = service.findDiagram(5L, "userA");
+        ApprovalDiagramVo vo = proxiedService().findDiagram(5L, "userA");
 
         assertThat(vo.getActiveActivityIds()).isEmpty();
         assertThat(vo.getCompletedActivityIds()).containsExactly("start", "approval", "decision", "endApprove");
@@ -488,7 +512,7 @@ class ApprovalQueryServiceTest {
         BpmnApproval cancelled = approval(StatusEnum.CANCELLED.getCode());
         cancelled.setProcessInstanceId(null);
         when(approvalMapper.findById(5L)).thenReturn(cancelled);
-        stubEvalAll("userA", "detail", "5");
+        stubEvalAll("detail", "5");
         stubConfig();
         org.flowable.engine.history.HistoricProcessInstanceQuery hq = stubBusinessKeyFallback();
         HistoricProcessInstance historic = mock(HistoricProcessInstance.class);
@@ -503,7 +527,7 @@ class ApprovalQueryServiceTest {
         when(runtimeQuery.count()).thenReturn(0L);
         stubHistoricActivities("pid-new", "start");
 
-        ApprovalDiagramVo vo = service.findDiagram(5L, "userA");
+        ApprovalDiagramVo vo = proxiedService().findDiagram(5L, "userA");
 
         assertThat(vo.getDefinitionId()).isEqualTo("def-1");
         assertThat(vo.getProcessInstanceId()).isEqualTo("pid-new");
@@ -520,14 +544,14 @@ class ApprovalQueryServiceTest {
                 FilterColumnTypeEnum.STRING, List.of("annual"));
         DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
                 List.of(new RowGroupVo(true, List.of(), List.of(titlePrefix))));
-        stubEval(scopeVo, "userA", "detail", "5");
+        stubEval(scopeVo, "detail", "5");
         stubConfig();
         when(taskService.getProcessInstanceComments("pid-1")).thenReturn(List.of());
         when(translationCacheService.findDictLabels(eq("bpmn_approval_status"), anySet()))
                 .thenReturn(Map.of());
         when(translationCacheService.findUserNames(anySet())).thenReturn(Map.of());
 
-        ApprovalDetailVo detail = service.findById(5L, "userA");
+        ApprovalDetailVo detail = proxiedService().findById(5L, "userA");
 
         assertThat(detail.getApproval().getTitle()).isEqualTo("annual leave");
         verify(dataPermClient, never()).deny(any(DataPermDenyRequest.class));
@@ -541,11 +565,11 @@ class ApprovalQueryServiceTest {
                 FilterColumnTypeEnum.STRING, List.of("zzz"));
         DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
                 List.of(new RowGroupVo(true, List.of(), List.of(titlePrefix))));
-        stubEval(scopeVo, "userA", "detail", "5");
+        stubEval(scopeVo, "detail", "5");
         when(dataPermClient.deny(new DataPermDenyRequest("userA", "bpmn_approval", "5")))
                 .thenReturn(R.ok());
 
-        assertThatThrownBy(() -> service.findById(5L, "userA"))
+        assertThatThrownBy(() -> proxiedService().findById(5L, "userA"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4018);
@@ -561,14 +585,14 @@ class ApprovalQueryServiceTest {
                 FilterColumnTypeEnum.STRING, List.of("other"));
         DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
                 List.of(new RowGroupVo(true, List.of(), List.of(titleNe))));
-        stubEval(scopeVo, "userA", "detail", "5");
+        stubEval(scopeVo, "detail", "5");
         stubConfig();
         when(taskService.getProcessInstanceComments("pid-1")).thenReturn(List.of());
         when(translationCacheService.findDictLabels(eq("bpmn_approval_status"), anySet()))
                 .thenReturn(Map.of());
         when(translationCacheService.findUserNames(anySet())).thenReturn(Map.of());
 
-        ApprovalDetailVo detail = service.findById(5L, "userA");
+        ApprovalDetailVo detail = proxiedService().findById(5L, "userA");
 
         assertThat(detail.getApproval().getId()).isEqualTo(5L);
         verify(dataPermClient, never()).deny(any(DataPermDenyRequest.class));
@@ -582,11 +606,11 @@ class ApprovalQueryServiceTest {
                 FilterColumnTypeEnum.STRING, List.of("ANNUAL LEAVE "));
         DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of(), List.of(), List.of(),
                 List.of(new RowGroupVo(true, List.of(), List.of(titleNe))));
-        stubEval(scopeVo, "userA", "detail", "5");
+        stubEval(scopeVo, "detail", "5");
         when(dataPermClient.deny(new DataPermDenyRequest("userA", "bpmn_approval", "5")))
                 .thenReturn(R.ok());
 
-        assertThatThrownBy(() -> service.findById(5L, "userA"))
+        assertThatThrownBy(() -> proxiedService().findById(5L, "userA"))
                 .isInstanceOf(BusinessException.class)
                 .extracting("code")
                 .isEqualTo(4018);
@@ -599,7 +623,7 @@ class ApprovalQueryServiceTest {
                 FilterColumnTypeEnum.NUMBER, List.of("100"));
         DataPermScopeVo scopeVo = new DataPermScopeVo(false, List.of("userA"), List.of(), List.of(),
                 List.of(new RowGroupVo(true, List.of(), List.of(idGt))));
-        stubEval(scopeVo, "userA", "list", null);
+        stubEval(scopeVo, "list", null);
         Page<BpmnApproval> page = new Page<>(1, 5);
         page.setTotal(0);
         when(approvalMapper.pageList(any(Page.class), argThat(filter ->
@@ -610,7 +634,7 @@ class ApprovalQueryServiceTest {
                         && filter.getGroups().get(0).getPredicates().get(0).getValues().get(0)
                                 .equals(new java.math.BigDecimal("100"))))).thenReturn(page);
 
-        service.pageListMy(query(), "userA");
+        proxiedService().pageListMy(query());
 
         verify(approvalMapper).pageList(any(Page.class), any(RowFilter.class));
     }
@@ -640,8 +664,8 @@ class ApprovalQueryServiceTest {
     }
 
     /** 全部档求值桩（无列动作）：等价旧「恒按申请人」语义在 admin 视角的期望终态 */
-    private void stubEvalAll(String account, String operation, String businessKey) {
-        stubEval(new DataPermScopeVo(true, List.of(), List.of(), List.of()), account, operation, businessKey);
+    private void stubEvalAll(String operation, String businessKey) {
+        stubEval(new DataPermScopeVo(true, List.of(), List.of(), List.of()), operation, businessKey);
     }
 
     /** id BETWEEN 谓词（wire 字符串承载形态——provider toScopeVo 回写同款） */
@@ -650,10 +674,11 @@ class ApprovalQueryServiceTest {
                 FilterColumnTypeEnum.NUMBER, List.of(String.valueOf(low), String.valueOf(high)));
     }
 
-    /** 求值桩（DataPermEvaluateRequest @Data equals 精确匹配四参） */
-    private void stubEval(DataPermScopeVo scopeVo, String account, String operation, String businessKey) {
+    /** 求值桩（DataPermEvaluateRequest @Data equals 精确匹配；account 由 provider 经
+     *  SecurityUtils 解析——单测无登录上下文恒 null） */
+    private void stubEval(DataPermScopeVo scopeVo, String operation, String businessKey) {
         when(dataPermClient.evaluate(
-                new DataPermEvaluateRequest(account, "bpmn_approval", operation, businessKey)))
+                new DataPermEvaluateRequest(null, "bpmn_approval", operation, businessKey)))
                 .thenReturn(R.ok(scopeVo));
     }
 

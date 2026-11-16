@@ -6,6 +6,9 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.dataperm.ColumnScope;
 import com.cloudai.system.api.dataperm.DataPermColumnContext;
+import com.cloudai.system.api.dataperm.DataPermEvaluateAspect;
+import com.cloudai.system.api.dataperm.DataPermEvaluation;
+import com.cloudai.system.api.dataperm.DataPermEvaluationProvider;
 import com.cloudai.system.api.dataperm.DataPermOperation;
 import com.cloudai.system.dto.UserSaveRequest;
 import com.cloudai.system.entity.SysUser;
@@ -14,6 +17,7 @@ import com.cloudai.system.mapper.SysUserRoleMapper;
 import com.cloudai.system.service.dataperm.DataPermDecision;
 import com.cloudai.system.service.dataperm.DataPermEvaluator;
 import com.cloudai.system.service.dataperm.DataPermResources;
+import com.cloudai.system.service.dataperm.LocalDataPermEvaluationProvider;
 import com.cloudai.system.vo.SysUserVo;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +26,8 @@ import org.mockito.ArgumentMatchers;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -34,14 +40,17 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * 用户管理单测：翻译缓存失效挂钩（save/update/delete 后 DEL trans:user；resetPassword 不挂；
- * DEL 失败主流程不炸）+ 列级数据权限轮增量（读路径列上下文接线 / 写路径脱敏哨兵与空串归一 /
- * 联系列格式校验）。
+ * DEL 失败主流程不炸）+ 列级数据权限轮增量（读路径经 @DataPermEvaluate 切面接线列上下文 /
+ * 写路径脱敏哨兵与空串归一 / 联系列格式校验）。读路径测试以 AspectJProxyFactory 织入真实切面
+ * （求值走 LocalDataPermEvaluationProvider 包 mock 求值器）——与生产代理路径同构。
  */
 @ExtendWith(MockitoExtension.class)
 class SysUserManageServiceTest {
@@ -64,6 +73,18 @@ class SysUserManageServiceTest {
         // SecurityContextHolder 与列上下文都是线程级 ThreadLocal，测试线程被复用——清掉避免污染其它测试
         SecurityContextHolder.clearContext();
         DataPermColumnContext.clear();
+        DataPermEvaluation.clear();
+    }
+
+    /** 织入求值切面的服务代理（读路径测试专用；provider = 真实本地后端包 mock 求值器） */
+    @SuppressWarnings("unchecked")
+    private SysUserManageService proxiedService() {
+        ObjectProvider<DataPermEvaluationProvider> provider = mock(ObjectProvider.class);
+        lenient().when(provider.getIfAvailable())
+                .thenReturn(new LocalDataPermEvaluationProvider(dataPermEvaluator));
+        AspectJProxyFactory factory = new AspectJProxyFactory(service);
+        factory.addAspect(new DataPermEvaluateAspect(provider));
+        return factory.getProxy();
     }
 
     private void loginAs(String account) {
@@ -222,7 +243,7 @@ class SysUserManageServiceTest {
         when(userMapper.pageList(any())).thenReturn(
                 new com.baomidou.mybatisplus.extension.plugins.pagination.Page<SysUserVo>(1, 10));
 
-        service.pageList(new PageQuery());
+        proxiedService().pageList(new PageQuery());
 
         // 接线声明语义：无论 scope 是否为空都 set——advice 据此应用列动作，缺失即 fail-closed
         DataPermColumnContext.ColumnDecision context = DataPermColumnContext.get();
@@ -244,7 +265,7 @@ class SysUserManageServiceTest {
         user.setMobile("13800000001");
         when(userMapper.findById(1L)).thenReturn(user);
 
-        SysUserVo vo = service.findById(1L);
+        SysUserVo vo = proxiedService().findById(1L);
 
         // detail 链补两列 + businessKey=用户 id + 空 scope 也 set
         assertThat(vo.getMobile()).isEqualTo("13800000001");

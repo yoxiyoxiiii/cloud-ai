@@ -9,7 +9,7 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.security.util.SecurityUtils;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.dataperm.ColumnScope;
-import com.cloudai.system.api.dataperm.DataPermColumnContext;
+import com.cloudai.system.api.dataperm.DataPermEvaluate;
 import com.cloudai.system.api.dataperm.DataPermOperation;
 import com.cloudai.system.convert.SysUserConvert;
 import com.cloudai.system.dto.UserSaveRequest;
@@ -18,8 +18,6 @@ import com.cloudai.system.entity.SysUserRole;
 import com.cloudai.system.mapper.SysDeptMapper;
 import com.cloudai.system.mapper.SysUserMapper;
 import com.cloudai.system.mapper.SysUserRoleMapper;
-import com.cloudai.system.service.dataperm.DataPermDecision;
-import com.cloudai.system.service.dataperm.DataPermEvaluator;
 import com.cloudai.system.service.dataperm.DataPermResources;
 import com.cloudai.system.vo.SysUserVo;
 import lombok.RequiredArgsConstructor;
@@ -46,27 +44,23 @@ public class SysUserManageService {
     private final SysDeptMapper deptMapper;
     private final PasswordEncoder passwordEncoder;
     private final TranslationCacheService translationCacheService;
-    private final DataPermEvaluator dataPermEvaluator;
 
     /**
      * 分页查询（数据权限轮 D14 改型 + 列级轮接线）：mapper VO 直出（LEFT JOIN sys_dept 派生
-     * deptName）；SysUserVo 已标 @DataPermVo——求值后 set 列上下文（空 scope 也 set，接线声明语义），
+     * deptName）；@DataPermEvaluate 切面求值并 set 列上下文（空 scope 也 set，接线声明语义），
      * 缺失即列处理 advice fail-closed 拒绝。user 是列级-only 资源：行段恒全部短路，mapper 零行过滤。
      */
+    @DataPermEvaluate(resource = DataPermResources.USER, operation = DataPermOperation.LIST)
     public PageResult<SysUserVo> pageList(PageQuery query) {
-        DataPermDecision decision = dataPermEvaluator.evaluate(DataPermResources.USER,
-                DataPermOperation.LIST, null);
-        DataPermColumnContext.set(DataPermResources.USER, decision.getColumnScope());
         IPage<SysUserVo> page = userMapper.pageList(
                 new Page<>(query.getPageNum(), query.getPageSize()));
         return PageResult.of(page.getTotal(), page.getRecords());
     }
 
-    /** 详情（列级轮接线）：同 pageList 求值 + set，businessKey=用户 id；detail 链 convert 补 mobile/email */
+    /** 详情（列级轮接线）：同 pageList 切面求值接线，businessKey=用户 id；detail 链 convert 补 mobile/email */
+    @DataPermEvaluate(resource = DataPermResources.USER, operation = DataPermOperation.DETAIL,
+            businessKey = "#p0")
     public SysUserVo findById(Long id) {
-        DataPermDecision decision = dataPermEvaluator.evaluate(DataPermResources.USER,
-                DataPermOperation.DETAIL, String.valueOf(id));
-        DataPermColumnContext.set(DataPermResources.USER, decision.getColumnScope());
         SysUser user = userMapper.findById(id);
         if (user == null) {
             throw new BusinessException(3001, "用户不存在");
