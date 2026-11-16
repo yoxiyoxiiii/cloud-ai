@@ -18,13 +18,11 @@ import java.util.Set;
 public final class RowGroup {
 
     /**
-     * -- GETTER --
      * true=组不限归属账号（ALL+条件组；此时 accounts 空）
      */
     private final boolean allAccounts;
     private final Set<String> accounts;
     /**
-     * -- GETTER --
      * 组条件（组内 AND；无条件组空列表）
      */
     private final List<RowPredicate> predicates;

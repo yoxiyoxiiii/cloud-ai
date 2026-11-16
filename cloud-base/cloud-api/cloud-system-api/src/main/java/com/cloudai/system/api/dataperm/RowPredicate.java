@@ -31,12 +31,10 @@ public final class RowPredicate {
 
     private final String field;
     /**
-     * -- GETTER --
      * 裸 DB 列名（XML 硬编码分支对照，无别名前缀）
      */
     private final String column;
     /**
-     * -- GETTER --
      * 操作符枚举 name（字符串承载，XML OGNL 直比）
      */
     private final String operator;
