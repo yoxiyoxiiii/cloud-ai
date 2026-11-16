@@ -67,6 +67,15 @@
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-common-translate-remote-starter</artifactId>
         </dependency>
+        <!-- 数据权限组件机器面（注解/切面/列裁剪）+ 远端求值（程序式 Feign → system /inner/data-perm，引依赖即用零配置） -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-dataperm-starter</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-dataperm-remote-starter</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>

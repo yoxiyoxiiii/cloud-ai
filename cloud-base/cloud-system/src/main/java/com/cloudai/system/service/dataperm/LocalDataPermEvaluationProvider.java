@@ -1,7 +1,7 @@
 package com.cloudai.system.service.dataperm;
 
-import com.cloudai.system.api.dataperm.DataPermEvaluation;
-import com.cloudai.system.api.dataperm.DataPermEvaluationProvider;
+import com.cloudai.common.dataperm.DataPermEvaluation;
+import com.cloudai.common.dataperm.DataPermEvaluationProvider;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 

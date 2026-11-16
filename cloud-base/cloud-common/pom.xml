@@ -21,6 +21,8 @@
         <module>cloud-common-redis-starter</module>
         <module>cloud-common-translate-starter</module>
         <module>cloud-common-translate-remote-starter</module>
+        <module>cloud-common-dataperm-starter</module>
+        <module>cloud-common-dataperm-remote-starter</module>
         <module>cloud-common-rocketmq-starter</module>
         <module>cloud-common-xxljob-starter</module>
         <module>cloud-common-mcp-starter</module>

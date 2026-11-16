@@ -1,10 +1,10 @@
 package com.cloudai.system.service.dataperm;
 
 import com.cloudai.common.core.exception.BusinessException;
-import com.cloudai.system.api.dataperm.DataPermColumns;
-import com.cloudai.system.api.dataperm.FilterColumn;
-import com.cloudai.system.api.dataperm.FilterColumnTypeEnum;
-import com.cloudai.system.api.dataperm.FilterColumns;
+import com.cloudai.common.dataperm.DataPermColumns;
+import com.cloudai.common.dataperm.FilterColumn;
+import com.cloudai.common.dataperm.FilterColumnTypeEnum;
+import com.cloudai.common.dataperm.FilterColumns;
 import com.cloudai.system.entity.SysLeave;
 import com.cloudai.system.vo.SysLeaveVo;
 import com.cloudai.system.vo.SysUserVo;

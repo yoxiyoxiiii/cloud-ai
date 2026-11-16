@@ -1,6 +1,6 @@
 package com.cloudai.system.api.domain;
 
-import com.cloudai.system.api.dataperm.FilterColumnTypeEnum;
+import com.cloudai.common.dataperm.FilterColumnTypeEnum;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;

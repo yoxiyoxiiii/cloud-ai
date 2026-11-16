@@ -3,7 +3,7 @@ package com.cloudai.bpmn.mapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.bpmn.entity.BpmnApproval;
-import com.cloudai.system.api.dataperm.RowFilter;
+import com.cloudai.common.dataperm.RowFilter;
 import org.apache.ibatis.annotations.Param;
 
 import java.util.List;

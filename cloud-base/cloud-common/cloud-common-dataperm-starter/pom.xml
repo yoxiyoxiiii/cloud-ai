@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.cloudai</groupId>
+        <artifactId>cloud-common</artifactId>
+        <version>1.0.0-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>cloud-common-dataperm-starter</artifactId>
+    <name>cloud-common-dataperm-starter</name>
+    <description>数据权限组件机器面（@DataPermEvaluate 求值切面 + @DataPermVo 列级 advice + RowFilter 行集模型 + 求值 SPI；求值后端由宿主提供——system 本地 / 其余服务引 dataperm-remote-starter）</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-core-starter</artifactId>
+        </dependency>
+        <!-- 列 advisor（ResponseBodyAdvice/@RestControllerAdvice/OncePerRequestFilter）编译所需，
+             由引本 starter 的服务自带 web——translate-starter provided 先例 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- 列上下文请求级 filter 编译（provided 参与 test classpath——filter 单测的
+             MockHttpServletRequest 脚手架同源可用） -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <!-- 求值切面（@DataPermEvaluate）：@Aspect/@Around 织入所需，沿 cloud-common-mcp-starter
+             同款声明（引本 jar 的宿主传递获得；无标注方法零代理零行为变化） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

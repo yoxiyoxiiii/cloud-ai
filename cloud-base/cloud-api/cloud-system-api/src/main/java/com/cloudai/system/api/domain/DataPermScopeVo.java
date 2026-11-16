@@ -1,11 +1,11 @@
 package com.cloudai.system.api.domain;
 
-import com.cloudai.system.api.dataperm.ColumnScope;
-import com.cloudai.system.api.dataperm.DataScope;
-import com.cloudai.system.api.dataperm.PredicateOperatorEnum;
-import com.cloudai.system.api.dataperm.RowFilter;
-import com.cloudai.system.api.dataperm.RowGroup;
-import com.cloudai.system.api.dataperm.RowPredicate;
+import com.cloudai.common.dataperm.ColumnScope;
+import com.cloudai.common.dataperm.DataScope;
+import com.cloudai.common.dataperm.PredicateOperatorEnum;
+import com.cloudai.common.dataperm.RowFilter;
+import com.cloudai.common.dataperm.RowGroup;
+import com.cloudai.common.dataperm.RowPredicate;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;

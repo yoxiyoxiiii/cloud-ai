@@ -1,8 +1,8 @@
 package com.cloudai.system.service.dataperm;
 
 import com.cloudai.common.core.exception.BusinessException;
-import com.cloudai.system.api.dataperm.FilterColumn;
-import com.cloudai.system.api.dataperm.FilterColumnTypeEnum;
+import com.cloudai.common.dataperm.FilterColumn;
+import com.cloudai.common.dataperm.FilterColumnTypeEnum;
 import com.cloudai.system.vo.SysLeaveVo;
 import org.junit.jupiter.api.Test;
 

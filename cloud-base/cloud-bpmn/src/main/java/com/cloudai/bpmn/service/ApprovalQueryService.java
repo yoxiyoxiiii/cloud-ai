@@ -19,11 +19,11 @@ import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.common.core.exception.ErrorCode;
 import com.cloudai.common.translate.core.TranslationCacheService;
 import com.cloudai.system.api.client.DataPermClient;
-import com.cloudai.system.api.dataperm.DataPermEvaluate;
-import com.cloudai.system.api.dataperm.DataPermEvaluation;
-import com.cloudai.system.api.dataperm.DataPermOperation;
-import com.cloudai.system.api.dataperm.EntityFieldResolver;
-import com.cloudai.system.api.dataperm.RowFilter;
+import com.cloudai.common.dataperm.DataPermEvaluate;
+import com.cloudai.common.dataperm.DataPermEvaluation;
+import com.cloudai.common.dataperm.DataPermOperation;
+import com.cloudai.common.dataperm.EntityFieldResolver;
+import com.cloudai.common.dataperm.RowFilter;
 import com.cloudai.system.api.domain.DataPermDenyRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,8 +52,8 @@ import java.util.Set;
  * title 列级应用；详情/图数据 IDOR 收口（4010 先行 → 行级判定不通过 4018 + deny 远程补痕）；
  * system 不可用 fail-closed（D21：拒绝访问，不降级无过滤/空集）。求值每读路径一次（list/detail），
  * 留痕集中落 system 库（D7/D23）。求值 AOP 化（2026-11-16，翻案 2026-10-10 设计 D5 显式
- * 编程式）：求值与列上下文接线收敛到 @DataPermEvaluate 切面（Feign fail-closed 胶水迁至
- * RemoteDataPermEvaluationProvider；设计 docs/superpowers/specs/2026-11-16-dataperm-aop-evaluate-design.md）；
+ * 编程式）：求值与列上下文接线收敛到 @DataPermEvaluate 切面（Feign fail-closed 胶水由
+ * cloud-common-dataperm-remote-starter 组件提供；设计 docs/superpowers/specs/2026-11-16-dataperm-aop-evaluate-design.md）；
  * 列应用仍由 advice 统一处理（循环内逐行 mutate 早已退役）；diagram 返回树无白名单类，
  * 切面照常 set 上下文但 advice 不触发（no-op）。详情嵌套 VO 不在 TranslateAdvisor 容器下钻范围（候选①挂账）——
  * 译文字段经 TranslationCacheService 手动回填，未命中 null 同降级语义。
@@ -148,7 +148,7 @@ public class ApprovalQueryService {
         return buildDiagram(historic);
     }
 
-    // ---- 数据权限胶水（详情/图数据共用；求值胶水已迁 RemoteDataPermEvaluationProvider） ----
+    // ---- 数据权限胶水（详情/图数据共用；求值后端由 cloud-common-dataperm-remote-starter 组件装配） ----
 
     /** 行级判定（详情/图数据共用，谓词轮 D34 行属性升级）：无任一组匹配 → deny 远程补痕
      *  （降级仅记日志）→ 4018；entity typed 形态取值（D34 双形态 bpmn 侧验证点） */

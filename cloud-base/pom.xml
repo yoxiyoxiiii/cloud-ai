@@ -117,6 +117,16 @@
             </dependency>
             <dependency>
                 <groupId>com.cloudai</groupId>
+                <artifactId>cloud-common-dataperm-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.cloudai</groupId>
+                <artifactId>cloud-common-dataperm-remote-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.cloudai</groupId>
                 <artifactId>cloud-common-rocketmq-starter</artifactId>
                 <version>${project.version}</version>
             </dependency>

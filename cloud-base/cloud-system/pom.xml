@@ -109,6 +109,11 @@
             <groupId>com.cloudai</groupId>
             <artifactId>cloud-common-inner-starter</artifactId>
         </dependency>
+        <!-- 数据权限组件（注解/切面/列裁剪机器面）——本服务是规则提供方，配套本地求值后端 service/dataperm -->
+        <dependency>
+            <groupId>com.cloudai</groupId>
+            <artifactId>cloud-common-dataperm-starter</artifactId>
+        </dependency>
     </dependencies>
 
     <build>

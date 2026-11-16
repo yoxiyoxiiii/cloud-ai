@@ -1,10 +1,10 @@
 package com.cloudai.system.api.domain;
 
-import com.cloudai.system.api.dataperm.ColumnScope;
-import com.cloudai.system.api.dataperm.DataScope;
-import com.cloudai.system.api.dataperm.FilterColumnTypeEnum;
-import com.cloudai.system.api.dataperm.RowFilter;
-import com.cloudai.system.api.dataperm.RowPredicate;
+import com.cloudai.common.dataperm.ColumnScope;
+import com.cloudai.common.dataperm.DataScope;
+import com.cloudai.common.dataperm.FilterColumnTypeEnum;
+import com.cloudai.common.dataperm.RowFilter;
+import com.cloudai.common.dataperm.RowPredicate;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
