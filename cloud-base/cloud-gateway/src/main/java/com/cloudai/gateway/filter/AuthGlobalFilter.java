@@ -11,6 +11,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
@@ -38,6 +39,7 @@ import java.util.stream.Collectors;
  *
  * 网关认真拦截
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class AuthGlobalFilter implements GlobalFilter, Ordered {
@@ -52,11 +54,20 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
     private final ObjectMapper objectMapper = new ObjectMapper()
             .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
+    /**
+     * 过滤器
+     * @param exchange the current server exchange
+     * @param chain provides a way to delegate to the next filter
+     * @return
+     */
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        // 请求路径
         String path = exchange.getRequest().getPath().value();
         // 白名单：剥离外部 X-User-* 后放行（startsWith 前缀语义，条目坑见 application.yml 注释）
         ServerWebExchange safeExchange = stripUserHeaders(exchange);
+
+        // 放行
         if (authWhitelistProperties.getWhitelist().stream().anyMatch(path::startsWith)) {
             return chain.filter(safeExchange);
         }
@@ -66,12 +77,14 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
         if (authorization == null || !authorization.startsWith(BEARER_PREFIX)) {
             return unauthorized(exchange);
         }
+
+        // 解析用户token
         Claims claims;
         try {
             // 解析token
             claims = JwtUtil.parseToken(jwtProperties.getSecret(), authorization.substring(BEARER_PREFIX.length()));
         } catch (JwtException | IllegalArgumentException e) {
-            // IllegalArgumentException：jjwt 对空串等非法输入抛出（非 JwtException 子类）
+            log.error("token 解析异常：", e);
             return unauthorized(exchange);
         }
         // 读在线会话原始 JSON（StringRedisTemplate 规避 @class 反序列化；null=注销/强退/过期 → 401）
@@ -101,6 +114,8 @@ public class AuthGlobalFilter implements GlobalFilter, Ordered {
                 claims.get("account", String.class),
                 String.join(SecurityConstants.PERMS_SEPARATOR, perms),
                 joinIds(roleIds), joinIds(deptIds));
+
+        // 通过头进行权限数据的透传
         ServerWebExchange authed = withUserHeaders(safeExchange, values);
         return chain.filter(authed);
     }
