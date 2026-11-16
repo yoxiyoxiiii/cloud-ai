@@ -1,5 +1,7 @@
 package com.cloudai.system.api.dataperm;
 
+import lombok.Getter;
+
 import java.util.List;
 import java.util.function.Function;
 
@@ -12,7 +14,9 @@ import java.util.function.Function;
  * 账号集合并成单组；③死组（!allAccounts && accounts 空）已被求值器丢弃——本类不二次防御
  * （收到即恒假组，无害）。{@link #isEmptyScope()} = groups 空（Service 短路不进 mapper，
  * 与 v1 口径一致——XML 永不收到空集合）。
+ * @author jy-root
  */
+@Getter
 public final class RowFilter {
 
     private final boolean rowAll;
@@ -31,14 +35,6 @@ public final class RowFilter {
     /** 分组并集形态（非豁免；groups 空合法=空范围） */
     public static RowFilter of(List<RowGroup> groups) {
         return new RowFilter(false, groups);
-    }
-
-    public boolean isRowAll() {
-        return rowAll;
-    }
-
-    public List<RowGroup> getGroups() {
-        return groups;
     }
 
     /** 空范围：看不到任何行（Service 短路判据，不进 mapper） */

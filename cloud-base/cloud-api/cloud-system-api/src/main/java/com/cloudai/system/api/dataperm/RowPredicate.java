@@ -1,5 +1,7 @@
 package com.cloudai.system.api.dataperm;
 
+import lombok.Getter;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -22,12 +24,26 @@ import java.util.Objects;
  * ⑥PREFIX startsWithIgnoreCase 双侧不 stripTrailing（LIKE 非 PAD SPACE，探针 P2-P5——
  * 与规则④刻意不对称记档，设计 D43）。
  * 防御方向恒 fail-closed：未知操作符/不可归一值/空值组/矩阵外组合 → false（不放大授权）。
+ * @author jy-root
  */
+@Getter
 public final class RowPredicate {
 
     private final String field;
+    /**
+     * -- GETTER --
+     * 裸 DB 列名（XML 硬编码分支对照，无别名前缀）
+     */
     private final String column;
+    /**
+     * -- GETTER --
+     * 操作符枚举 name（字符串承载，XML OGNL 直比）
+     */
     private final String operator;
+    /**
+     * -- GETTER --
+     * 已类型化值（BigDecimal/LocalDate/LocalDateTime/String）
+     */
     private final List<Object> values;
 
     private RowPredicate(String field, String column, String operator, List<Object> values) {
@@ -41,25 +57,6 @@ public final class RowPredicate {
     public static RowPredicate of(String field, String column, PredicateOperatorEnum operator,
             List<Object> values) {
         return new RowPredicate(field, column, operator.name(), values);
-    }
-
-    public String getField() {
-        return field;
-    }
-
-    /** 裸 DB 列名（XML 硬编码分支对照，无别名前缀） */
-    public String getColumn() {
-        return column;
-    }
-
-    /** 操作符枚举 name（字符串承载，XML OGNL 直比） */
-    public String getOperator() {
-        return operator;
-    }
-
-    /** 已类型化值（BigDecimal/LocalDate/LocalDateTime/String） */
-    public List<Object> getValues() {
-        return values;
     }
 
     /** SQL 语义对齐判定（D34 五规则；null/空值组/未知形态恒 false） */

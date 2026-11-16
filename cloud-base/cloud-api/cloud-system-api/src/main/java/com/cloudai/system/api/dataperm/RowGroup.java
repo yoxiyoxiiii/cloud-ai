@@ -1,5 +1,7 @@
 package com.cloudai.system.api.dataperm;
 
+import lombok.Getter;
+
 import java.util.List;
 import java.util.Set;
 
@@ -10,11 +12,21 @@ import java.util.Set;
  * <p>allAccounts=true 时 accounts 恒空（ALL 档+条件组——owner 无关授权，「只能看 id=1~100」
  * 即此形态）；无条件规则 = 单组无谓词（退化为 {@code apply_user IN (...)}，与 v1 行集语义
  * 逐字等价，D40）；组内谓词恒 AND（行内 AND，D30）。
+ * @author jy-root
  */
+@Getter
 public final class RowGroup {
 
+    /**
+     * -- GETTER --
+     * true=组不限归属账号（ALL+条件组；此时 accounts 空）
+     */
     private final boolean allAccounts;
     private final Set<String> accounts;
+    /**
+     * -- GETTER --
+     * 组条件（组内 AND；无条件组空列表）
+     */
     private final List<RowPredicate> predicates;
 
     private RowGroup(boolean allAccounts, Set<String> accounts, List<RowPredicate> predicates) {
@@ -27,17 +39,4 @@ public final class RowGroup {
         return new RowGroup(allAccounts, accounts, predicates);
     }
 
-    /** true=组不限归属账号（ALL+条件组；此时 accounts 空） */
-    public boolean isAllAccounts() {
-        return allAccounts;
-    }
-
-    public Set<String> getAccounts() {
-        return accounts;
-    }
-
-    /** 组条件（组内 AND；无条件组空列表） */
-    public List<RowPredicate> getPredicates() {
-        return predicates;
-    }
 }
