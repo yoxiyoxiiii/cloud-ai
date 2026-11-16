@@ -1,5 +1,7 @@
 package com.cloudai.common.dataperm;
 
+import lombok.Getter;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -11,6 +13,7 @@ import java.util.Set;
  * isEmpty=无任何列动作（读路径零处理，免遍历）。
  * @author jy-root
  */
+@Getter
 public final class ColumnScope {
 
     /** 脱敏替换值（单一策略：整值替换，多样化移交设计 §11.5） */
@@ -68,11 +71,4 @@ public final class ColumnScope {
         return String.join(";", parts);
     }
 
-    public Set<String> getHiddenColumns() {
-        return hiddenColumns;
-    }
-
-    public Set<String> getMaskedColumns() {
-        return maskedColumns;
-    }
 }
