@@ -19,10 +19,11 @@ from typing import Any, NamedTuple
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 
-from cloud_base_agent import dao, message_store, runtime
-from cloud_base_agent.entities import AiAgent, AiAgentRunLog, AiAgentSession, AiTool
-from cloud_base_agent.manage_service import CODE_AGENT_NOT_EXISTS
-from cloud_base_agent.schemas import (
+from cloud_base_agent.domain import dao
+from cloud_base_agent.pipeline import message_store, runtime
+from cloud_base_agent.domain.entities import AiAgent, AiAgentRunLog, AiAgentSession, AiTool
+from cloud_base_agent.domain.manage_service import CODE_AGENT_NOT_EXISTS
+from cloud_base_agent.domain.schemas import (
     AgentAnswerVo,
     AgentRunReq,
     AgentSessionMessageVo,
@@ -30,13 +31,13 @@ from cloud_base_agent.schemas import (
     AgentSessionVo,
     AiPageResult,
 )
-from cloud_base_agent.config import get_settings
+from cloud_base_agent.core.config import get_settings
 from cloud_ai_common.db.tx import current_session, transactional
 from cloud_ai_common.exceptions import BusinessException
 from cloud_base_agent.mcp.perm import visible_tools
 from cloud_base_agent.mcp_server import dao as mcp_server_dao
 from cloud_ai_common.security import current_identity
-from cloud_base_agent.security import is_mcp_server_exempt
+from cloud_base_agent.core.security import is_mcp_server_exempt
 
 logger = logging.getLogger(__name__)
 

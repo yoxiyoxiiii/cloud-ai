@@ -21,7 +21,7 @@ import time
 import urllib.error
 import urllib.request
 
-from cloud_base_agent.agent import dao as agent_dao
+from cloud_base_agent.domain import dao as agent_dao
 from cloud_ai_common.db import tx
 
 GATEWAY = "http://localhost:18080"

@@ -16,8 +16,8 @@ from contextlib import aclosing
 from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
 
-from cloud_base_agent import manage_service, run_service
-from cloud_base_agent.schemas import (
+from cloud_base_agent.domain import manage_service, run_service
+from cloud_base_agent.domain.schemas import (
     AgentAnswerVo,
     AgentDetailVo,
     AgentMcpServerOptionVo,

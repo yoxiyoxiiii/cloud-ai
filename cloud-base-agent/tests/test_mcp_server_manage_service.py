@@ -12,8 +12,8 @@ from types import SimpleNamespace
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from cloud_base_agent import runtime
-from cloud_base_agent.entities import AiTool
+from cloud_base_agent.pipeline import runtime
+from cloud_base_agent.domain.entities import AiTool
 from cloud_ai_common.db import tx
 from cloud_ai_common.db.base import set_current_account
 from cloud_ai_common.exceptions import BusinessException

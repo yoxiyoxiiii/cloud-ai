@@ -2,7 +2,7 @@
 
 from sqlalchemy import UniqueConstraint, inspect
 
-from cloud_base_agent.entities import (
+from cloud_base_agent.domain.entities import (
     AiAgent,
     AiAgentMcpServer,
     AiAgentRunLog,

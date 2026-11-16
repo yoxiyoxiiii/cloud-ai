@@ -37,7 +37,7 @@ from langchain.agents.middleware import TodoListMiddleware
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, ConfigDict, create_model
 
-from cloud_base_agent.entities import AiAgent, AiTool
+from cloud_base_agent.domain.entities import AiAgent, AiTool
 from cloud_ai_common.exceptions import BusinessException
 from cloud_base_agent.mcp import client as mcp_client
 from cloud_ai_common import model_factory

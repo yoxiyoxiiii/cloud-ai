@@ -12,7 +12,7 @@ import pytest
 from fastmcp.client import StreamableHttpTransport
 from fastmcp.client.transports.sse import SSETransport
 
-from cloud_base_agent.config import Settings
+from cloud_base_agent.core.config import Settings
 from cloud_ai_common.exceptions import BusinessException
 from cloud_base_agent.mcp import client as mcp_client
 

@@ -9,7 +9,7 @@ docs/superpowers/specs/2026-10-19-ai-chat-session-design.md §3.2。会话存在
 口径：LPUSH/LTRIM 级内存操作为毫秒级，service 直接同步调用。
 """
 
-from cloud_base_agent.schemas import AgentSessionMessageVo
+from cloud_base_agent.domain.schemas import AgentSessionMessageVo
 from cloud_ai_common.redis_client import get_redis_client
 
 AGENT_MESSAGE_KEY_PREFIX = "agent:messages:"

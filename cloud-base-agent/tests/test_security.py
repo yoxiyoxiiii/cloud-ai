@@ -6,7 +6,7 @@ import asyncio
 from starlette.requests import Request
 
 from cloud_ai_common.security import Identity, current_identity, require_perms
-from cloud_base_agent.security import is_mcp_server_exempt
+from cloud_base_agent.core.security import is_mcp_server_exempt
 
 
 def _identity_with(perms: str, anchor: str) -> Identity:

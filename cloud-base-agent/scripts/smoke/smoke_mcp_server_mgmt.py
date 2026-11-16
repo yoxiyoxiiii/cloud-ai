@@ -34,7 +34,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from cloud_base_agent.config import BASE_DIR, get_settings
+from cloud_base_agent.core.config import BASE_DIR, get_settings
 
 GATEWAY = "http://localhost:18080"
 SYSTEM_MCP_URL = "http://127.0.0.1:9202/mcp"

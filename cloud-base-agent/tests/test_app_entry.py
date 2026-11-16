@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cloud_base_agent.app import app
-from cloud_base_agent.config import get_settings
+from cloud_base_agent.core.config import get_settings
 
 
 class FakeNacosNamingService:

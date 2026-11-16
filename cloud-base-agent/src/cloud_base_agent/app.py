@@ -25,13 +25,13 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 
-from cloud_base_agent.router import agent_add_router
-from cloud_base_agent.router import agent_delete_router
-from cloud_base_agent.router import agent_list_router
-from cloud_base_agent.router import agent_run_router
-from cloud_base_agent.router import agent_session_router
-from cloud_base_agent.router import agent_update_router
-from cloud_base_agent.config import get_settings
+from cloud_base_agent.api.router import agent_add_router
+from cloud_base_agent.api.router import agent_delete_router
+from cloud_base_agent.api.router import agent_list_router
+from cloud_base_agent.api.router import agent_run_router
+from cloud_base_agent.api.router import agent_session_router
+from cloud_base_agent.api.router import agent_update_router
+from cloud_base_agent.core.config import get_settings
 from cloud_ai_common.db import dispose_engine
 from cloud_ai_common.exception_handler import register_exception_handlers
 from cloud_base_agent.mcp_server.router import mcp_server_add_router

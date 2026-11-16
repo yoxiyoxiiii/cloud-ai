@@ -20,7 +20,7 @@ from datetime import datetime
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cloud_base_agent.entities import (
+from cloud_base_agent.domain.entities import (
     AiAgent,
     AiAgentMcpServer,
     AiAgentRunLog,

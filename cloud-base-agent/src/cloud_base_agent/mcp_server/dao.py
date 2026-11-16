@@ -17,7 +17,7 @@ from datetime import datetime
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cloud_base_agent.entities import AiTool
+from cloud_base_agent.domain.entities import AiTool
 from cloud_ai_common.db.base import (
     SoftDeleteMixin,
     current_account,

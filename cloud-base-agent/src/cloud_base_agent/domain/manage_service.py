@@ -13,9 +13,9 @@ import logging
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from cloud_base_agent import dao
-from cloud_base_agent.entities import AiAgent
-from cloud_base_agent.schemas import (
+from cloud_base_agent.domain import dao
+from cloud_base_agent.domain.entities import AiAgent
+from cloud_base_agent.domain.schemas import (
     AgentDetailVo,
     AgentMcpServerOptionVo,
     AgentSummaryVo,

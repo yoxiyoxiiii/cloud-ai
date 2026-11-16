@@ -8,8 +8,8 @@ commit）；flush 失败（IntegrityError）会使 session 进入 PendingRollbac
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from cloud_base_agent import dao
-from cloud_base_agent.dao import (
+from cloud_base_agent.domain import dao
+from cloud_base_agent.domain.dao import (
     count_published_tools_by_server,
     delete_agent,
     delete_agent_mcp_servers,
@@ -36,7 +36,7 @@ from cloud_base_agent.dao import (
     soft_delete_agent_session,
     update_agent,
 )
-from cloud_base_agent.entities import (
+from cloud_base_agent.domain.entities import (
     AiAgent,
     AiAgentMcpServer,
     AiAgentRunLog,

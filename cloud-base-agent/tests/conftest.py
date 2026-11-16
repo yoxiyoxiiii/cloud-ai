@@ -13,7 +13,7 @@ if sys.platform == "win32":
 
 import pytest
 
-import cloud_base_agent.config  # noqa: F401  import 副作用：注册 settings provider
+import cloud_base_agent.core.config  # noqa: F401  import 副作用：注册 settings provider
 
 pytest_plugins = ("anyio",)
 

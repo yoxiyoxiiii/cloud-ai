@@ -15,7 +15,7 @@ from functools import cache
 
 from dotenv import dotenv_values
 
-from cloud_base_agent.config import BASE_DIR
+from cloud_base_agent.core.config import BASE_DIR
 
 # 命名空间护栏：只允许引用 MCP server 凭据段的键——防把 LLM api_key 等其他敏感
 # 环境变量注入出站请求头造成凭据外泄（违例在管理面入参校验即拒，1001）

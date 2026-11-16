@@ -7,9 +7,9 @@ DB 走 SQLite 内存替身（make_service_session_factory + monkeypatch tx.get_s
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from cloud_base_agent import dao, manage_service
-from cloud_base_agent.entities import AiAgent, AiAgentRunLog, AiTool
-from cloud_base_agent.schemas import CreateAgentReq, UpdateAgentReq
+from cloud_base_agent.domain import dao, manage_service
+from cloud_base_agent.domain.entities import AiAgent, AiAgentRunLog, AiTool
+from cloud_base_agent.domain.schemas import CreateAgentReq, UpdateAgentReq
 from cloud_ai_common.db import tx
 from cloud_ai_common.db.base import set_current_account
 from cloud_ai_common.exceptions import BusinessException

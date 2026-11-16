@@ -13,9 +13,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from cloud_base_agent import manage_service as mgmt
-from cloud_base_agent import run_service as runs
-from cloud_base_agent.router import (
+from cloud_base_agent.domain import manage_service as mgmt
+from cloud_base_agent.domain import run_service as runs
+from cloud_base_agent.api.router import (
     agent_add_router,
     agent_delete_router,
     agent_list_router,
@@ -23,7 +23,7 @@ from cloud_base_agent.router import (
     agent_session_router,
     agent_update_router,
 )
-from cloud_base_agent.schemas import (
+from cloud_base_agent.domain.schemas import (
     AgentAnswerVo,
     AgentMcpServerOptionVo,
     AgentSessionMessagesVo,

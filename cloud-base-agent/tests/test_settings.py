@@ -4,7 +4,7 @@
 
 from pathlib import Path
 
-from cloud_base_agent.config import BASE_DIR, Settings
+from cloud_base_agent.core.config import BASE_DIR, Settings
 
 
 def test_db_defaults_cloud_ai_agent(monkeypatch) -> None:
@@ -22,6 +22,6 @@ def test_app_port_default_8012(monkeypatch) -> None:
 
 
 def test_env_file_points_to_agent_project_root() -> None:
-    """env_file 落点=本工程根（config.py 在 src/cloud_base_agent/ 下三层上=cloud-base-agent/）。"""
+    """env_file 落点=本工程根（config.py 在 src/cloud_base_agent/core/ 下四层上=cloud-base-agent/）。"""
     assert BASE_DIR == Path(__file__).resolve().parents[1]
     assert Settings.model_config.get("env_file") == str(BASE_DIR / ".env")

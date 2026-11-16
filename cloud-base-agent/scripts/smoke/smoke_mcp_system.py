@@ -19,8 +19,8 @@ import time
 import urllib.error
 import urllib.request
 
-from cloud_base_agent.entities import AiTool
-from cloud_base_agent.config import get_settings
+from cloud_base_agent.domain.entities import AiTool
+from cloud_base_agent.core.config import get_settings
 from cloud_ai_common.db import tx
 from cloud_base_agent.mcp import client as mcp_client
 from cloud_base_agent.mcp.perm import visible_tools

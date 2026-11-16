@@ -11,16 +11,17 @@ import json
 import pytest
 from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 
-from cloud_base_agent import dao, message_store, run_service, runtime
-from cloud_base_agent.entities import (
+from cloud_base_agent.domain import dao, run_service
+from cloud_base_agent.pipeline import message_store, runtime
+from cloud_base_agent.domain.entities import (
     AiAgent,
     AiAgentRunLog,
     AiAgentSession,
     AiAgentTool,
     AiTool,
 )
-from cloud_base_agent.schemas import AgentRunReq
-from cloud_base_agent.config import get_settings
+from cloud_base_agent.domain.schemas import AgentRunReq
+from cloud_base_agent.core.config import get_settings
 from cloud_ai_common.db import tx
 from cloud_ai_common.exceptions import BusinessException
 from cloud_base_agent.mcp_server import dao as mcp_server_dao
@@ -51,7 +52,7 @@ class _FakeStore:
         self.messages.setdefault(session_id, []).append((role, content))
 
     def as_vos(self, session_id: int):
-        from cloud_base_agent.schemas import AgentSessionMessageVo
+        from cloud_base_agent.domain.schemas import AgentSessionMessageVo
         return [AgentSessionMessageVo(role=r, content=c)
                 for r, c in self.messages.get(session_id, [])]
 

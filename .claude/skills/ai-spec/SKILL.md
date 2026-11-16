@@ -37,7 +37,7 @@ router  →  service  →  dao  →  entities
 | dao | 只写查询与 flush | commit / rollback / begin（守护测试检查）；import service/router |
 | entities | 表结构映射 | import dao/service/router |
 
-分层落位在各服务工程子包（rag 工程参照：包根只留 `app.py` 入口，`api/` 路由、`domain/` 的 service/dao/entities/schemas、`core/` 横切 config/constants/security/sso_redis，2026-11-15 分包轮起）；共享的事务基建在 `cloud_ai_common.db`。外部系统（Milvus、Ollama、MinIO、模型）的封装放服务工程 `pipeline/` 子包独立模块（如 `cloud_base_rag/pipeline/vectorstore.py`、`cloud_base_rag/pipeline/embedding.py`），由 service 调用，不进 dao、不进共享库（共享库只收两服务都消费的底座件）。MCP 服务端面（认证/工具/检索编排）归 `mcp/` 子包。
+分层落位在各服务工程子包（rag/agent 两工程同款词汇：包根只留 `app.py` 入口，`api/` 路由、`domain/` 业务 service/dao/entities/schemas、`core/` 横切配置与权限、`pipeline/` 运行链组件，2026-11-15 分包轮起；agent 另有 `mcp/` 客户端通道与自成一体的 `mcp_server/` 注册管理域）；共享的事务基建在 `cloud_ai_common.db`。外部系统（Milvus、Ollama、MinIO、模型）的封装放服务工程 `pipeline/` 子包独立模块（如 `cloud_base_rag/pipeline/vectorstore.py`、`cloud_base_rag/pipeline/embedding.py`），由 service 调用，不进 dao、不进共享库（共享库只收两服务都消费的底座件）。MCP 服务端面（认证/工具/检索编排）归 `mcp/` 子包。
 
 ## 二、实体（entities.py）
 

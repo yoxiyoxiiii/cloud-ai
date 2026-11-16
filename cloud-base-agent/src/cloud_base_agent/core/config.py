@@ -19,10 +19,10 @@ from cloud_ai_common.config import CommonSettings, DatabaseSettings, set_setting
 # setdefault 提供；本模块级再 setdefault 一次兜测试链——测试 import config 不经入口。
 os.environ.setdefault("CLOUD_BASE_AI_NACOS__SERVICE_NAME", "cloud-base-agent")
 
-# 工程根绝对路径（src/cloud_base_agent/config.py 三层上 = cloud-base-agent/）。
+# 工程根绝对路径（src/cloud_base_agent/core/config.py 四层上 = cloud-base-agent/）。
 # env_file 必须绝对路径：pydantic-settings 相对路径按进程 cwd 解析，起服命令 cwd
 # 在仓库根会指错。mcp/secrets.py 的 .env 直读复用本常量（落点公式不变）。
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 
 
 class AgentDatabaseSettings(DatabaseSettings):

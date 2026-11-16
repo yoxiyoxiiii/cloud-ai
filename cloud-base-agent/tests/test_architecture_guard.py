@@ -38,7 +38,7 @@ def _imported_modules(tree: ast.Module) -> Iterator[tuple[str, int]]:
     """产出文件内每条 import 的完整模块名及行号。
 
     `from a.b import c` 同时产出 `a.b` 与 `a.b.c`，这样既能拦截
-    `from cloud_base_agent import dao`，也能拦截 `import cloud_base_agent.dao`。
+    `from cloud_base_agent.domain import dao`，也能拦截 `import cloud_base_agent.domain.dao`。
     """
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):

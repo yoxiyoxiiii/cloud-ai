@@ -14,8 +14,8 @@ sync 三段式（事务边界关键）：
 import json
 import logging
 
-from cloud_base_agent import runtime
-from cloud_base_agent.entities import AiTool
+from cloud_base_agent.pipeline import runtime
+from cloud_base_agent.domain.entities import AiTool
 from cloud_ai_common.db.tx import current_session, transactional
 from cloud_ai_common.exceptions import BusinessException
 from cloud_base_agent.mcp import client as mcp_client

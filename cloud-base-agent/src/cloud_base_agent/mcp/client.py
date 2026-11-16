@@ -22,7 +22,7 @@ from fastmcp.client import Client, StreamableHttpTransport
 from fastmcp.client.client import CallToolResult
 from fastmcp.client.transports.sse import SSETransport
 
-from cloud_base_agent.config import get_settings
+from cloud_base_agent.core.config import get_settings
 from cloud_ai_common.exceptions import BusinessException
 from cloud_base_agent.mcp import secrets
 

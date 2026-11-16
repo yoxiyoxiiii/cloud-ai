@@ -8,7 +8,7 @@ pytest.raises 捕获（块异常自动 rollback）。
 import pytest
 from sqlalchemy.exc import IntegrityError
 
-from cloud_base_agent.entities import AiTool
+from cloud_base_agent.domain.entities import AiTool
 from cloud_ai_common.db.base import set_current_account
 from cloud_base_agent.mcp_server.dao import (
     count_tools_by_server,

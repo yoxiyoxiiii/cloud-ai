@@ -1,6 +1,6 @@
 """MCP 工具可见性过滤测试（契约 2026-10-17-mcp-tools-api §5 修订版：真相源=ai_tool 注册表）。"""
 
-from cloud_base_agent.entities import AiTool
+from cloud_base_agent.domain.entities import AiTool
 from cloud_base_agent.mcp.perm import visible_tools
 
 
