@@ -35,6 +35,8 @@ import java.util.stream.Collectors;
  * 401 返回统一 R JSON（网关层使用真实 HTTP 401 状态，与服务层 HTTP200+body.code 约定并存）。
  * 注：Redis 为同步调用（内网低延迟，MVP 取舍；高并发场景改 reactive 或本地缓存）。
  * @author jy-root
+ *
+ * 网关认真拦截
  */
 @Component
 @RequiredArgsConstructor
