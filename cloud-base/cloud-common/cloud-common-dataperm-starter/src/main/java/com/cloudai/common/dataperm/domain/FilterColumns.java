@@ -1,5 +1,7 @@
 package com.cloudai.common.dataperm.domain;
 
+import com.cloudai.common.dataperm.column.DataPermColumns;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.List;

@@ -1,6 +1,6 @@
 package com.cloudai.common.dataperm.evaluate;
 
-import com.cloudai.common.dataperm.annotation.DataPermEvaluate;
+import com.cloudai.common.dataperm.column.DataPermColumnContext;
 import com.cloudai.common.dataperm.domain.ColumnScope;
 import com.cloudai.common.dataperm.domain.RowFilter;
 
