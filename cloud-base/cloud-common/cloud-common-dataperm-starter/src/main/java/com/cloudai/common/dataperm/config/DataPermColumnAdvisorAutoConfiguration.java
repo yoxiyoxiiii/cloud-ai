@@ -1,7 +1,7 @@
 package com.cloudai.common.dataperm.config;
 
-import com.cloudai.common.dataperm.DataPermColumnAdvice;
-import com.cloudai.common.dataperm.DataPermColumnContextFilter;
+import com.cloudai.common.dataperm.column.DataPermColumnAdvice;
+import com.cloudai.common.dataperm.column.DataPermColumnContextFilter;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;

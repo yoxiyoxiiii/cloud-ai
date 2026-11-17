@@ -1,6 +1,6 @@
 package com.cloudai.common.dataperm.remote.config;
 
-import com.cloudai.common.dataperm.DataPermEvaluationProvider;
+import com.cloudai.common.dataperm.evaluate.DataPermEvaluationProvider;
 import com.cloudai.common.dataperm.remote.RemoteDataPermEvaluationProvider;
 import com.cloudai.system.api.client.DataPermClient;
 import feign.Request;

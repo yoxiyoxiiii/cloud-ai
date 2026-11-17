@@ -1,7 +1,7 @@
 package com.cloudai.common.dataperm.config;
 
-import com.cloudai.common.dataperm.DataPermEvaluateAspect;
-import com.cloudai.common.dataperm.DataPermEvaluationProvider;
+import com.cloudai.common.dataperm.evaluate.DataPermEvaluateAspect;
+import com.cloudai.common.dataperm.evaluate.DataPermEvaluationProvider;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;

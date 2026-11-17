@@ -1,5 +1,9 @@
 package com.cloudai.common.dataperm;
 
+import com.cloudai.common.dataperm.column.DataPermColumnAdvice;
+import com.cloudai.common.dataperm.column.DataPermColumnContext;
+import com.cloudai.common.dataperm.domain.ColumnScope;
+
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;
 import org.junit.jupiter.api.AfterEach;

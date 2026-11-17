@@ -1,4 +1,7 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.evaluate;
+
+import com.cloudai.common.dataperm.annotation.DataPermEvaluate;
+import com.cloudai.common.dataperm.column.DataPermColumnContext;
 
 import lombok.RequiredArgsConstructor;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -31,7 +34,7 @@ public class DataPermEvaluateAspect {
 
     private final ObjectProvider<DataPermEvaluationProvider> provider;
 
-    @Around("@annotation(com.cloudai.common.dataperm.DataPermEvaluate)")
+    @Around("@annotation(com.cloudai.common.dataperm.annotation.DataPermEvaluate)")
     public Object evaluateAndWire(ProceedingJoinPoint pjp) throws Throwable {
         Method method = ((MethodSignature) pjp.getSignature()).getMethod();
         DataPermEvaluate annotation = method.getAnnotation(DataPermEvaluate.class);

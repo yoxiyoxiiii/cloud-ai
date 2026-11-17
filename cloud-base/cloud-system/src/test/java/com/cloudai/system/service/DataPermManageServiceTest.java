@@ -1,5 +1,10 @@
 package com.cloudai.system.service;
 
+import com.cloudai.common.dataperm.domain.ColumnScope;
+import com.cloudai.common.dataperm.domain.DataScope;
+import com.cloudai.common.dataperm.domain.RowFilter;
+import com.cloudai.common.dataperm.domain.RowGroup;
+
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.cloudai.common.core.exception.BusinessException;
 import com.cloudai.system.dto.DataPermRulePageQuery;
@@ -367,8 +372,8 @@ class DataPermManageServiceTest {
         query.setResource(RESOURCE);
         DataPermDecision decision = new DataPermDecision();
         decision.setAccount("userA");
-        decision.setDataScope(com.cloudai.common.dataperm.DataScope.of(java.util.Set.of("userA")));
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(
+        decision.setDataScope(com.cloudai.common.dataperm.domain.DataScope.of(java.util.Set.of("userA")));
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(
                 java.util.Set.of(), java.util.Set.of("reason")));
         when(evaluator.evaluateForSelf(RESOURCE)).thenReturn(decision);
 
@@ -385,8 +390,8 @@ class DataPermManageServiceTest {
         query.setResource(RESOURCE);
         DataPermDecision decision = new DataPermDecision();
         decision.setAccount("userA");
-        decision.setDataScope(com.cloudai.common.dataperm.DataScope.of(java.util.Set.of("userA", "userB")));
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(
+        decision.setDataScope(com.cloudai.common.dataperm.domain.DataScope.of(java.util.Set.of("userA", "userB")));
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(
                 java.util.Set.of(), java.util.Set.of()));
         decision.getHitRules().add(hitRule(SysDataPermRule.RowScopeEnum.DEPT_AND_CHILD.getCode()));
         when(evaluator.evaluateForSelf(RESOURCE)).thenReturn(decision);
@@ -403,8 +408,8 @@ class DataPermManageServiceTest {
         query.setResource(RESOURCE);
         DataPermDecision decision = new DataPermDecision();
         decision.setAccount("userA");
-        decision.setDataScope(com.cloudai.common.dataperm.DataScope.of(java.util.Set.of("userA")));
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(
+        decision.setDataScope(com.cloudai.common.dataperm.domain.DataScope.of(java.util.Set.of("userA")));
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(
                 java.util.Set.of(), java.util.Set.of()));
         decision.getHitRules().add(hitRule(SysDataPermRule.RowScopeEnum.DEPT.getCode()));
         when(evaluator.evaluateForSelf(RESOURCE)).thenReturn(decision);
@@ -421,8 +426,8 @@ class DataPermManageServiceTest {
         query.setResource(RESOURCE);
         DataPermDecision decision = new DataPermDecision();
         decision.setAccount("userA");
-        decision.setDataScope(com.cloudai.common.dataperm.DataScope.of(java.util.Set.of("userA")));
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(
+        decision.setDataScope(com.cloudai.common.dataperm.domain.DataScope.of(java.util.Set.of("userA")));
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(
                 java.util.Set.of(), java.util.Set.of()));
         decision.getHitRules().add(hitRule(SysDataPermRule.RowScopeEnum.SELF.getCode()));
         when(evaluator.evaluateForSelf(RESOURCE)).thenReturn(decision);
@@ -439,8 +444,8 @@ class DataPermManageServiceTest {
         query.setResource(RESOURCE);
         DataPermDecision decision = new DataPermDecision();
         decision.setAccount("userA");
-        decision.setDataScope(com.cloudai.common.dataperm.DataScope.of(java.util.Set.of("userA", "userB")));
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(
+        decision.setDataScope(com.cloudai.common.dataperm.domain.DataScope.of(java.util.Set.of("userA", "userB")));
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(
                 java.util.Set.of(), java.util.Set.of()));
         decision.getHitRules().add(hitRule(SysDataPermRule.RowScopeEnum.CUSTOM.getCode()));
         when(evaluator.evaluateForSelf(RESOURCE)).thenReturn(decision);
@@ -457,8 +462,8 @@ class DataPermManageServiceTest {
         query.setResource(RESOURCE);
         DataPermDecision decision = new DataPermDecision();
         decision.setAccount("userA");
-        decision.setDataScope(com.cloudai.common.dataperm.DataScope.of(java.util.Set.of("userB")));
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(
+        decision.setDataScope(com.cloudai.common.dataperm.domain.DataScope.of(java.util.Set.of("userB")));
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(
                 java.util.Set.of(), java.util.Set.of()));
         decision.getHitRules().add(hitRule(SysDataPermRule.RowScopeEnum.CUSTOM.getCode()));
         when(evaluator.evaluateForSelf(RESOURCE)).thenReturn(decision);
@@ -694,11 +699,11 @@ class DataPermManageServiceTest {
         DataPermDecision decision = new DataPermDecision();
         decision.setResource(RESOURCE);
         decision.setAccount("userA");
-        decision.setDataScope(com.cloudai.common.dataperm.DataScope.of(java.util.Set.of("userA")));
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(
+        decision.setDataScope(com.cloudai.common.dataperm.domain.DataScope.of(java.util.Set.of("userA")));
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(
                 java.util.Set.of(), java.util.Set.of()));
-        decision.setRowFilter(com.cloudai.common.dataperm.RowFilter.of(java.util.List.of(
-                com.cloudai.common.dataperm.RowGroup.of(false, java.util.Set.of("userA"), java.util.List.of()))));
+        decision.setRowFilter(com.cloudai.common.dataperm.domain.RowFilter.of(java.util.List.of(
+                com.cloudai.common.dataperm.domain.RowGroup.of(false, java.util.Set.of("userA"), java.util.List.of()))));
         DataPermDecision.HitRule hit = hitRule(SysDataPermRule.RowScopeEnum.SELF.getCode());
         hit.getPredicates().add(predicate("leaveType", "EQ", "1"));
         decision.getHitRules().add(hit);
@@ -821,11 +826,11 @@ class DataPermManageServiceTest {
         DataPermDecision decision = new DataPermDecision();
         decision.setResource(RESOURCE);
         decision.setAccount("userA");
-        decision.setDataScope(com.cloudai.common.dataperm.DataScope.of(java.util.Set.of("userA")));
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(
+        decision.setDataScope(com.cloudai.common.dataperm.domain.DataScope.of(java.util.Set.of("userA")));
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(
                 java.util.Set.of(), java.util.Set.of()));
-        decision.setRowFilter(com.cloudai.common.dataperm.RowFilter.of(java.util.List.of(
-                com.cloudai.common.dataperm.RowGroup.of(false, java.util.Set.of("userA"), java.util.List.of()))));
+        decision.setRowFilter(com.cloudai.common.dataperm.domain.RowFilter.of(java.util.List.of(
+                com.cloudai.common.dataperm.domain.RowGroup.of(false, java.util.Set.of("userA"), java.util.List.of()))));
         DataPermDecision.HitRule hit = hitRule(SysDataPermRule.RowScopeEnum.SELF.getCode());
         hit.getPredicates().add(predicate("leaveType", "EQ", "1"));
         decision.getHitRules().add(hit);

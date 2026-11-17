@@ -3,7 +3,7 @@ package com.cloudai.system.vo;
 import com.cloudai.common.translate.annotation.DictTrans;
 import com.cloudai.common.translate.annotation.TranslateVO;
 import com.cloudai.common.translate.annotation.UserTrans;
-import com.cloudai.common.dataperm.DataPermVo;
+import com.cloudai.common.dataperm.annotation.DataPermVo;
 import lombok.Data;
 
 import java.io.Serializable;

@@ -2,10 +2,10 @@ package com.cloudai.bpmn.config;
 
 import com.cloudai.bpmn.entity.BpmnApproval;
 import com.cloudai.bpmn.vo.ApprovalVo;
-import com.cloudai.common.dataperm.DataPermColumns;
-import com.cloudai.common.dataperm.FilterColumn;
-import com.cloudai.common.dataperm.FilterColumns;
-import com.cloudai.common.dataperm.FilterColumnTypeEnum;
+import com.cloudai.common.dataperm.column.DataPermColumns;
+import com.cloudai.common.dataperm.domain.FilterColumn;
+import com.cloudai.common.dataperm.domain.FilterColumns;
+import com.cloudai.common.dataperm.domain.FilterColumnTypeEnum;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;

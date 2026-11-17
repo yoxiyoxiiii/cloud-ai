@@ -1,5 +1,8 @@
 package com.cloudai.common.dataperm;
 
+import com.cloudai.common.dataperm.column.DataPermColumnApplier;
+import com.cloudai.common.dataperm.domain.ColumnScope;
+
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;

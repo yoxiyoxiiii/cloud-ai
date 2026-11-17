@@ -1,5 +1,9 @@
 package com.cloudai.common.dataperm;
 
+import com.cloudai.common.dataperm.domain.FilterColumnTypeEnum;
+import com.cloudai.common.dataperm.domain.PredicateOperatorEnum;
+import com.cloudai.common.dataperm.domain.RowPredicate;
+
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;

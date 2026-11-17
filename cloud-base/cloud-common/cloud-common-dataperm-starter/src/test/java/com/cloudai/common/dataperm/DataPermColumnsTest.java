@@ -1,5 +1,8 @@
 package com.cloudai.common.dataperm;
 
+import com.cloudai.common.dataperm.annotation.DataPermVo;
+import com.cloudai.common.dataperm.column.DataPermColumns;
+
 import lombok.Data;
 import org.junit.jupiter.api.Test;
 

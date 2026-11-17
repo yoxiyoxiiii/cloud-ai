@@ -1,4 +1,4 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.domain;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;

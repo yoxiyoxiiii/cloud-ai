@@ -1,5 +1,7 @@
 package com.cloudai.common.dataperm;
 
+import com.cloudai.common.dataperm.annotation.DataPermVo;
+
 import lombok.Data;
 
 import java.io.Serializable;

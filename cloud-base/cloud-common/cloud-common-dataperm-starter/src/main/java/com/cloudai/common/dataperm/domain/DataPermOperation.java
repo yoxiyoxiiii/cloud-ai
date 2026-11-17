@@ -1,4 +1,4 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.domain;
 
 /**
  * 数据权限决策操作类型（2026-10-10 组件化 D18 自 cloud-system 搬家，常量零变更；

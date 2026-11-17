@@ -1,4 +1,4 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.domain;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;

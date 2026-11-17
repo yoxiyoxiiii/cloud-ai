@@ -1,5 +1,8 @@
 package com.cloudai.common.dataperm;
 
+import com.cloudai.common.dataperm.domain.FilterColumnTypeEnum;
+import com.cloudai.common.dataperm.domain.PredicateOperatorEnum;
+
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;

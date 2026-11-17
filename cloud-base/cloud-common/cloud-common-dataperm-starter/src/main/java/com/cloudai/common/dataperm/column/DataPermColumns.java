@@ -1,4 +1,6 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.column;
+
+import com.cloudai.common.dataperm.annotation.DataPermVo;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;

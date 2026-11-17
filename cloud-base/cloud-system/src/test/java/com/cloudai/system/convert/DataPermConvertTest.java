@@ -1,7 +1,12 @@
 package com.cloudai.system.convert;
 
-import com.cloudai.common.dataperm.RowFilter;
-import com.cloudai.common.dataperm.RowGroup;
+import com.cloudai.common.dataperm.domain.ColumnScope;
+import com.cloudai.common.dataperm.domain.DataScope;
+import com.cloudai.common.dataperm.domain.FilterColumn;
+import com.cloudai.common.dataperm.domain.FilterColumnTypeEnum;
+
+import com.cloudai.common.dataperm.domain.RowFilter;
+import com.cloudai.common.dataperm.domain.RowGroup;
 import com.cloudai.system.dto.PredicateItem;
 import com.cloudai.system.entity.SysDataPermRule;
 import com.cloudai.system.service.dataperm.DataPermDecision;
@@ -34,14 +39,14 @@ class DataPermConvertTest {
 
     @Test
     void label_emptyScope_stillEmpty() {
-        DataPermDecision decision = decisionOf(com.cloudai.common.dataperm.DataScope.of(Set.of()), null);
+        DataPermDecision decision = decisionOf(com.cloudai.common.dataperm.domain.DataScope.of(Set.of()), null);
         assertThat(labelOf(decision)).isEqualTo("无（空范围）");
     }
 
     @Test
     void label_deptTier_stillDesignatedRange() {
         DataPermDecision decision = decisionOf(
-                com.cloudai.common.dataperm.DataScope.of(Set.of("userA", "userB")), null);
+                com.cloudai.common.dataperm.domain.DataScope.of(Set.of("userA", "userB")), null);
         decision.getHitRules().add(hit(SysDataPermRule.RowScopeEnum.DEPT.getCode()));
         assertThat(labelOf(decision)).isEqualTo("指定范围（2 人）");
     }
@@ -49,7 +54,7 @@ class DataPermConvertTest {
     @Test
     void label_customWithSelf_stillCustomRange() {
         DataPermDecision decision = decisionOf(
-                com.cloudai.common.dataperm.DataScope.of(Set.of("userA", "userB")), null);
+                com.cloudai.common.dataperm.domain.DataScope.of(Set.of("userA", "userB")), null);
         decision.getHitRules().add(hit(SysDataPermRule.RowScopeEnum.CUSTOM.getCode()));
         assertThat(labelOf(decision)).isEqualTo("自定义范围（含自己，共 2 人）");
     }
@@ -57,7 +62,7 @@ class DataPermConvertTest {
     @Test
     void label_selfFallback_stillSelfOnly() {
         DataPermDecision decision = decisionOf(
-                com.cloudai.common.dataperm.DataScope.of(Set.of("userA")), null);
+                com.cloudai.common.dataperm.domain.DataScope.of(Set.of("userA")), null);
         decision.getHitRules().add(hit(SysDataPermRule.RowScopeEnum.SELF.getCode()));
         assertThat(labelOf(decision)).isEqualTo("仅自己");
     }
@@ -67,7 +72,7 @@ class DataPermConvertTest {
     @Test
     void label_conditionalHit_conditionRangeState() {
         DataPermDecision decision = decisionOf(
-                com.cloudai.common.dataperm.DataScope.of(Set.of("userA")),
+                com.cloudai.common.dataperm.domain.DataScope.of(Set.of("userA")),
                 RowFilter.of(List.of(RowGroup.of(false, Set.of("userA"), List.of()))));
         DataPermDecision.HitRule hit = hit(SysDataPermRule.RowScopeEnum.SELF.getCode());
         hit.getPredicates().add(predicate("leaveType", "EQ", "1"));
@@ -80,7 +85,7 @@ class DataPermConvertTest {
     void label_allPlusConditional_dataScopeEmptyButRowFilterAlive() {
         // D31 判据优先级：rowFilter 非空 → 不落「无（空范围）」；ALL+条件不豁免 → 不落「全部」
         DataPermDecision decision = decisionOf(
-                com.cloudai.common.dataperm.DataScope.of(Set.of()),
+                com.cloudai.common.dataperm.domain.DataScope.of(Set.of()),
                 RowFilter.of(List.of(RowGroup.of(true, Set.of(), List.of()))));
         DataPermDecision.HitRule hit = hit(SysDataPermRule.RowScopeEnum.ALL.getCode());
         hit.getPredicates().add(predicate("id", "BETWEEN", "1", "100"));
@@ -92,7 +97,7 @@ class DataPermConvertTest {
     @Test
     void label_multiConditionalRules_summariesSemicolonJoined() {
         DataPermDecision decision = decisionOf(
-                com.cloudai.common.dataperm.DataScope.of(Set.of("userA")),
+                com.cloudai.common.dataperm.domain.DataScope.of(Set.of("userA")),
                 RowFilter.of(List.of(RowGroup.of(false, Set.of("userA"), List.of()))));
         DataPermDecision.HitRule first = hit(SysDataPermRule.RowScopeEnum.SELF.getCode());
         first.getPredicates().add(predicate("id", "BETWEEN", "1", "100"));
@@ -185,9 +190,9 @@ class DataPermConvertTest {
     @Test
     void toFilterColumnVo_mapsDeclaration() {
         FilterColumnVo vo = DataPermConvert.toFilterColumnVo(
-                new com.cloudai.common.dataperm.FilterColumn(
+                new com.cloudai.common.dataperm.domain.FilterColumn(
                         "leaveType", "leave_type",
-                        com.cloudai.common.dataperm.FilterColumnTypeEnum.NUMBER, "请假类型", null));
+                        com.cloudai.common.dataperm.domain.FilterColumnTypeEnum.NUMBER, "请假类型", null));
 
         assertThat(vo.getField()).isEqualTo("leaveType");
         assertThat(vo.getColumn()).isEqualTo("leave_type");
@@ -295,7 +300,7 @@ class DataPermConvertTest {
     void toMyScopeVo_resolver_sixthStateTranslated() {
         // 第六态经三参路径带译文（D45）：条件范围（请假类型等于事假）
         DataPermDecision decision = decisionOf(
-                com.cloudai.common.dataperm.DataScope.of(Set.of("userA")),
+                com.cloudai.common.dataperm.domain.DataScope.of(Set.of("userA")),
                 RowFilter.of(List.of(RowGroup.of(false, Set.of("userA"), List.of()))));
         DataPermDecision.HitRule hit = hit(SysDataPermRule.RowScopeEnum.SELF.getCode());
         hit.getPredicates().add(predicate("leaveType", "EQ", "1"));
@@ -335,7 +340,7 @@ class DataPermConvertTest {
     @Test
     void toMyScopeVo_columnsStructured_hiddenFirstThenMaskedEachSorted() {
         DataPermDecision decision = decisionOf(allScope(), null);
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(
                 Set.of("email"), Set.of("mobile")));
 
         MyScopeVo vo = DataPermConvert.toMyScopeVo(decision);
@@ -377,18 +382,18 @@ class DataPermConvertTest {
         return vo.getScopeLabel();
     }
 
-    private com.cloudai.common.dataperm.DataScope allScope() {
-        return com.cloudai.common.dataperm.DataScope.all();
+    private com.cloudai.common.dataperm.domain.DataScope allScope() {
+        return com.cloudai.common.dataperm.domain.DataScope.all();
     }
 
-    private DataPermDecision decisionOf(com.cloudai.common.dataperm.DataScope dataScope,
+    private DataPermDecision decisionOf(com.cloudai.common.dataperm.domain.DataScope dataScope,
             RowFilter rowFilter) {
         DataPermDecision decision = new DataPermDecision();
         decision.setResource(RESOURCE);
         decision.setAccount("userA");
         decision.setDataScope(dataScope);
         decision.setRowFilter(rowFilter);
-        decision.setColumnScope(com.cloudai.common.dataperm.ColumnScope.of(Set.of(), Set.of()));
+        decision.setColumnScope(com.cloudai.common.dataperm.domain.ColumnScope.of(Set.of(), Set.of()));
         return decision;
     }
 

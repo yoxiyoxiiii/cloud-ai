@@ -1,4 +1,4 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.domain;
 
 /**
  * 行级条件操作符封闭集 v2（设计 D41，2026-10-11 操作符扩展轮）：EQ/IN/BETWEEN/GTE/LTE +

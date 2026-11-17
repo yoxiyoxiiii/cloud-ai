@@ -1,5 +1,7 @@
 package com.cloudai.common.dataperm;
 
+import com.cloudai.common.dataperm.util.EntityFieldResolver;
+
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;

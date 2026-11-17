@@ -1,8 +1,10 @@
 package com.cloudai.system.service.dataperm;
 
+import com.cloudai.common.dataperm.domain.RowPredicate;
+
 import com.cloudai.common.core.domain.LoginUser;
 import com.cloudai.common.core.exception.BusinessException;
-import com.cloudai.common.dataperm.DataPermOperation;
+import com.cloudai.common.dataperm.domain.DataPermOperation;
 import com.cloudai.system.entity.SysDataPermColumn;
 import com.cloudai.system.entity.SysDataPermRule;
 import com.cloudai.system.entity.SysDept;
@@ -532,7 +534,7 @@ class DataPermEvaluatorTest {
         DataPermDecision decision = evaluator.evaluate(RESOURCE, DataPermOperation.LIST, null);
 
         // enrichment 类型化：DATE→LocalDate、NUMBER→BigDecimal（SQL 绑定与内存判定同源 D33）
-        List<com.cloudai.common.dataperm.RowPredicate> predicates =
+        List<com.cloudai.common.dataperm.domain.RowPredicate> predicates =
                 decision.getRowFilter().getGroups().get(0).getPredicates();
         assertThat(predicates).hasSize(2);
         assertThat(predicates.get(0).getColumn()).isEqualTo("start_date");
@@ -576,7 +578,7 @@ class DataPermEvaluatorTest {
 
         // enrichment 类型化对新操作符零分叉：GT/LT/NE/PREFIX 值同走列类型归一器（NUMBER→BigDecimal、
         // DATE→LocalDate、STRING 原串）；title（D42 新列）注册表定位正常
-        List<com.cloudai.common.dataperm.RowPredicate> predicates =
+        List<com.cloudai.common.dataperm.domain.RowPredicate> predicates =
                 decision.getRowFilter().getGroups().get(0).getPredicates();
         assertThat(predicates).hasSize(4);
         assertThat(predicates.get(0).getValues().get(0)).isEqualTo(new java.math.BigDecimal("100"));

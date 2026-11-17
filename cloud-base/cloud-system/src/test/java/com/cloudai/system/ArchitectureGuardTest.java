@@ -1,5 +1,7 @@
 package com.cloudai.system;
 
+import com.cloudai.common.dataperm.annotation.DataPermVo;
+
 import org.junit.jupiter.api.Test;
 
 import java.io.IOException;

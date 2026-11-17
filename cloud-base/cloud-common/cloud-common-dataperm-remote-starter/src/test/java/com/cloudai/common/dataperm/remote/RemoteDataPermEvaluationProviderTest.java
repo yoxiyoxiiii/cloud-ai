@@ -3,7 +3,7 @@ package com.cloudai.common.dataperm.remote;
 import com.cloudai.common.core.domain.LoginUser;
 import com.cloudai.common.core.domain.R;
 import com.cloudai.common.core.exception.BusinessException;
-import com.cloudai.common.dataperm.DataPermEvaluation;
+import com.cloudai.common.dataperm.evaluate.DataPermEvaluation;
 import com.cloudai.system.api.client.DataPermClient;
 import com.cloudai.system.api.domain.DataPermEvaluateRequest;
 import com.cloudai.system.api.domain.DataPermScopeVo;

@@ -1,8 +1,8 @@
 package com.cloudai.system.convert;
 
-import com.cloudai.common.dataperm.ColumnScope;
-import com.cloudai.common.dataperm.FilterColumn;
-import com.cloudai.common.dataperm.PredicateOperatorEnum;
+import com.cloudai.common.dataperm.domain.ColumnScope;
+import com.cloudai.common.dataperm.domain.FilterColumn;
+import com.cloudai.common.dataperm.domain.PredicateOperatorEnum;
 import com.cloudai.system.dto.PredicateItem;
 import com.cloudai.system.entity.SysDataPermColumn;
 import com.cloudai.system.entity.SysDataPermLog;

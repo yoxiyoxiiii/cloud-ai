@@ -1,5 +1,11 @@
 package com.cloudai.common.dataperm;
 
+import com.cloudai.common.dataperm.domain.DataScope;
+import com.cloudai.common.dataperm.domain.PredicateOperatorEnum;
+import com.cloudai.common.dataperm.domain.RowFilter;
+import com.cloudai.common.dataperm.domain.RowGroup;
+import com.cloudai.common.dataperm.domain.RowPredicate;
+
 import org.junit.jupiter.api.Test;
 
 import java.util.List;

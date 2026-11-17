@@ -1,4 +1,6 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.column;
+
+import com.cloudai.common.dataperm.domain.ColumnScope;
 
 import lombok.extern.slf4j.Slf4j;
 

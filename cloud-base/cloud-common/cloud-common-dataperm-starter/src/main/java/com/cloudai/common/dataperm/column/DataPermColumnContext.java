@@ -1,4 +1,6 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.column;
+
+import com.cloudai.common.dataperm.domain.ColumnScope;
 
 /**
  * 列处理上下文（设计 D52）：Service 求值后 set——语义是「本请求列处理已接线」而非数据本身：

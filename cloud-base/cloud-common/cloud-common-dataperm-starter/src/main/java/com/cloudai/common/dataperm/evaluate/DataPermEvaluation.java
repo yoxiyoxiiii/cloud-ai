@@ -1,4 +1,8 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.evaluate;
+
+import com.cloudai.common.dataperm.annotation.DataPermEvaluate;
+import com.cloudai.common.dataperm.domain.ColumnScope;
+import com.cloudai.common.dataperm.domain.RowFilter;
 
 /**
  * 数据权限求值结果与线程内传递（切面 set / 方法体 current 读取）：resource 供排查日志、
@@ -15,8 +19,8 @@ public record DataPermEvaluation(String resource, ColumnScope columnScope, RowFi
 
     private static final ThreadLocal<DataPermEvaluation> HOLDER = new ThreadLocal<>();
 
-    /** 切面接线（嵌套标注调用由切面恢复前值，业务代码不调用） */
-    static void set(DataPermEvaluation evaluation) {
+    /** 切面接线（嵌套标注调用由切面恢复前值）；public 供测试构造 holder 态——业务代码不调用 */
+    public static void set(DataPermEvaluation evaluation) {
         HOLDER.set(evaluation);
     }
 

@@ -1,5 +1,9 @@
 package com.cloudai.common.dataperm;
 
+import com.cloudai.common.dataperm.domain.FilterColumn;
+import com.cloudai.common.dataperm.domain.FilterColumnTypeEnum;
+import com.cloudai.common.dataperm.domain.FilterColumns;
+
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;

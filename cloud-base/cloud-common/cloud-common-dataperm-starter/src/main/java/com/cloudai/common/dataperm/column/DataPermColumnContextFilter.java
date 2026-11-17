@@ -1,4 +1,4 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.column;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;

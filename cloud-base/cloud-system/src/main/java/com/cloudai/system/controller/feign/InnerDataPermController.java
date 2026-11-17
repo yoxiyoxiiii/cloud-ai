@@ -1,10 +1,10 @@
 package com.cloudai.system.controller.feign;
 
 import com.cloudai.common.core.domain.R;
-import com.cloudai.common.dataperm.FilterColumn;
-import com.cloudai.common.dataperm.FilterColumnTypeEnum;
-import com.cloudai.common.dataperm.RowGroup;
-import com.cloudai.common.dataperm.RowPredicate;
+import com.cloudai.common.dataperm.domain.FilterColumn;
+import com.cloudai.common.dataperm.domain.FilterColumnTypeEnum;
+import com.cloudai.common.dataperm.domain.RowGroup;
+import com.cloudai.common.dataperm.domain.RowPredicate;
 import com.cloudai.system.api.domain.DataPermDenyRequest;
 import com.cloudai.system.api.domain.DataPermEvaluateRequest;
 import com.cloudai.system.api.domain.DataPermScopeVo;

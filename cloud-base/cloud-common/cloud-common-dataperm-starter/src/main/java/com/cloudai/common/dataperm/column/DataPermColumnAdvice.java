@@ -1,4 +1,6 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.column;
+
+import com.cloudai.common.dataperm.annotation.DataPermVo;
 
 import com.cloudai.common.core.domain.PageResult;
 import com.cloudai.common.core.domain.R;

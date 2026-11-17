@@ -1,4 +1,4 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.domain;
 
 /**
  * 可过滤列声明单元（设计 D32，2026-10-11 谓词轮；扩展轮 D42/D45 增第 5 组件 dictKey）：

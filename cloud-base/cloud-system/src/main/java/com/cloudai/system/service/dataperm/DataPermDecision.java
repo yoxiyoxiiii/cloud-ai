@@ -1,8 +1,8 @@
 package com.cloudai.system.service.dataperm;
 
-import com.cloudai.common.dataperm.ColumnScope;
-import com.cloudai.common.dataperm.DataScope;
-import com.cloudai.common.dataperm.RowFilter;
+import com.cloudai.common.dataperm.domain.ColumnScope;
+import com.cloudai.common.dataperm.domain.DataScope;
+import com.cloudai.common.dataperm.domain.RowFilter;
 import com.cloudai.system.dto.PredicateItem;
 import lombok.Data;
 

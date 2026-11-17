@@ -1,4 +1,4 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.annotation;
 
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;

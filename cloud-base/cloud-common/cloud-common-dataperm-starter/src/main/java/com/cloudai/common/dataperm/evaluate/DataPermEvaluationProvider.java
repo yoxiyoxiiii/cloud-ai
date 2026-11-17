@@ -1,4 +1,4 @@
-package com.cloudai.common.dataperm;
+package com.cloudai.common.dataperm.evaluate;
 
 /**
  * 数据权限求值后端 SPI（切面经它取决策）：宿主服务注册一个 bean 即激活 @DataPermEvaluate 链路。
