@@ -1,5 +1,8 @@
 package com.cloudai.common.dataperm.annotation;
 
+import com.cloudai.common.dataperm.column.DataPermColumnAdvice;
+import com.cloudai.common.dataperm.column.DataPermColumns;
+
 import java.lang.annotation.Documented;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;

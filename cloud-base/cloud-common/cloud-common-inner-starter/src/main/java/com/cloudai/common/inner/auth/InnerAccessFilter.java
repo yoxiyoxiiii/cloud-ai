@@ -27,12 +27,16 @@ import java.util.List;
  * 但不阻断启动——inner 端点在 system/bpmn 永远存在，没有「合法不保护」态。
  * 纯拒绝闸门：不构建主体、不触碰 SecurityContext，通过的请求进入既有 spring security 链
  * （inner 调用方不发 X-User-*，主体保持匿名，端点行为零变化）。
+ * @author jy-root
  */
 @Slf4j
 @RequiredArgsConstructor
 public class InnerAccessFilter implements Filter {
 
     public static final String HEADER_INNER_SECRET = "X-Inner-Secret";
+
+    /** 拒绝响应统一文案（不区分原因——防向调用方泄露校验进度） */
+    private static final String MSG_DENY = "inner 认证失败";
 
     private final InnerSecretSource secretSource;
 
@@ -44,12 +48,12 @@ public class InnerAccessFilter implements Filter {
             throws IOException, ServletException {
         HttpServletRequest request = (HttpServletRequest) req;
         HttpServletResponse response = (HttpServletResponse) res;
-        String reason = denyReason(request.getHeader(HEADER_INNER_SECRET),
+        DenyReason reason = denyReason(request.getHeader(HEADER_INNER_SECRET),
                 secretSource.acceptedSecrets());
         if (reason != null) {
             // 日志内部区分原因供运维排障；响应报文统一，不向调用方泄露校验进度
             log.warn("inner 面拒绝: uri={}, remoteAddr={}, 原因={}",
-                    request.getRequestURI(), request.getRemoteAddr(), reason);
+                    request.getRequestURI(), request.getRemoteAddr(), reason.text());
             deny(response);
             return;
         }
@@ -57,12 +61,12 @@ public class InnerAccessFilter implements Filter {
     }
 
     /** 三态判定：null=放行；空集判定优先于缺头（fail-closed 态任何请求都拒绝） */
-    private String denyReason(String secret, List<String> accepted) {
+    private DenyReason denyReason(String secret, List<String> accepted) {
         if (accepted.isEmpty()) {
-            return "活跃密钥集为空（fail-closed 拒绝全部）";
+            return DenyReason.EMPTY_ACTIVE_SET;
         }
         if (secret == null) {
-            return "请求未携带 " + HEADER_INNER_SECRET;
+            return DenyReason.MISSING_HEADER;
         }
         byte[] presented = secret.getBytes(StandardCharsets.UTF_8);
         for (String candidate : accepted) {
@@ -73,7 +77,7 @@ public class InnerAccessFilter implements Filter {
                 return null;
             }
         }
-        return "密钥不在活跃集内";
+        return DenyReason.NOT_IN_ACTIVE_SET;
     }
 
     /** 拒绝响应：真实 HTTP 401 + R JSON（网关 AuthGlobalFilter / MCP McpAuthFilter 先例——认证拒绝用真实状态码） */
@@ -83,10 +87,33 @@ public class InnerAccessFilter implements Filter {
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
         byte[] body;
         try {
-            body = objectMapper.writeValueAsBytes(R.fail(401, "inner 认证失败"));
+            body = objectMapper.writeValueAsBytes(R.fail(401, MSG_DENY));
         } catch (IOException e) {
-            body = "{\"code\":401,\"msg\":\"inner 认证失败\"}".getBytes(StandardCharsets.UTF_8);
+            body = ("{\"code\":401,\"msg\":\"" + MSG_DENY + "\"}").getBytes(StandardCharsets.UTF_8);
         }
         response.getOutputStream().write(body);
+    }
+
+    /** 拒绝原因常量（日志排障用，一处定义防字面量散落） */
+    private enum DenyReason {
+
+        /** 活跃密钥集为空（fail-closed 拒绝全部） */
+        EMPTY_ACTIVE_SET("活跃密钥集为空（fail-closed 拒绝全部）"),
+
+        /** 请求未携带密钥头 */
+        MISSING_HEADER("请求未携带 " + HEADER_INNER_SECRET),
+
+        /** 密钥不在活跃集内 */
+        NOT_IN_ACTIVE_SET("密钥不在活跃集内");
+
+        private final String text;
+
+        DenyReason(String text) {
+            this.text = text;
+        }
+
+        String text() {
+            return text;
+        }
     }
 }

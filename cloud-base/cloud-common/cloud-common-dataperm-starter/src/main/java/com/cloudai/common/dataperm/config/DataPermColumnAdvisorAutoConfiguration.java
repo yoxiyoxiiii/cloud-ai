@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Bean;
  * <p><b>不设功能开关</b>：开关关闭 = advice 失效 = 上下文永不消费 = fail-open 明文返回，
  * 关闭本身就是越权面，与 fail-closed 总纲矛盾；紧急止损路径是回滚版本而非线上开关。
  * 装配条件的唯一「关」是宿主非 SERVLET（技术性，非功能开关）。</p>
+ * @author jy-root
  */
 @AutoConfiguration
 @ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.SERVLET)

@@ -32,19 +32,19 @@ public final class DataPermColumns {
     public static void assertDeclared(Class<?> voClass, List<String> columns) {
         if (!voClass.isAnnotationPresent(DataPermVo.class)) {
             throw new IllegalStateException(String.format(
-                    "数据权限列载体 VO %s 未标注 @DataPermVo（advice 白名单不可达，D56）",
+                    "数据权限列载体 VO %s 未标注 @DataPermVo（advice 白名单不可达）",
                     voClass.getSimpleName()));
         }
         for (String column : columns) {
             Field field = findInstanceField(voClass, column);
             if (field == null) {
                 throw new IllegalStateException(String.format(
-                        "数据权限声明列 %s 不是 VO %s 的字段（列声明断言，D22/D17）",
+                        "数据权限声明列 %s 不是 VO %s 的字段（列声明断言）",
                         column, voClass.getSimpleName()));
             }
             if (field.getType() != String.class) {
                 throw new IllegalStateException(String.format(
-                        "数据权限声明列 %s 在 VO %s 中非 String（可配列必须 String，D22/D17）",
+                        "数据权限声明列 %s 在 VO %s 中非 String（可配列必须 String）",
                         column, voClass.getSimpleName()));
             }
         }

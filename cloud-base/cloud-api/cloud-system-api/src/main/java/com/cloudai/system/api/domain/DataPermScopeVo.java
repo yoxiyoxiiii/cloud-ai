@@ -22,6 +22,7 @@ import java.util.Set;
  * explain/my-scope 是 system 自有端点已覆盖）。toDataScope()/toColumnScope()/toRowFilter()
  * 在 api 模块内完成契约模型→终态对象转换（消费方零胶水）。
  * 注解口径：@Data + @NoArgsConstructor（Feign Jackson 反序列化需无参构造；字段初始化空列表）+
+ * @author jy-root
  * @AllArgsConstructor（provider 全参构造）；显式四参构造为 v1 形态兼容保留（D40）。
  */
 @Slf4j
